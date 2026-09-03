@@ -10,7 +10,6 @@ on:
     # A later push has no CI run. Return the PR to draft, complete review, then
     # mark the exact head ready again, or dispatch this workflow for that head.
     types: [opened, ready_for_review]
-  workflow_dispatch:
 
 jobs:
   node:
