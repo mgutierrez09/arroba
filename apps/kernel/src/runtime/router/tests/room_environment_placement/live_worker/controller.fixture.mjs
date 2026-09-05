@@ -1,6 +1,6 @@
 // Run the production Chariox controller. Only external Chromium/CDP responses
 // are synthetic; kernel routing, relay encryption and controller stdio are real.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -39,6 +39,15 @@ const chromium = {
   async send(method, params = {}, sessionId) {
     switch (method) {
       case "Target.getTargets": {
+        const externalNavigation = join(dirname(pidFile), "external-browser-navigation");
+        if (existsSync(externalNavigation)) {
+          unlinkSync(externalNavigation);
+          state.documentId = `worker-document-${++state.documentSequence}`;
+          persist();
+          emit({ method: "Page.frameNavigated", sessionId: "worker-cdp-session", params: { frame: {
+            id: "worker-frame", loaderId: state.documentId, url: state.url,
+          } } });
+        }
         // External browser fault: the user can close every page while a
         // browser-owned download continues in the background.
         if (existsSync(join(dirname(pidFile), "close-browser-tabs"))) {
