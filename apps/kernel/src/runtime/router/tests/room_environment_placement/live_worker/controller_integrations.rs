@@ -535,9 +535,17 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
     )
     .await
     .expect("human takes over the stable Browser tab");
+    std::fs::write(
+        fixture
+            ._worker_state
+            .root
+            .join("external-browser-navigation"),
+        "external browser changed the document",
+    )
+    .expect("arm external browser navigation");
     let submitted = dispatch_json(&fixture.home, human_history_request.clone())
         .await
-        .expect("authenticated human history crosses the bound worker relay");
+        .expect("authenticated human history refreshes an externally navigated tab");
     let submitted = &submitted["RoomEnvironmentActionSubmitted"];
     assert_eq!(
         submitted["environment"]["tabs"][0]["url"],

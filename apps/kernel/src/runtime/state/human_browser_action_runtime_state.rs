@@ -25,8 +25,8 @@ impl KernelRuntimeState {
         actor: EnvironmentActor,
     ) -> Result<(String, RoomEnvironmentSnapshot), DaemonError> {
         let environment = self
-            .room_environment_snapshot(&request.session_id)
-            .map_err(human_browser_environment_error)?;
+            .reconcile_browser_controller_environment(&request.session_id)
+            .await?;
         validate_idempotency_key(&request).map_err(human_browser_environment_error)?;
 
         let (tab_id, action_kind, runtime_action) = match &request.action {

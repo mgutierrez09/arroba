@@ -341,6 +341,8 @@ impl KernelRuntimeState {
         tab_id: &str,
         action: crate::runtime::browser_controller_tab::BrowserTabAction,
     ) -> Result<super::BrowserControllerActionExecution<RoomEnvironmentSnapshot>, DaemonError> {
+        self.reconcile_browser_controller_environment(session_id)
+            .await?;
         let binding = self
             .room_environment_controller_tab_binding(session_id, tab_id)
             .map_err(|error| environment_runtime_error("browser_controller.tab", error))?;
@@ -403,6 +405,8 @@ impl KernelRuntimeState {
         tab_id: &str,
         action: crate::runtime::browser_controller_history::BrowserHistoryAction,
     ) -> Result<super::BrowserControllerActionExecution<RoomEnvironmentSnapshot>, DaemonError> {
+        self.reconcile_browser_controller_environment(session_id)
+            .await?;
         let binding = self
             .room_environment_controller_tab_binding(session_id, tab_id)
             .map_err(|error| environment_runtime_error("browser_controller.history", error))?;

@@ -48,6 +48,7 @@ import {
   automationNoticeTexts,
   roomActionNoticePattern,
 } from "./lib/room-tui-notices.mjs"
+import { hasRoomReadyProjection } from "./lib/room-drill-ready-notices.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
@@ -379,8 +380,8 @@ async function run() {
   })), "RoomEnvironmentUpdated").environment
   assert.equal(environment.lifecycle, "ready")
   const [readyLocalTui, readyRemoteTui] = await Promise.all([
-    waitForLocalNotice(/^Room screen: ready · tab Room pointer drill — /),
-    waitForRemoteNotice(/^Room screen: ready · tab Room pointer drill — /),
+    waitForRoomReadyProjection(localAutomation, "local"),
+    waitForRoomReadyProjection(remoteAutomation, "remote"),
   ])
   const localStatusSnapshot = await localAutomation.send(
     "submit_prompt",
@@ -2568,6 +2569,15 @@ async function waitForRemoteNotice(pattern, timeoutMs = 20_000) {
 
 async function waitForLocalNotice(pattern, timeoutMs = 20_000) {
   return await waitForTuiNotice(localAutomation, "local", pattern, timeoutMs)
+}
+
+async function waitForRoomReadyProjection(automation, kind) {
+  return await waitForAutomationSnapshot(
+    automation,
+    (snapshot) => hasRoomReadyProjection(automationNoticeTexts(snapshot)),
+    `${kind} TUI Room ready projection`,
+    60_000,
+  )
 }
 
 async function waitForTuiNotice(automation, kind, pattern, timeoutMs) {
