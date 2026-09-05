@@ -502,7 +502,7 @@ async function restoreSliceBackup(deps: SliceCommandHandlerDeps, args: string[])
     return
   }
   const resolvedRef = await explicitOrFocusedSliceRef(deps, parsed.sliceRef)
-  if (await rejectSliceLifecycleWithAttachedAgents(deps, "backup restore", resolvedRef)) {
+  if (await rejectSliceLifecycleWithAttachedAgents(deps, "restore backup for", resolvedRef)) {
     return
   }
   try {
@@ -899,7 +899,7 @@ async function deleteSlice(
 
 async function rejectSliceLifecycleWithAttachedAgents(
   deps: SliceCommandHandlerDeps,
-  action: "stop" | "delete" | "save-state" | "reset-state" | "backup",
+  action: "stop" | "delete" | "save-state" | "reset-state" | "backup" | "restore backup for",
   sliceRef: string,
 ): Promise<boolean> {
   const slice = await loadSliceForLifecycleGuard(deps, sliceRef)

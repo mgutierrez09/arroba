@@ -404,6 +404,27 @@ test("slice backup restore routes the selected backup and reports the stopped re
   assert.match(harness.notices.at(-1) ?? "", /status=stopped/)
 })
 
+test("slice backup restore blocks slices with attached agents", async () => {
+  const harness = sliceHarness({
+    slices: [slice({
+      id: "slice-1",
+      name: "linux-dev",
+      agent_ids: ["agent-build"],
+    })],
+  })
+
+  await handleSliceSlashCommand(
+    harness.deps,
+    command("backup", "restore", "linux-dev", "before-upgrade"),
+  )
+
+  assert.deepEqual(harness.restoredBackups, [])
+  assert.equal(
+    harness.footers.at(-1)?.message,
+    "cannot restore backup for slice linux-dev; move or end attached agents first: agent-build",
+  )
+})
+
 test("slice command auth import can target the focused agent slice", async () => {
   const harness = sliceHarness({
     slices: [
