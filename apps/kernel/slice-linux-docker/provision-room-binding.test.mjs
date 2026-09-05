@@ -17,7 +17,11 @@ test("runtime startup passes the supplied Room binding across docker exec withou
 const { appendFileSync } = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "info" || args[0] === "container") process.exit(0);
-if (args[0] === "inspect") { console.log("true"); process.exit(0); }
+if (args[0] === "inspect") {
+  const format = args[args.indexOf("--format") + 1] ?? "";
+  console.log(format.includes("HostConfig.Ulimits") ? "8192:8192" : "true");
+  process.exit(0);
+}
 if (args[0] === "exec" && args.includes("df")) {
   console.log("Filesystem 1M-blocks Used Available Use% Mounted\\nfixture 10000 1 9999 1% /home/slice");
   process.exit(0);
