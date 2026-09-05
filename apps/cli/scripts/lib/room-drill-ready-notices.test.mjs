@@ -25,3 +25,13 @@ test("rejects an incomplete or unhealthy projection", () => {
     "Room actors: Agent (present), Local user (present)",
   ]), false)
 })
+
+test("rejects readiness superseded by a newer unhealthy projection", () => {
+  assert.equal(hasRoomReadyProjection([
+    "Room health: ready",
+    "Room tab: Room pointer drill — http://host.docker.internal:1234/click",
+    "Room environment: ready",
+    "Room actors: Agent (present), Local user (present)",
+    "Room health: unavailable",
+  ]), false)
+})
