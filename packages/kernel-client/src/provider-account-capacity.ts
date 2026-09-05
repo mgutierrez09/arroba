@@ -7,6 +7,8 @@ export type ProviderAccountCapacity = {
   readonly detail: string
 }
 
+const PROVIDER_USAGE_STALE_AFTER_MS = 24 * 60 * 60 * 1000
+
 export function providerAccountCapacity(
   profile: ProviderAccountProfile,
   nowMs = Date.now(),
@@ -20,8 +22,12 @@ export function providerAccountCapacity(
     }
   }
   const meters = usage.meters ?? []
+  const isFresh = (meter: ProviderAccountUsageMeter): boolean => (
+    nowMs - meter.observed_at_ms <= PROVIDER_USAGE_STALE_AFTER_MS
+  )
   const currentlyExhausted = (meter: ProviderAccountUsageMeter): boolean => (
-    meter.state === "exhausted"
+    isFresh(meter)
+    && meter.state === "exhausted"
     && (meter.resets_at_ms == null || meter.resets_at_ms > nowMs)
   )
   const provider = profile.provider === "claude-headless" || profile.provider === "claude-p"
@@ -39,10 +45,13 @@ export function providerAccountCapacity(
         if (bucket !== "codex" && bucket !== "codex_bengalfox") return true
         return bucket === (codexModel === "gpt-5.3-codex-spark" ? "codex_bengalfox" : "codex")
       }) : meters
-  const exhausted = relevantMeters.filter(currentlyExhausted)
+  const freshRelevantMeters = relevantMeters.filter(isFresh)
+  const exhausted = freshRelevantMeters.filter(currentlyExhausted)
   if (provider === "codex" || provider === "claude") {
     const exhaustedUsage = exhausted.filter((meter) => meter.kind !== "credit_balance" && meter.kind !== "spend_limit")
-    const creditCapacity = meters.filter((meter) => meter.kind === "credit_balance" || meter.kind === "spend_limit")
+    const creditCapacity = meters.filter((meter) => (
+      (meter.kind === "credit_balance" || meter.kind === "spend_limit") && isFresh(meter)
+    ))
     if (exhaustedUsage.length && creditCapacity.length && creditCapacity.every(currentlyExhausted)) {
       return { state: "exhausted", detail: "usage allowance and credits exhausted" }
     }
@@ -60,7 +69,13 @@ export function providerAccountCapacity(
   } else if (exhausted.length) {
     return { state: "exhausted", detail: "usage exhausted" }
   }
-  if (relevantMeters.some((meter) => meter.state === "warning")) {
+  if (relevantMeters.length > 0 && freshRelevantMeters.length === 0) {
+    const staleDetail = provider === "opencode" && selectedOpenCodeService
+      ? `${openCodeServiceLabel(profile, selectedOpenCodeService)} balance stale`
+      : "usage status stale"
+    return { state: "unknown", detail: staleDetail }
+  }
+  if (freshRelevantMeters.some((meter) => meter.state === "warning")) {
     return { state: "warning", detail: "usage nearing limit" }
   }
   if (provider === "opencode" && selectedOpenCodeService && relevantMeters.length === 0) {

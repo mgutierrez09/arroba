@@ -54,6 +54,24 @@ test("does not block stale or reset usage", () => {
   }, nowMs).state, "unknown")
 })
 
+test("does not refresh stale Zen capacity from a fresh Go observation", () => {
+  const staleZen = {
+    ...credits,
+    service_id: "opencode",
+    observed_at_ms: nowMs - 24 * 60 * 60 * 1000 - 1,
+  }
+  const freshGo = {
+    ...usage,
+    service_id: "opencode-go",
+    state: "healthy" as const,
+  }
+  const account = profile("opencode", [staleZen, freshGo])
+
+  assert.equal(providerAccountCapacity(account, nowMs, "opencode/deepseek-v4-pro").state, "unknown")
+  assert.equal(providerAccountCapacity(account, nowMs, "opencode/deepseek-v4-pro").detail, "OpenCode Zen balance stale")
+  assert.equal(providerAccountCapacity(account, nowMs, "opencode-go/deepseek-v4-pro").state, "ready")
+})
+
 test("scopes OpenCode Go exhaustion to Go rather than Zen or arbitrary upstream providers", () => {
   const openCode = profile("opencode", [{ ...usage, service_id: "opencode-go" }])
 

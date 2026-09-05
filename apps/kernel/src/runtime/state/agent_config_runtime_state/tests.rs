@@ -197,6 +197,16 @@ async fn remote_profile_transition_queues_arriving_prompt_until_worker_acknowled
 }
 
 #[tokio::test]
+async fn rejected_remote_profile_transition_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(Some("provider"), true, ProfileChange::Direct).await;
+}
+
+#[tokio::test]
+async fn account_removed_during_remote_confirmation_cannot_be_committed() {
+    assert_remote_agent_profile_response(None, true, ProfileChange::DirectAccountRemoved).await;
+}
+
+#[tokio::test]
 async fn remote_substitute_activation_confirms_worker_and_preserves_starter() {
     assert_remote_agent_profile_response(None, false, ProfileChange::ManualSubstitute).await;
 }
@@ -207,8 +217,34 @@ async fn remote_substitute_activation_queues_arriving_prompt_until_confirmation(
 }
 
 #[tokio::test]
+async fn rejected_remote_substitute_transition_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(Some("provider"), true, ProfileChange::ManualSubstitute)
+        .await;
+}
+
+#[tokio::test]
+async fn rejected_remote_automatic_substitute_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(
+        Some("provider"),
+        true,
+        ProfileChange::AutomaticSubstitute,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn remote_automatic_substitute_confirms_worker_and_preserves_starter() {
     assert_remote_agent_profile_response(None, false, ProfileChange::AutomaticSubstitute).await;
+}
+
+#[tokio::test]
+async fn remote_substitute_list_edit_waits_for_the_confirmed_profile_transition() {
+    assert_remote_agent_profile_response(
+        None,
+        false,
+        ProfileChange::ManualSubstituteWithConcurrentListEdit,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -245,7 +281,9 @@ async fn remote_agent_profile_update_rejects_mismatched_worker_acknowledgement()
 #[derive(Clone, Copy)]
 enum ProfileChange {
     Direct,
+    DirectAccountRemoved,
     ManualSubstitute,
+    ManualSubstituteWithConcurrentListEdit,
     AutomaticSubstitute,
 }
 
@@ -254,8 +292,13 @@ async fn assert_remote_agent_profile_response(
     concurrent_prompt: bool,
     change: ProfileChange,
 ) {
-    let substitute = !matches!(change, ProfileChange::Direct);
-    let target_provider = if concurrent_prompt {
+    let substitute = !matches!(
+        change,
+        ProfileChange::Direct | ProfileChange::DirectAccountRemoved
+    );
+    let fixture_account =
+        !concurrent_prompt || matches!(change, ProfileChange::DirectAccountRemoved);
+    let target_provider = if !fixture_account {
         "dev-stub"
     } else {
         "codex"
@@ -347,7 +390,6 @@ async fn assert_remote_agent_profile_response(
             permission_level: crate::provider::AgentPermissionLevel::Required,
         } if leased_agent_id == "leased-agent-1"
     ));
-
     let response = crate::transport::relay_peer::RelayPeerResponse::LeasedAgentConfigUpdated {
         leased_agent: crate::execution_lease::LeasedAgent {
             id: "leased-agent-1".to_string(),
@@ -403,7 +445,7 @@ async fn assert_remote_agent_profile_response(
     // Profile updates resolve the provider default through the account
     // authority seam, so the exact stable profile ID — not the literal
     // "default" sentinel — must cross the relay.
-    let resolved_default_profile_id = if concurrent_prompt {
+    let resolved_default_profile_id = if !fixture_account {
         "default".to_string()
     } else {
         let registry = &runtime.owned.provider_account_profiles;
@@ -489,7 +531,7 @@ async fn assert_remote_agent_profile_response(
                 .await
         }
     });
-    if !concurrent_prompt {
+    if fixture_account {
         let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), priority_rx.recv())
             .await
             .unwrap()
@@ -573,12 +615,45 @@ async fn assert_remote_agent_profile_response(
             && model.as_deref() == Some("gpt-5.4")
             && effort.as_deref() == Some("high")
     ));
+    if matches!(change, ProfileChange::DirectAccountRemoved) {
+        runtime
+            .owned
+            .provider_account_profiles
+            .remove_registration(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "codex",
+                &resolved_default_profile_id,
+            )
+            .expect("the not-yet-committed target account should be removable");
+    }
     if substitute {
         assert_eq!(
             serde_json::to_value(runtime.owned.agent_store.get_agent(&agent_id).unwrap()).unwrap(),
             before_profile,
             "home selection must wait for the worker acknowledgement"
         );
+    }
+    if matches!(
+        change,
+        ProfileChange::ManualSubstituteWithConcurrentListEdit
+    ) {
+        let error = runtime
+            .update_agent_substitutes(
+                &session_id,
+                &agent_id,
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                crate::local::AgentSubstituteAction::Add {
+                    provider: "dev-stub".to_string(),
+                    model: "later-substitute".to_string(),
+                    variant: None,
+                    account_profile: None,
+                    kernel_id: None,
+                    worktree_id: None,
+                },
+            )
+            .await
+            .expect_err("a list edit must not overtake a remote profile transition");
+        assert!(error.to_string().contains("profile change in progress"));
     }
     if concurrent_prompt {
         let attachment = crate::app::KernelSessionService::new(&mut *app.lock().await)
@@ -675,7 +750,64 @@ async fn assert_remote_agent_profile_response(
         ));
         assert!(error.to_string().contains("does not match"));
         let current = runtime.owned.agent_store.get_agent(&agent_id).unwrap();
-        assert_eq!(serde_json::to_value(current).unwrap(), before_profile);
+        if concurrent_prompt {
+            assert!(super::remote_agent_profile_runtime::same_execution_profile(
+                &current, &updated
+            ));
+            assert_eq!(current.primary_provider(), updated.primary_provider());
+            assert_eq!(current.substitutes(), updated.substitutes());
+            assert_eq!(
+                current.active_substitute_index(),
+                updated.active_substitute_index()
+            );
+        } else {
+            assert_eq!(serde_json::to_value(&current).unwrap(), before_profile);
+        }
+        if concurrent_prompt {
+            let current_session = runtime
+                .owned
+                .session_store
+                .get_session(&session_id)
+                .unwrap();
+            let prompt = runtime
+                .owned
+                .prompt_state_owner
+                .active_prompt_for_agent(&current_session, &agent_id)
+                .expect("the queued prompt must resume on the unchanged home profile");
+            assert_eq!(
+                prompt.prompt(),
+                "keep this prompt while the selected account changes"
+            );
+            assert!(runtime
+                .owned
+                .prompt_state_owner
+                .state_parts(&current_session, &agent_id)
+                .1
+                .is_empty());
+        }
+        return;
+    }
+    if matches!(change, ProfileChange::DirectAccountRemoved) {
+        let error = result.expect_err("a removed account cannot become the home selection");
+        assert!(error.to_string().contains("not registered"), "{error}");
+        let current = runtime.owned.agent_store.get_agent(&agent_id).unwrap();
+        assert!(super::remote_agent_profile_runtime::same_execution_profile(
+            &current, &updated
+        ));
+        let current_session = runtime
+            .owned
+            .session_store
+            .get_session(&session_id)
+            .unwrap();
+        let prompt = runtime
+            .owned
+            .prompt_state_owner
+            .active_prompt_for_agent(&current_session, &agent_id)
+            .expect("the queued prompt must resume under the unchanged home profile");
+        assert_eq!(
+            prompt.prompt(),
+            "keep this prompt while the selected account changes"
+        );
         return;
     }
     let updated = result.expect("profile update should complete through the connected relay");

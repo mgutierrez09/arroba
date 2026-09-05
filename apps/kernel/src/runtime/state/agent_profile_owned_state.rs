@@ -263,6 +263,24 @@ impl KernelRuntimeOwnedState {
                 ),
             });
         }
+        if crate::provider::canonical_provider_family(&provider).is_some() {
+            let account_owner_user_id =
+                crate::account_profile::provider_account_authority_owner_user_id(
+                    &self.config_projection.snapshot(),
+                    agent.owner_user_id(),
+                );
+            let confirmed = self.provider_account_profiles.get(
+                &account_owner_user_id,
+                &provider,
+                &account_profile,
+            )?;
+            if confirmed.profile_id != account_profile {
+                return Err(DaemonError::LocalTransport {
+                    operation: "commit remote agent profile",
+                    message: "selected account identity changed while the worker confirmed the profile; select the account again".into(),
+                });
+            }
+        }
         let resume_state = agent
             .provider_resume_state()
             .without_provider_session_id(agent.provider())

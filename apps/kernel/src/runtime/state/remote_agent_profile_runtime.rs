@@ -123,17 +123,25 @@ impl KernelRuntimeState {
         action: AgentSubstituteAction,
         target: AgentInstance,
     ) -> Result<AgentInstance, DaemonError> {
-        let session_id = original.session_id();
-        let agent_id = original.id();
+        let session_id = original.session_id().to_string();
+        let agent_id = original.id().to_string();
         let claim = self
             .owned
             .prompt_state_owner
             .claim_idle_agent_profile_transition(
-                &self.owned.session_store.get_session(session_id)?,
-                agent_id,
+                &self.owned.session_store.get_session(&session_id)?,
+                &agent_id,
             )?;
-        self.update_remote_agent_substitute_with_claim(original, action, target, claim)
-            .await
+        let result = self
+            .apply_remote_agent_substitute(original, action, target)
+            .await;
+        let finish = self
+            .finish_remote_agent_profile_transition(&session_id, &agent_id, claim)
+            .await;
+        if result.is_ok() {
+            finish?;
+        }
+        result
     }
 
     pub(super) async fn update_remote_agent_substitute_with_claim(
@@ -142,6 +150,26 @@ impl KernelRuntimeState {
         action: AgentSubstituteAction,
         target: AgentInstance,
         claim: crate::runtime::prompt_state::AgentProfileTransitionClaim,
+    ) -> Result<AgentInstance, DaemonError> {
+        let session_id = original.session_id().to_string();
+        let agent_id = original.id().to_string();
+        let result = self
+            .apply_remote_agent_substitute(original, action, target)
+            .await;
+        let finish = self
+            .finish_remote_agent_profile_transition(&session_id, &agent_id, claim)
+            .await;
+        if result.is_ok() {
+            finish?;
+        }
+        result
+    }
+
+    async fn apply_remote_agent_substitute(
+        &self,
+        original: AgentInstance,
+        action: AgentSubstituteAction,
+        target: AgentInstance,
     ) -> Result<AgentInstance, DaemonError> {
         let session_id = original.session_id();
         let agent_id = original.id();
@@ -216,8 +244,6 @@ impl KernelRuntimeState {
         self.append_agent_durable_event("agent.updated", &agent, None)
             .await?;
         self.invalidate_workflow_copies_after_source_agent_change(session_id, agent_id)?;
-        self.finish_remote_agent_profile_transition(session_id, agent_id, claim)
-            .await?;
         Ok(agent)
     }
 }

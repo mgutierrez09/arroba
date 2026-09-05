@@ -272,14 +272,32 @@ fn bound_agent_labels(
         .flat_map(|session| session.agents())
         .filter(|agent| {
             owner_matches(agent.owner_user_id())
-                && crate::provider::canonical_provider_family(agent.provider()) == provider_family
-                && account_profile_matches(agent.provider_account_profile())
+                && agent_provider_account_references(agent).any(|(provider, account_profile)| {
+                    crate::provider::canonical_provider_family(provider) == provider_family
+                        && account_profile_matches(account_profile)
+                })
         })
         .map(|agent| agent.alias().unwrap_or(agent.id()).to_string())
         .collect::<Vec<_>>();
     labels.sort();
     labels.dedup();
     labels
+}
+
+fn agent_provider_account_references(
+    agent: &crate::agent::AgentInstance,
+) -> impl Iterator<Item = (&str, &str)> {
+    std::iter::once((agent.provider(), agent.provider_account_profile()))
+        .chain(std::iter::once((
+            agent.primary_provider(),
+            agent.primary_account_profile().unwrap_or("default"),
+        )))
+        .chain(agent.substitutes().iter().map(|profile| {
+            (
+                profile.provider.as_str(),
+                profile.account_profile.as_deref().unwrap_or("default"),
+            )
+        }))
 }
 
 fn account_profile_reference_matches(
@@ -297,7 +315,7 @@ fn account_profile_reference_matches(
 #[cfg(test)]
 mod tests {
     use super::{account_profile_reference_matches, bound_agent_labels};
-    use crate::agent::{AgentInstance, GridPosition};
+    use crate::agent::{AgentInstance, AgentSubstituteProfile, GridPosition};
     use crate::session::RuntimeSession;
 
     #[test]
@@ -339,6 +357,58 @@ mod tests {
                 |account_profile| account_profile == "secondary",
             ),
             vec!["reviewer".to_string()],
+        );
+    }
+
+    #[test]
+    fn account_binding_detection_covers_saved_starter_and_inactive_substitutes() {
+        let mut session = RuntimeSession::new(
+            "session-a",
+            Some("accounts".to_string()),
+            "workspace-a",
+            "worktree-a",
+            "machine-a",
+            "kernel-a",
+        );
+        let mut agent = AgentInstance::new(
+            "agent-bound",
+            "agent-bound",
+            session.id(),
+            Some("reviewer".to_string()),
+            "codex",
+            Some("gpt-5.6".to_string()),
+            Some("high".to_string()),
+            None,
+            GridPosition::new(0, 0, 1, 1),
+        );
+        agent.set_owner_user_id("owner-a");
+        agent.set_account_profile(Some("starter-account".to_string()));
+        agent.add_substitute(
+            AgentSubstituteProfile::new("opencode", "deepseek-v4-pro", Some("high".into()))
+                .with_account_profile(Some("substitute-account".to_string())),
+        );
+        agent.activate_substitute(0, "manual");
+        session.set_agents(vec![agent]);
+
+        assert_eq!(
+            bound_agent_labels(
+                &[session.clone()],
+                "codex",
+                |owner| owner == "owner-a",
+                |account_profile| account_profile == "starter-account",
+            ),
+            vec!["reviewer".to_string()],
+            "the saved starter remains an account binding while a substitute is active",
+        );
+        assert_eq!(
+            bound_agent_labels(
+                &[session],
+                "opencode",
+                |owner| owner == "owner-a",
+                |account_profile| account_profile == "substitute-account",
+            ),
+            vec!["reviewer".to_string()],
+            "every configured substitute remains an account binding",
         );
     }
 

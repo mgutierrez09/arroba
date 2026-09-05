@@ -451,3 +451,56 @@ async fn automatic_substitution_skips_multiple_exhausted_entries_after_active_in
         Some(2)
     );
 }
+
+#[tokio::test]
+async fn automatic_substitution_skips_a_missing_account_and_reaches_the_next_candidate() {
+    let (app, runtime, session_id, agent_id) = agent_config_runtime().await;
+    let registry = app.lock().await.provider_account_profile_registry();
+    let removed = registry
+        .create_managed(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "opencode",
+            "Removed account",
+        )
+        .expect("first substitute account");
+    let available = registry
+        .create_managed(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "opencode",
+            "Available account",
+        )
+        .expect("second substitute account");
+    for (profile_id, model) in [
+        (&removed.profile_id, "opencode-go/deepseek-v4-pro"),
+        (&available.profile_id, "opencode/deepseek-v4-pro"),
+    ] {
+        runtime
+            .owned
+            .agent_store
+            .add_agent_substitute(
+                &agent_id,
+                crate::agent::AgentSubstituteProfile::new(
+                    "opencode",
+                    model,
+                    Some("high".to_string()),
+                )
+                .with_account_profile(Some(profile_id.clone())),
+            )
+            .expect("configured substitute");
+    }
+    registry
+        .remove_registration(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "opencode",
+            &removed.profile_id,
+        )
+        .expect("simulate an unavailable saved account");
+
+    assert!(runtime
+        .activate_next_agent_substitute_after_failure(&session_id, &agent_id, "usage limit",)
+        .await
+        .expect("a missing entry must not abort the fallback chain"));
+    let selected = runtime.owned.agent_store.get_agent(&agent_id).unwrap();
+    assert_eq!(selected.active_substitute_index(), Some(1));
+    assert_eq!(selected.provider_account_profile(), available.profile_id,);
+}

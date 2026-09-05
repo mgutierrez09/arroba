@@ -130,11 +130,20 @@ impl KernelRuntimeOwnedState {
         let now_ms = crate::session::unix_epoch_ms();
         for (index, candidate) in agent.substitutes().iter().enumerate().skip(next) {
             if crate::provider::canonical_provider_family(&candidate.provider).is_some() {
-                let account = self.provider_account_profiles.get(
+                let Some(account) = self.provider_account_profiles.find(
                     &owner,
                     &candidate.provider,
                     candidate.account_profile.as_deref().unwrap_or("default"),
-                )?;
+                )?
+                else {
+                    self.record_notice(
+                        agent.session_id(),
+                        None,
+                        self.attachment_store.list_session_attachment_ids(agent.session_id()),
+                        format!("Skipping substitute {} for agent `{}`: its saved {} account is no longer available.", index + 1, agent.id(), candidate.provider),
+                    );
+                    continue;
+                };
                 if account.has_confirmed_exhaustion(&candidate.model, now_ms) {
                     self.record_notice(
                         agent.session_id(),

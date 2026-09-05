@@ -154,6 +154,36 @@ impl PromptStateOwner {
             identity,
         })
     }
+
+    /// Serialize a list-only profile edit without requiring the current turn to stop.
+    /// New prompt admission waits briefly behind the edit, while an already active turn
+    /// remains authoritative and is not disturbed.
+    pub(crate) fn claim_agent_profile_list_edit(
+        &self,
+        session: &RuntimeSession,
+        agent_id: &str,
+    ) -> Result<AgentProfileTransitionClaim, DaemonError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = PromptStateKey::new(session.id(), agent_id);
+        if state.profile_transitions.contains_key(&key) {
+            return Err(DaemonError::LocalTransport {
+                operation: "update agent profile",
+                message: "the agent already has a profile change in progress".to_string(),
+            });
+        }
+        let identity = Arc::new(());
+        state
+            .profile_transitions
+            .insert(key.clone(), identity.clone());
+        Ok(AgentProfileTransitionClaim {
+            state: self.state.clone(),
+            key,
+            identity,
+        })
+    }
 }
 
 #[cfg(test)]

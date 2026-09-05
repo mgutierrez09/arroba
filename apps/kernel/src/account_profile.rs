@@ -341,7 +341,8 @@ fn provider_account_usage_block(
     }
 
     let is_currently_exhausted = |meter: &&ProviderAccountUsageMeter| {
-        meter.state == ProviderAccountUsageMeterState::Exhausted
+        usage_meter_is_fresh(meter, now_ms)
+            && meter.state == ProviderAccountUsageMeterState::Exhausted
             && meter
                 .resets_at_ms
                 .is_none_or(|resets_at_ms| resets_at_ms > now_ms)
@@ -430,6 +431,10 @@ fn provider_account_usage_block(
             .collect(),
         requires_exhausted_credits: false,
     })
+}
+
+fn usage_meter_is_fresh(meter: &ProviderAccountUsageMeter, now_ms: u64) -> bool {
+    now_ms.saturating_sub(meter.observed_at_ms) <= PROVIDER_USAGE_STALE_AFTER_MS
 }
 
 fn opencode_service_from_model(model: &str) -> Option<&str> {
@@ -984,10 +989,31 @@ impl ProviderAccountProfileRegistry {
         provider: &str,
         profile_id: &str,
     ) -> Result<ProviderAccountProfile, DaemonError> {
+        self.find(owner_user_id, provider, profile_id)?
+            .ok_or_else(|| {
+                registry_error(
+                    "resolve account profile",
+                    format!(
+                        "account profile `{}` is not registered for {}",
+                        profile_id.trim(),
+                        provider.trim()
+                    ),
+                )
+            })
+    }
+
+    pub(crate) fn find(
+        &self,
+        owner_user_id: &str,
+        provider: &str,
+        profile_id: &str,
+    ) -> Result<Option<ProviderAccountProfile>, DaemonError> {
         let provider = normalize_provider(provider)?;
         let document = self.read_document()?;
-        resolve_stored_profile(&document, owner_user_id, provider, profile_id)
-            .map(|profile| project_usage_freshness(profile.public.clone()))
+        Ok(
+            find_stored_profile(&document, owner_user_id, provider, profile_id)
+                .map(|profile| project_usage_freshness(profile.public.clone())),
+        )
     }
 
     pub(crate) fn require_authenticated(
@@ -2776,8 +2802,25 @@ fn resolve_stored_profile<'a>(
     provider: &str,
     profile_id: &str,
 ) -> Result<&'a StoredProviderAccountProfile, DaemonError> {
+    find_stored_profile(document, owner_user_id, provider, profile_id).ok_or_else(|| {
+        registry_error(
+            "resolve account profile",
+            format!(
+                "account profile `{}` is not registered for {provider}",
+                profile_id.trim()
+            ),
+        )
+    })
+}
+
+fn find_stored_profile<'a>(
+    document: &'a RegistryDocument,
+    owner_user_id: &str,
+    provider: &str,
+    profile_id: &str,
+) -> Option<&'a StoredProviderAccountProfile> {
     let profile_id = profile_id.trim();
-    let profile = if profile_id == "default" {
+    if profile_id == "default" {
         document.profiles.iter().find(|profile| {
             profile.public.owner_user_id == owner_user_id
                 && profile.public.provider == provider
@@ -2789,13 +2832,7 @@ fn resolve_stored_profile<'a>(
                 && profile.public.provider == provider
                 && profile.public.profile_id == profile_id
         })
-    };
-    profile.ok_or_else(|| {
-        registry_error(
-            "resolve account profile",
-            format!("account profile `{profile_id}` is not registered for {provider}"),
-        )
-    })
+    }
 }
 
 fn resolve_stored_profile_mut<'a>(
@@ -3728,6 +3765,45 @@ mod tests {
                 vec![exhausted],
                 now_ms,
             ),
+            now_ms,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn usage_admission_does_not_refresh_one_service_from_another_service_observation() {
+        let now_ms = PROVIDER_USAGE_STALE_AFTER_MS * 2;
+        let stale_zen = ProviderAccountUsageMeter {
+            service_id: Some("opencode".to_string()),
+            ..capacity_meter(
+                "Zen credits",
+                ProviderAccountUsageMeterKind::CreditBalance,
+                ProviderAccountUsageMeterState::Exhausted,
+                now_ms - PROVIDER_USAGE_STALE_AFTER_MS - 1,
+                None,
+            )
+        };
+        let fresh_go = ProviderAccountUsageMeter {
+            service_id: Some("opencode-go".to_string()),
+            ..capacity_meter(
+                "Go monthly",
+                ProviderAccountUsageMeterKind::RollingLimit,
+                ProviderAccountUsageMeterState::Healthy,
+                now_ms,
+                Some(now_ms + 60_000),
+            )
+        };
+        let mixed = capacity_snapshot(
+            "opencode",
+            ProviderAccountUsageAvailability::Available,
+            vec![stale_zen, fresh_go],
+            now_ms,
+        );
+
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode/deepseek-v4-pro"),
+            &mixed,
             now_ms,
         )
         .is_none());
