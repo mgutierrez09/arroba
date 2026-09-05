@@ -694,6 +694,12 @@ function defaultRuntimeResilienceReportPath(now = new Date()) {
   return path.join(evidenceRoot, `${stamp}.json`)
 }
 
+function defaultChaosReplayPath(reportPath) {
+  const extension = path.extname(reportPath)
+  const basename = path.basename(reportPath, extension)
+  return path.join(path.dirname(reportPath), `${basename}-chaos-replay.json`)
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (options.help) {
@@ -703,10 +709,14 @@ async function main() {
   const selected = selectScenarios(options)
   const reportPath = options.reportPath ?? defaultRuntimeResilienceReportPath()
   const artifactIndexPath = options.artifactIndexPath ?? defaultDrillMatrixArtifactIndexPath(reportPath)
+  const executionOptions = {
+    ...options,
+    chaosReplayPath: options.chaosReplayPath ?? defaultChaosReplayPath(reportPath),
+  }
   const results = await runDrillMatrix({
     matrixName: "runtime-resilience-chaos-matrix",
     scenarios: selected,
-    commandForScenario: (scenarioItem) => commandForScenario(scenarioItem, options),
+    commandForScenario: (scenarioItem) => commandForScenario(scenarioItem, executionOptions),
     cwd: repoRoot,
     continueOnFailure: options.continueOnFailure,
     dryRun: options.dryRun,
