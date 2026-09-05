@@ -307,7 +307,7 @@ test("managed image and publication runtimes pin the same provider releases", as
   )
   const dockerfile = await readFile(publicationDockerfileUrl, "utf8")
   assert.deepEqual(versions, {
-    CHARIOX_CODEX_VERSION: "0.144.0",
+    CHARIOX_CODEX_VERSION: "0.144.5",
     CHARIOX_OPENCODE_VERSION: "1.18.23",
     CHARIOX_CLAUDE_VERSION: "2.1.207",
   })
@@ -333,11 +333,14 @@ test("managed slice image locks every network and compiler input", async () => {
   assert.match(dockerfile, /npm_config_cache=\/tmp\/chariox-npm-cache/)
   assert.match(dockerfile, /node_modules\/\.bin\/pnpm --version/)
   assert.match(dockerfile, /rm -rf \/tmp\/chariox-npm-cache \/root\/\.npm/)
-  assert.doesNotMatch(dockerfile, /^# syntax=/m)
+  assert.match(
+    dockerfile,
+    /^# syntax=docker\/dockerfile:1@sha256:[a-f0-9]{64}$/m,
+  )
   assert.doesNotMatch(dockerfile, /npm install|rustup\.rs|deb\.nodesource\.com/)
   assert.deepEqual(toolchainPackage.dependencies, {
     "@anthropic-ai/claude-code": "2.1.207",
-    "@openai/codex": "0.144.0",
+    "@openai/codex": "0.144.5",
     "opencode-ai": "1.18.23",
     pnpm: "11.22.0",
     ws: "8.18.3",
@@ -414,8 +417,10 @@ test("managed slice provider namespaces receive the required outer Docker compat
   const provisioner = await readFile(sliceProvisionerUrl, "utf8")
 
   assert.match(provisioner, /--security-opt seccomp=unconfined/)
-  assert.match(provisioner, /--security-opt apparmor=unconfined/)
+  assert.match(provisioner, /SLICE_APPARMOR_PROFILE="\$\{CHARIOX_SLICE_APPARMOR_PROFILE:-unconfined\}"/)
+  assert.match(provisioner, /--security-opt apparmor="\$SLICE_APPARMOR_PROFILE"/)
   assert.match(provisioner, /--security-opt systempaths=unconfined/)
+  assert.match(provisioner, /SLICE_APPARMOR_PROFILE.*\^\[A-Za-z0-9\]/)
   assert.match(provisioner, /CHARIOX_SLICE_ALLOW_UNCONFINED_SECCOMP must be 0 or 1/)
 })
 

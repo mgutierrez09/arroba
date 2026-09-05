@@ -10,7 +10,7 @@ COPY docker/publication/toolchain/canonicalize-sbom.mjs ./
 RUN npm ci --omit=dev \
   && npm sbom --sbom-format cyclonedx | node canonicalize-sbom.mjs > toolchain-sbom.cdx.json \
   && test "$(node_modules/.bin/pnpm --version)" = "9.15.0" \
-  && test "$(node_modules/.bin/codex --version)" = "codex-cli 0.144.0" \
+  && test "$(node_modules/.bin/codex --version)" = "codex-cli 0.144.5" \
   && test "$(node_modules/.bin/opencode --version)" = "1.18.23" \
   && test "$(node_modules/.bin/claude --version)" = "2.1.207 (Claude Code)"
 
@@ -26,7 +26,7 @@ RUN pnpm --filter @chariox/tool-display run build \
   && pnpm --filter @chariox/server run build
 
 FROM rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS rust-builder
-ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=297
+ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=306
 WORKDIR /opt/chariox
 COPY --from=ca-bundle /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN printf '%s\n' 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250701T000000Z bookworm main' > /etc/apt/sources.list \
@@ -52,10 +52,10 @@ LABEL org.opencontainers.image.title="Chariox workflow publication"
 LABEL org.opencontainers.image.description="Standalone Chariox kernel plus workflow publication gateway runtime."
 LABEL dev.chariox.debian-snapshot="20250701T000000Z"
 
-ARG CHARIOX_CODEX_VERSION=0.144.0
+ARG CHARIOX_CODEX_VERSION=0.144.5
 ARG CHARIOX_OPENCODE_VERSION=1.18.23
 ARG CHARIOX_CLAUDE_VERSION=2.1.207
-ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=297
+ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=306
 LABEL dev.chariox.provider.codex.version="${CHARIOX_CODEX_VERSION}"
 LABEL dev.chariox.provider.opencode.version="${CHARIOX_OPENCODE_VERSION}"
 LABEL dev.chariox.provider.claude.version="${CHARIOX_CLAUDE_VERSION}"
