@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import { providerAccountCapacity, providerAccountCapacityLabel } from "./provider-account-capacity.js"
@@ -98,6 +99,36 @@ test("Codex general and Spark allowance exhaustion are independent", () => {
   assert.equal(providerAccountCapacity(reverse, nowMs, "gpt-5.6-luna").state, "ready")
   assert.equal(providerAccountCapacity(reverse, nowMs, "gpt-5.3-codex-spark").state, "exhausted")
   assert.equal(providerAccountCapacity(reverse, nowMs, "codex/gpt-5.3-codex-spark").state, "exhausted")
+})
+
+test("presentation capacity matches the shared kernel admission fixtures", () => {
+  type FixtureMeter = Pick<ProviderAccountUsageMeter,
+    "meter_id" | "label" | "kind" | "state" | "observed_at_ms"
+  > & Partial<Pick<ProviderAccountUsageMeter, "service_id" | "resets_at_ms">>
+  type Fixture = {
+    readonly name: string
+    readonly provider: string
+    readonly model: string
+    readonly now_ms: number
+    readonly meters: readonly FixtureMeter[]
+    readonly expected_state: ReturnType<typeof providerAccountCapacity>["state"]
+    readonly expected_blocked: boolean
+  }
+  const fixtures = JSON.parse(readFileSync(
+    new URL("../../../fixtures/provider-account-capacity.json", import.meta.url),
+    "utf8",
+  )) as readonly Fixture[]
+
+  for (const fixture of fixtures) {
+    const meters = fixture.meters.map((meter): ProviderAccountUsageMeter => ({
+      ...meter,
+      scope: "account",
+      source: "shared_fixture",
+    }))
+    const state = providerAccountCapacity(profile(fixture.provider, meters), fixture.now_ms, fixture.model).state
+    assert.equal(state, fixture.expected_state, fixture.name)
+    assert.equal(state === "exhausted", fixture.expected_blocked, `${fixture.name} presentation/admission contract`)
+  }
 })
 
 function profile(provider: string, meters: ProviderAccountUsageMeter[]): ProviderAccountProfile {

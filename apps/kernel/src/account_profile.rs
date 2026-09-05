@@ -3524,6 +3524,79 @@ fn unsupported_provider(provider: &str) -> DaemonError {
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    struct CapacityPolicyFixture {
+        name: String,
+        provider: String,
+        model: String,
+        now_ms: u64,
+        meters: Vec<CapacityPolicyFixtureMeter>,
+        expected_blocked: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct CapacityPolicyFixtureMeter {
+        meter_id: String,
+        label: String,
+        #[serde(default)]
+        service_id: Option<String>,
+        kind: ProviderAccountUsageMeterKind,
+        state: ProviderAccountUsageMeterState,
+        observed_at_ms: u64,
+        #[serde(default)]
+        resets_at_ms: Option<u64>,
+    }
+
+    #[test]
+    fn admission_capacity_matches_the_shared_client_projection_fixtures() {
+        let fixtures: Vec<CapacityPolicyFixture> = serde_json::from_str(include_str!(
+            "../../../fixtures/provider-account-capacity.json"
+        ))
+        .expect("shared capacity fixtures must remain valid");
+
+        for fixture in fixtures {
+            let meters = fixture
+                .meters
+                .into_iter()
+                .map(|meter| ProviderAccountUsageMeter {
+                    meter_id: meter.meter_id,
+                    label: meter.label,
+                    service_id: meter.service_id,
+                    kind: meter.kind,
+                    scope: ProviderAccountUsageMeterScope::Account,
+                    used_percent: None,
+                    used: None,
+                    remaining: None,
+                    total: None,
+                    unit: None,
+                    window_duration_minutes: None,
+                    resets_at_ms: meter.resets_at_ms,
+                    state: meter.state,
+                    source: "shared_fixture".to_string(),
+                    observed_at_ms: meter.observed_at_ms,
+                })
+                .collect();
+            let usage = capacity_snapshot(
+                &fixture.provider,
+                ProviderAccountUsageAvailability::Available,
+                meters,
+                fixture.now_ms,
+            );
+            assert_eq!(
+                provider_account_usage_block(
+                    &fixture.provider,
+                    Some(&fixture.model),
+                    &usage,
+                    fixture.now_ms,
+                )
+                .is_some(),
+                fixture.expected_blocked,
+                "{}",
+                fixture.name,
+            );
+        }
+    }
+
     #[test]
     fn cloud_owner_aliases_local_accounts_without_aliasing_collaborators() {
         let mut config = crate::config::DaemonConfig::for_tests();

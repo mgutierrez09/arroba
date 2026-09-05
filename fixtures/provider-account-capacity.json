@@ -1,0 +1,165 @@
+[
+  {
+    "name": "OpenCode Go exhaustion blocks Go",
+    "provider": "opencode",
+    "model": "opencode-go/deepseek-v4-pro",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "go/monthly",
+        "label": "Go monthly",
+        "service_id": "opencode-go",
+        "kind": "rolling_limit",
+        "state": "exhausted",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      }
+    ],
+    "expected_state": "exhausted",
+    "expected_blocked": true
+  },
+  {
+    "name": "fresh Go does not refresh stale Zen credits",
+    "provider": "opencode",
+    "model": "opencode/deepseek-v4-pro",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "zen/credits",
+        "label": "Zen credits",
+        "service_id": "opencode",
+        "kind": "credit_balance",
+        "state": "exhausted",
+        "observed_at_ms": 113599999
+      },
+      {
+        "meter_id": "go/monthly",
+        "label": "Go monthly",
+        "service_id": "opencode-go",
+        "kind": "rolling_limit",
+        "state": "healthy",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      }
+    ],
+    "expected_state": "unknown",
+    "expected_blocked": false
+  },
+  {
+    "name": "Codex allowance exhaustion with healthy credits warns",
+    "provider": "codex",
+    "model": "gpt-5.6-luna",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "rolling/10080/codex",
+        "label": "Weekly",
+        "kind": "rolling_limit",
+        "state": "exhausted",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      },
+      {
+        "meter_id": "credits",
+        "label": "Credits",
+        "kind": "credit_balance",
+        "state": "healthy",
+        "observed_at_ms": 200000000
+      }
+    ],
+    "expected_state": "warning",
+    "expected_blocked": false
+  },
+  {
+    "name": "Codex allowance and credits exhaustion blocks",
+    "provider": "codex",
+    "model": "gpt-5.6-luna",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "rolling/10080/codex",
+        "label": "Weekly",
+        "kind": "rolling_limit",
+        "state": "exhausted",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      },
+      {
+        "meter_id": "credits",
+        "label": "Credits",
+        "kind": "credit_balance",
+        "state": "exhausted",
+        "observed_at_ms": 200000000
+      }
+    ],
+    "expected_state": "exhausted",
+    "expected_blocked": true
+  },
+  {
+    "name": "Codex Spark ignores exhausted general allowance",
+    "provider": "codex",
+    "model": "gpt-5.3-codex-spark",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "rolling/10080/codex",
+        "label": "Weekly",
+        "kind": "rolling_limit",
+        "state": "exhausted",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      },
+      {
+        "meter_id": "rolling/300/codex_bengalfox",
+        "label": "Spark",
+        "kind": "rolling_limit",
+        "state": "healthy",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      },
+      {
+        "meter_id": "credits",
+        "label": "Credits",
+        "kind": "credit_balance",
+        "state": "exhausted",
+        "observed_at_ms": 200000000
+      }
+    ],
+    "expected_state": "ready",
+    "expected_blocked": false
+  },
+  {
+    "name": "stale Claude credits do not combine with fresh exhausted allowance",
+    "provider": "claude",
+    "model": "claude-opus-4-8",
+    "now_ms": 200000000,
+    "meters": [
+      {
+        "meter_id": "session",
+        "label": "Session",
+        "kind": "rolling_limit",
+        "state": "exhausted",
+        "observed_at_ms": 200000000,
+        "resets_at_ms": 201000000
+      },
+      {
+        "meter_id": "credits",
+        "label": "Credits",
+        "kind": "credit_balance",
+        "state": "exhausted",
+        "observed_at_ms": 113599999
+      }
+    ],
+    "expected_state": "warning",
+    "expected_blocked": false
+  },
+  {
+    "name": "arbitrary OpenCode upstream without a meter remains unknown",
+    "provider": "opencode",
+    "model": "fireworks/deepseek-v4-pro",
+    "now_ms": 200000000,
+    "meters": [],
+    "expected_state": "unknown",
+    "expected_blocked": false
+  }
+]
