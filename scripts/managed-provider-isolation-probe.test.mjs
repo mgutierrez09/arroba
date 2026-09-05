@@ -52,6 +52,14 @@ test("provider isolation probe authenticates and launches Codex through the kern
         }))
         return
       }
+      if (frame.request.GetProviderRun) {
+        socket.send(response(frame.request_id, {
+          ProviderRun: {
+            provider_run: { id: "provider-run-1", state: "running" },
+          },
+        }))
+        return
+      }
       socket.send(response(frame.request_id, { SessionEnded: { session_id: "session-1" } }))
     })
   })
@@ -80,13 +88,16 @@ test("provider isolation probe authenticates and launches Codex through the kern
       "host process roots",
     ],
   })
-  assert.equal(requests.length, 3)
+  assert.equal(requests.length, 4)
   assert.deepEqual(requests[0], {
     CreateSession: { workspace_id: workspace, worktree_id: workspace },
   })
   assert.equal(requests[1].LaunchProviderRun.provider, "codex")
   assert.equal(requests[1].LaunchProviderRun.adapter_key, "codex")
-  assert.deepEqual(requests[2], { EndSession: { session_id: "session-1" } })
+  assert.deepEqual(requests[2], {
+    GetProviderRun: { provider_run_id: "provider-run-1" },
+  })
+  assert.deepEqual(requests[3], { EndSession: { session_id: "session-1" } })
 })
 
 function response(requestId, payload) {

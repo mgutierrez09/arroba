@@ -18,7 +18,9 @@ export function retainRoomActivityNotices(
   const notices = new Map<string, TranscriptEntry>()
   for (const entry of [...refreshed, ...current]) {
     if (!isRoomNotice(entry) || !entry.mergeKey?.startsWith(prefix) || entry.text.length > 64 * 1024) continue
-    notices.set(entry.mergeKey, { ...entry, turnId: undefined, turnTracking: "none" })
+    const notice = { ...entry, turnTracking: "none" as const }
+    delete notice.turnId
+    notices.set(entry.mergeKey, notice)
   }
   const retained = transcriptRetentionSlice([...notices.values()], { maxEntries: 128, maxChars: 64 * 1024 }).kept
   return reindexTranscriptEntries([...refreshed.filter((entry) => !isRoomNotice(entry)), ...retained], 0)

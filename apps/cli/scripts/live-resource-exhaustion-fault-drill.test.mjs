@@ -21,6 +21,10 @@ test("resource exhaustion dry-run records two isolated commands outside the repo
     assert.deepEqual(report.caseIds, ["fault.resource-exhaustion", "cleanup.resources"])
     assert.deepEqual(report.commands.map((command) => command.mode), ["file-descriptor", "process"])
     assert(report.commands.every((command) => command.name === "bash"))
+    const processCommand = report.commands.find((command) => command.mode === "process")
+    assert.match(processCommand.args[1], /current_tasks=/)
+    assert.match(processCommand.args[1], /current_tasks \+ \$1/)
+    assert.equal(processCommand.args[3], "32")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

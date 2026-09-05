@@ -75,6 +75,7 @@ pub(crate) struct PtyInputWriter {
 }
 
 struct PtyInputRequest {
+    provider_run_id: String,
     bytes: Vec<u8>,
     completion_tx: Option<SyncSender<Result<(), String>>>,
 }
@@ -264,10 +265,14 @@ impl PtyManager {
             })?;
         let (input_tx, input_rx) = mpsc::sync_channel(PTY_INPUT_QUEUE_LIMIT);
         let writer_provider_run_id = request.provider_run_id.clone();
+        let writer_process_key = request.process_key.clone();
+        let writer_output_signal = self.output_signal.clone();
         let writer_thread = thread::Builder::new()
             .name(format!("chariox-pty-writer-{}", request.provider_run_id))
             .stack_size(PTY_WRITER_STACK_BYTES)
-            .spawn(move || run_pty_writer(writer, input_rx));
+            .spawn(move || {
+                run_pty_writer(writer, input_rx, writer_process_key, writer_output_signal)
+            });
         if let Err(error) = writer_thread {
             let _ = child.kill();
             let _ = child.wait();
@@ -364,6 +369,7 @@ impl PtyInputWriter {
     pub(crate) fn write_input(&self, input: &[u8]) -> Result<(), DaemonError> {
         let (completion_tx, completion_rx) = mpsc::sync_channel(1);
         self.send_request(PtyInputRequest {
+            provider_run_id: self.provider_run_id.clone(),
             bytes: input.to_vec(),
             completion_tx: Some(completion_tx),
         })?;
@@ -381,6 +387,7 @@ impl PtyInputWriter {
 
     pub(crate) fn enqueue_input(&self, input: &[u8]) -> Result<(), DaemonError> {
         self.send_request(PtyInputRequest {
+            provider_run_id: self.provider_run_id.clone(),
             bytes: input.to_vec(),
             completion_tx: None,
         })
@@ -402,12 +409,18 @@ impl PtyInputWriter {
     }
 }
 
-fn run_pty_writer(mut writer: Box<dyn Write + Send>, input_rx: Receiver<PtyInputRequest>) {
+fn run_pty_writer(
+    mut writer: Box<dyn Write + Send>,
+    input_rx: Receiver<PtyInputRequest>,
+    process_key: String,
+    output_signal: PtyOutputSignal,
+) {
     while let Ok(request) = input_rx.recv() {
+        output_signal.prefer_alias(&process_key, &request.provider_run_id);
         let result = writer
             .write_all(&request.bytes)
-            .and_then(|_| writer.flush())
-            .map_err(|error| error.to_string());
+            .and_then(|_| writer.flush());
+        let result = result.map_err(|error| error.to_string());
         let failed = result.is_err();
         if let Some(completion_tx) = request.completion_tx {
             let _ = completion_tx.send(result);
@@ -768,7 +781,30 @@ mod tests {
         AgentEndpointMode, LaunchProviderRequest, ProviderLaunchResult, RuntimeProviderRun,
     };
 
-    use super::{mpsc, PtyInputWriter, PtyManager, PtySpawnRequest, PTY_INPUT_QUEUE_LIMIT};
+    use super::{
+        mpsc, run_pty_writer, PtyInputRequest, PtyInputWriter, PtyManager, PtyOutputSignal,
+        PtySpawnRequest, PTY_INPUT_QUEUE_LIMIT,
+    };
+
+    struct AttributionProbeWriter {
+        process_key: String,
+        output_signal: PtyOutputSignal,
+        observed_tx: mpsc::SyncSender<std::collections::BTreeSet<String>>,
+    }
+
+    impl std::io::Write for AttributionProbeWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.output_signal.record_output(&self.process_key);
+            self.observed_tx
+                .send(self.output_signal.take_ready_provider_run_ids())
+                .expect("probe observation receiver should remain connected");
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn test_run() -> RuntimeProviderRun {
         RuntimeProviderRun::new(
@@ -1049,6 +1085,97 @@ mod tests {
     }
 
     #[test]
+    fn shared_pty_selects_the_input_alias_before_the_child_can_emit_output() {
+        let process_key = "stub-pty:shared";
+        let first_run = "provider-run-1";
+        let second_run = "provider-run-2";
+        let output_signal = PtyOutputSignal::default();
+        output_signal.register_alias(process_key, first_run.to_string());
+        output_signal.register_alias(process_key, second_run.to_string());
+        let (observed_tx, observed_rx) = mpsc::sync_channel(1);
+        let probe = AttributionProbeWriter {
+            process_key: process_key.to_string(),
+            output_signal: output_signal.clone(),
+            observed_tx,
+        };
+        let (input_tx, input_rx) = mpsc::sync_channel(1);
+        let (completion_tx, completion_rx) = mpsc::sync_channel(1);
+        let writer_thread = thread::spawn({
+            let output_signal = output_signal.clone();
+            move || {
+                run_pty_writer(
+                    Box::new(probe),
+                    input_rx,
+                    process_key.to_string(),
+                    output_signal,
+                )
+            }
+        });
+
+        input_tx
+            .send(PtyInputRequest {
+                provider_run_id: first_run.to_string(),
+                bytes: b"first input".to_vec(),
+                completion_tx: Some(completion_tx),
+            })
+            .expect("probe input should queue");
+        completion_rx
+            .recv()
+            .expect("probe completion should arrive")
+            .expect("probe input should write");
+        assert_eq!(
+            observed_rx.recv().expect("probe observation should arrive"),
+            [first_run.to_string()].into_iter().collect()
+        );
+
+        drop(input_tx);
+        writer_thread.join().expect("probe writer should stop");
+    }
+
+    #[test]
+    fn retained_shared_pty_writer_attributes_output_when_input_is_dispatched() {
+        let first_run = shared_target_run("provider-run-1");
+        let second_run = shared_target_run("provider-run-2");
+        let mut manager = PtyManager::new();
+
+        manager
+            .spawn_for_run(&first_run)
+            .expect("first shared PTY run should spawn");
+        manager
+            .spawn_for_run(&second_run)
+            .expect("second shared PTY run should reuse the existing process");
+        let first_writer = manager
+            .input_writer_for_test(first_run.id())
+            .expect("first retained writer should clone");
+        let _second_writer = manager
+            .input_writer_for_test(second_run.id())
+            .expect("second retained writer should clone");
+
+        first_writer
+            .write_input(b"first retained writer\n")
+            .expect("first retained writer should dispatch after the second is acquired");
+        let output = wait_for_output(&mut manager, first_run.id());
+        assert!(String::from_utf8_lossy(
+            &output
+                .into_iter()
+                .flat_map(|chunk| chunk.bytes)
+                .collect::<Vec<u8>>()
+        )
+        .contains("first retained writer"));
+        assert_eq!(
+            manager.output_signal().take_ready_provider_run_ids(),
+            [first_run.id().to_string()].into_iter().collect()
+        );
+
+        manager
+            .remove_process(first_run.id())
+            .expect("first alias cleanup should succeed");
+        manager
+            .remove_process(second_run.id())
+            .expect("second alias cleanup should succeed");
+    }
+
+    #[test]
     fn reuses_shared_pty_targets_until_last_provider_run_is_removed() {
         let first_run = shared_target_run("provider-run-1");
         let second_run = shared_target_run("provider-run-2");
@@ -1065,9 +1192,9 @@ mod tests {
         assert_eq!(manager.process_aliases.len(), 2);
 
         manager
-            .write_input(second_run.id(), b"shared pty\n")
-            .expect("shared PTY should accept input from the second run alias");
-        let output = wait_for_output(&mut manager, second_run.id());
+            .write_input(first_run.id(), b"shared pty\n")
+            .expect("shared PTY should accept input from the first run alias");
+        let output = wait_for_output(&mut manager, first_run.id());
         let combined = output
             .into_iter()
             .flat_map(|chunk| chunk.bytes)
@@ -1075,7 +1202,7 @@ mod tests {
         assert!(String::from_utf8_lossy(&combined).contains("shared pty"));
         assert_eq!(
             manager.output_signal().take_ready_provider_run_ids(),
-            [second_run.id().to_string()].into_iter().collect()
+            [first_run.id().to_string()].into_iter().collect()
         );
 
         manager
