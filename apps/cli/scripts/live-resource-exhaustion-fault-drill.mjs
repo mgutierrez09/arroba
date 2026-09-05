@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
 import {
+  PROCESS_LIMIT_HEADROOM,
+  PROCESS_LIMIT_SHELL,
   RESOURCE_EXHAUSTION_CASE_IDS,
   boundedEvidenceText,
   parseResourceExhaustionProbes,
@@ -21,7 +23,7 @@ const probe = path.join(scriptDir, "lib", "resource-exhaustion-probe.mjs")
 const marker = `chariox-resource-probe-${randomUUID()}`
 const commands = [
   probeCommand("file-descriptor", "ulimit -n \"$1\"", "64"),
-  probeCommand("process", "ulimit -u \"$1\"", "64"),
+  probeCommand("process", PROCESS_LIMIT_SHELL, PROCESS_LIMIT_HEADROOM),
 ]
 
 const options = parseArgs(process.argv.slice(2))

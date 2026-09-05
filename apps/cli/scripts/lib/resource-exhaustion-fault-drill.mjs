@@ -3,6 +3,16 @@ export const RESOURCE_EXHAUSTION_CASE_IDS = Object.freeze([
   "cleanup.resources",
 ])
 
+export const PROCESS_LIMIT_HEADROOM = "32"
+export const PROCESS_LIMIT_SHELL = [
+  'if [ "$(uname -s)" = "Linux" ]; then',
+  'current_tasks="$(ps -eLo uid= | awk -v uid="$(id -u)" \'$1 == uid { count += 1 } END { print count + 0 }\')"',
+  "else",
+  'current_tasks="$(ps -u "$(id -u)" -o pid= | wc -l | tr -d \' \')"',
+  "fi",
+  'ulimit -u "$((current_tasks + $1))"',
+].join("\n")
+
 const PROBE_SCHEMA = "chariox.resource_exhaustion_probe.v1"
 const EXPECTED_MODES = Object.freeze(["file-descriptor", "process"])
 const EXPECTED_CODES = Object.freeze({
