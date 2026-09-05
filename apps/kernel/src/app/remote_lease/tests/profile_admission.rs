@@ -272,7 +272,7 @@ async fn cancelling_leased_prompt_admission_releases_profile_operations() {
 }
 
 #[tokio::test]
-async fn leased_prompt_reconciles_home_profile_after_lost_update_acknowledgement() {
+async fn leased_prompt_reconciles_durable_home_profile_after_lost_ack_and_restart() {
     let (mut app, lease) = leased_agent_fixture(false);
     RemoteLeaseRuntime::new(&mut app)
         .update_leased_agent_profile(
@@ -286,6 +286,11 @@ async fn leased_prompt_reconciles_home_profile_after_lost_update_acknowledgement
     let home_profile = crate::transport::relay_peer::RelayAgentExecutionProfile::from(
         &app.agents().get_agent(&lease.backing_agent_id).unwrap(),
     );
+    // Model the only profile state retained by the home kernel across a crash:
+    // its last committed durable selection. The pending transition and response
+    // acknowledgement are deliberately absent after this contract round-trip.
+    let durable_home_profile = serde_json::to_vec(&home_profile).unwrap();
+    drop(home_profile);
     // The worker applies an update, but its acknowledgement never reaches home.
     RemoteLeaseRuntime::new(&mut app)
         .update_leased_agent_profile(
@@ -296,6 +301,8 @@ async fn leased_prompt_reconciles_home_profile_after_lost_update_acknowledgement
             Some("high".into()),
         )
         .unwrap();
+    let home_profile: crate::transport::relay_peer::RelayAgentExecutionProfile =
+        serde_json::from_slice(&durable_home_profile).unwrap();
     let app = std::sync::Arc::new(tokio::sync::Mutex::new(app));
     let router = crate::runtime::router::CommandRouter::with_interactive_capacity(app.clone(), 2);
     let (provider_run_id, _outcome) = router
