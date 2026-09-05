@@ -416,10 +416,10 @@ fn run_pty_writer(
     output_signal: PtyOutputSignal,
 ) {
     while let Ok(request) = input_rx.recv() {
-        let result = writer.write_all(&request.bytes).and_then(|_| {
-            output_signal.prefer_alias(&process_key, &request.provider_run_id);
-            writer.flush()
-        });
+        output_signal.prefer_alias(&process_key, &request.provider_run_id);
+        let result = writer
+            .write_all(&request.bytes)
+            .and_then(|_| writer.flush());
         let result = result.map_err(|error| error.to_string());
         let failed = result.is_err();
         if let Some(completion_tx) = request.completion_tx {
@@ -781,7 +781,30 @@ mod tests {
         AgentEndpointMode, LaunchProviderRequest, ProviderLaunchResult, RuntimeProviderRun,
     };
 
-    use super::{mpsc, PtyInputWriter, PtyManager, PtySpawnRequest, PTY_INPUT_QUEUE_LIMIT};
+    use super::{
+        mpsc, run_pty_writer, PtyInputRequest, PtyInputWriter, PtyManager, PtyOutputSignal,
+        PtySpawnRequest, PTY_INPUT_QUEUE_LIMIT,
+    };
+
+    struct AttributionProbeWriter {
+        process_key: String,
+        output_signal: PtyOutputSignal,
+        observed_tx: mpsc::SyncSender<std::collections::BTreeSet<String>>,
+    }
+
+    impl std::io::Write for AttributionProbeWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.output_signal.record_output(&self.process_key);
+            self.observed_tx
+                .send(self.output_signal.take_ready_provider_run_ids())
+                .expect("probe observation receiver should remain connected");
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn test_run() -> RuntimeProviderRun {
         RuntimeProviderRun::new(
@@ -1059,6 +1082,54 @@ mod tests {
         manager
             .remove_process(provider_run_id)
             .expect("provider process cleanup should succeed");
+    }
+
+    #[test]
+    fn shared_pty_selects_the_input_alias_before_the_child_can_emit_output() {
+        let process_key = "stub-pty:shared";
+        let first_run = "provider-run-1";
+        let second_run = "provider-run-2";
+        let output_signal = PtyOutputSignal::default();
+        output_signal.register_alias(process_key, first_run.to_string());
+        output_signal.register_alias(process_key, second_run.to_string());
+        let (observed_tx, observed_rx) = mpsc::sync_channel(1);
+        let probe = AttributionProbeWriter {
+            process_key: process_key.to_string(),
+            output_signal: output_signal.clone(),
+            observed_tx,
+        };
+        let (input_tx, input_rx) = mpsc::sync_channel(1);
+        let (completion_tx, completion_rx) = mpsc::sync_channel(1);
+        let writer_thread = thread::spawn({
+            let output_signal = output_signal.clone();
+            move || {
+                run_pty_writer(
+                    Box::new(probe),
+                    input_rx,
+                    process_key.to_string(),
+                    output_signal,
+                )
+            }
+        });
+
+        input_tx
+            .send(PtyInputRequest {
+                provider_run_id: first_run.to_string(),
+                bytes: b"first input".to_vec(),
+                completion_tx: Some(completion_tx),
+            })
+            .expect("probe input should queue");
+        completion_rx
+            .recv()
+            .expect("probe completion should arrive")
+            .expect("probe input should write");
+        assert_eq!(
+            observed_rx.recv().expect("probe observation should arrive"),
+            [first_run.to_string()].into_iter().collect()
+        );
+
+        drop(input_tx);
+        writer_thread.join().expect("probe writer should stop");
     }
 
     #[test]
