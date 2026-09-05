@@ -213,6 +213,32 @@ test("runtime resilience matrix defaults reports to the external evidence root",
   }
 })
 
+test("runtime resilience matrix derives its deterministic replay beside an explicit report", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "chariox-runtime-resilience-derived-replay-"))
+  const reportPath = path.join(rootDir, "matrix.json")
+  const artifactIndexPath = path.join(rootDir, "chariox-drill-artifacts.json")
+  try {
+    await execFile(process.execPath, [
+      scriptPath,
+      "--dry-run",
+      "--only",
+      "deterministic-runtime-convergence",
+      "--report",
+      reportPath,
+      "--artifact-index",
+      artifactIndexPath,
+    ])
+
+    const report = JSON.parse(await readFile(reportPath, "utf8"))
+    assert.deepEqual(report.scenarios[0].args.slice(-2), [
+      "--output",
+      path.join(rootDir, "matrix-chaos-replay.json"),
+    ])
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})
+
 test("runtime resilience matrix retains a validated deterministic replay on success", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "chariox-runtime-resilience-replay-"))
   const reportPath = path.join(rootDir, "matrix.json")

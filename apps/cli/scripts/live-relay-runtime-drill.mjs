@@ -11,6 +11,10 @@ import {
   resolveBuiltBinary,
 } from './lib/drill-runtime-helpers.mjs'
 import { sanitizeDrillMetadata } from './lib/drill-secrets.mjs'
+import {
+  collectPumpedTerminalOutput,
+  terminalText,
+} from './lib/relay-runtime-terminal-output.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const cliRoot = path.resolve(scriptDir, '..')
@@ -294,21 +298,11 @@ async function waitForCompletion(remoteClient, sessionId, attachmentId, eventBuc
     if (completions.length > baselineCount) {
       return completions[completions.length - 1]
     }
-    await remoteClient.send(pumpTerminalOutputRequest(sessionId, attachmentId)).catch(() => {})
+    const response = await remoteClient.send(pumpTerminalOutputRequest(sessionId, attachmentId)).catch(() => null)
+    collectPumpedTerminalOutput(response, eventBucket)
     await sleep(pollMs)
   }
   throw new Error('timed out waiting for assistant message completion')
-}
-
-function terminalText(eventBucket) {
-  return eventBucket
-    .filter((event) => event.event === 'terminal_output')
-    .flatMap((event) => event.records ?? [])
-    .filter((record) => record.kind !== 'PromptEcho')
-    .map((record) => Array.isArray(record.bytes)
-      ? Buffer.from(record.bytes).toString('utf8')
-      : String(record.text ?? record.data ?? record.output ?? ''))
-    .join('')
 }
 
 async function waitForPromptEvidence(remoteClient, sessionId, attachmentId, eventBucket, options) {
@@ -328,7 +322,8 @@ async function waitForPromptEvidence(remoteClient, sessionId, attachmentId, even
     if (terminalText(eventBucket).includes(options.expectedText)) {
       return { completed_at_ms: Date.now(), evidence: 'terminal_output' }
     }
-    await remoteClient.send(pumpTerminalOutputRequest(sessionId, attachmentId)).catch(() => {})
+    const response = await remoteClient.send(pumpTerminalOutputRequest(sessionId, attachmentId)).catch(() => null)
+    collectPumpedTerminalOutput(response, eventBucket)
     await sleep(options.pollMs)
   }
   throw new Error(`timed out waiting for dev-stub terminal output ${options.expectedText}`)
