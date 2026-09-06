@@ -54,7 +54,10 @@ export async function executeProviderCommand(
       accountProfile,
       value,
       replace,
-      { sessionId: context.sessionId, agentId: context.agentId },
+      {
+        ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        ...(context.agentId ? { agentId: context.agentId } : {}),
+      },
     ))
     const stored = expectVariant<{
       provider: string
