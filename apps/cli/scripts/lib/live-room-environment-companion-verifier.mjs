@@ -3,6 +3,9 @@ import path from "node:path"
 import { assertRoomRealProviderAction, assertRoomBrowserFormActions } from "./live-room-real-provider.mjs"
 import { assertRoomBrowserRecoveryActions } from "./live-room-browser-recovery.mjs"
 import { roomDrillCompanionTimeoutMs } from "./room-drill-companion-budget.mjs"
+import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
+import { createRoomDrillTuiEvidence } from "./room-drill-tui-evidence.mjs"
+import { setTimeout as sleep } from "node:timers/promises"
 
 import {
   publishRoomDrillCompanionReady,
@@ -21,13 +24,23 @@ export async function runRoomEnvironmentCompanion(input) {
     schema: "chariox.room_environment.companion_ready.v1",
     ...input.ready,
   })
+  const tuiEvidence = input.readTuiNotices
+    ? createRoomDrillTuiEvidence(input.localNoticeIds, input.remoteNoticeIds) : null
+  let nextSampleAt = 0
+  const sampleTuis = async (force = false) => {
+    if (!tuiEvidence || (!force && Date.now() < nextSampleAt)) return
+    tuiEvidence.observe(await input.readTuiNotices())
+    nextSampleAt = Date.now() + 2000
+  }
+  await sampleTuis()
   const companion = await waitForRoomDrillCompanionResult(directory, {
     sessionId: input.ready.sessionId,
     environmentId: input.ready.environmentId,
     timeoutMs,
     pollIntervalMs: 100,
-    sleep: input.sleep,
+    sleep: async ms => { await sampleTuis(); await (input.sleep ?? sleep)(ms) },
   })
+  await sampleTuis(true)
   validateCompanionResult(companion)
   if (input.ready.realProvider) {
     assert.ok(companion.provider, "Web companion omitted required real-provider evidence")
@@ -69,14 +82,14 @@ export async function runRoomEnvironmentCompanion(input) {
     await input.waitForPhysicalEffect("WEB_DRAG_SELECTION_OK WINDOW_GEOMETRY_STABLE")
     await input.waitForPhysicalEffect("WEB_SCROLL_BOTH_AXES_OK")
   }
-  const history = unwrap(
+  const history = await readRoomDrillActionHistory(async (before, limit) => unwrap(
     await input.client.send(input.requests.listRoomEnvironmentActionHistoryRequest(
       input.ready.sessionId,
-      null,
-      100,
+      before,
+      limit,
     )),
     "RoomEnvironmentActionHistoryListed",
-  ).page.actions
+  ).page)
   const webAction = history.find((action) => action.action_id === companion.actionId)
   assert.ok(webAction, `Web companion action ${companion.actionId} was absent from kernel history`)
   assert.equal(webAction.actor_id, companion.actorId)
@@ -155,18 +168,26 @@ export async function runRoomEnvironmentCompanion(input) {
     [companion.gestures.dragActionId, companion.gestures.scrollActionId], "Web gestures emitted extra actions")
   }
   await input.activityController.synchronize()
+  const observedActions = []
   for (const action of actions) {
-    await Promise.all([
-      input.waitForLocalActionNotice(input.localNoticeIds, action),
-      input.waitForRemoteActionNotice(input.remoteNoticeIds, action),
-    ])
+    const receipt = { actionId: action.action_id, sequence: action.sequence }
+    await Promise.all(["local", "remote"].map(async side => {
+      receipt[side] = tuiEvidence?.find(side, action)
+      if (!receipt[side]) {
+        await (side === "local"
+          ? input.waitForLocalActionNotice(input.localNoticeIds, action)
+          : input.waitForRemoteActionNotice(input.remoteNoticeIds, action))
+        receipt[side] = { source: "final-snapshot", observedAt: new Date().toISOString() }
+      }
+    }))
+    observedActions.push(receipt)
   }
   const after = unwrap(
     await input.observerClient.send(input.requests.getRoomEnvironmentStateRequest(input.ready.sessionId)),
     "RoomEnvironmentState",
   ).environment
   assert.equal(after.input_ownership.some((owner) => owner.target?.kind === "desktop"), false)
-  return companion
+  return { ...companion, tuiEvidence: { ...tuiEvidence?.summary(), actions: observedActions } }
 }
 
 function validateCompanionResult(companion) {
