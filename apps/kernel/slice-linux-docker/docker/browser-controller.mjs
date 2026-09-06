@@ -7,6 +7,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { BrowserCdpClient, BrowserControllerError } from "./browser-controller-cdp.mjs";
+import { BrowserActionError } from "./browser-controller-actions.mjs";
 
 export async function handleBrowserControllerRequest(
   request,
@@ -113,7 +114,7 @@ export async function handleBrowserControllerRequest(
     );
   } catch (error) {
     const code =
-      error instanceof BrowserControllerError
+      error instanceof BrowserControllerError || error instanceof BrowserActionError
         ? error.code
         : "browser_controller_internal";
     return errorResponse(

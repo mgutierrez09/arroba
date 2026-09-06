@@ -26,12 +26,14 @@ impl KernelRuntimeState {
         agent_id: &str,
         tab_id: &str,
     ) -> Result<BrowserControllerActionExecution<RoomBrowserDownloadsResult>, DaemonError> {
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.execute_browser_configuration_as_agent(
             session_id,
             agent_id,
             tab_id,
             Configuration::Downloads,
-            self.configure_browser_environment_downloads(session_id, tab_id),
+            &execution_id,
+            self.configure_browser_environment_downloads(session_id, &execution_id, tab_id),
         )
         .await
     }
@@ -44,12 +46,20 @@ impl KernelRuntimeState {
         permission: BrowserPermissionName,
         setting: BrowserPermissionSetting,
     ) -> Result<BrowserControllerActionExecution<RoomBrowserPermissionResult>, DaemonError> {
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.execute_browser_configuration_as_agent(
             session_id,
             agent_id,
             tab_id,
             Configuration::Permission,
-            self.set_browser_environment_permission(session_id, tab_id, permission, setting),
+            &execution_id,
+            self.set_browser_environment_permission(
+                session_id,
+                &execution_id,
+                tab_id,
+                permission,
+                setting,
+            ),
         )
         .await
     }
@@ -60,6 +70,7 @@ impl KernelRuntimeState {
         agent_id: &str,
         tab_id: &str,
         configuration: Configuration,
+        execution_id: &str,
         execution: impl Future<Output = Result<T, DaemonError>>,
     ) -> Result<BrowserControllerActionExecution<T>, DaemonError> {
         let environment = self
@@ -67,7 +78,7 @@ impl KernelRuntimeState {
             .map_err(|error| controller_route_error(&format!("{}: {error:?}", error.code())))?;
         let request = configuration_request(&environment, agent_id, tab_id, configuration)?;
         let targets = request.targets.clone();
-        self.execute_browser_mutation(session_id, request, None, async {
+        self.execute_browser_mutation(session_id, request, Some(execution_id), async {
             // A queued operation must not silently affect newly discovered
             // tabs that were absent from its original ownership reservation.
             let current = self

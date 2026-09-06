@@ -333,7 +333,7 @@ impl BrowserControllerProcessStore {
         )
     }
 
-    fn perform_cancellable_operation(
+    pub(super) fn perform_cancellable_operation(
         &self,
         session_id: &str,
         execution_id: &str,
@@ -394,7 +394,7 @@ impl BrowserControllerProcessStore {
         self.recover_cancellable_operation(session_id, execution_id, fingerprint)
     }
 
-    fn recover_cancellable_operation(
+    pub(super) fn recover_cancellable_operation(
         &self,
         session_id: &str,
         execution_id: &str,

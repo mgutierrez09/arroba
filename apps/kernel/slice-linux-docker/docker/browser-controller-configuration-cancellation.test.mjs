@@ -2,8 +2,23 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import readline from "node:readline";
 import test from "node:test";
-import { BrowserControllerStdioServer } from "./browser-controller.mjs";
+import { BrowserControllerStdioServer, handleBrowserControllerRequest } from "./browser-controller.mjs";
 import { BrowserCdpClient } from "./browser-controller-cdp.mjs";
+
+for (const method of ["browser.downloads.configure", "browser.permission", "browser.upload"]) {
+  test(`${method} cancelled before CDP entry returns typed cancellation without opening Chrome`, async () => {
+    const cancellation = new AbortController();
+    cancellation.abort();
+    let connections = 0;
+    const browser = new BrowserCdpClient({ connectionFactory: async () => { connections++; throw new Error("must not connect"); } });
+    try {
+      const result = await handleBrowserControllerRequest({ id: 1, method, params: {} }, { browser, signal: cancellation.signal });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "browser_action_cancelled");
+      assert.equal(connections, 0);
+    } finally { await browser.close(); }
+  });
+}
 
 for (const method of ["browser.downloads.configure", "browser.permission"]) {
   const physicalMethod = method === "browser.permission" ? "Browser.setPermission" : "Browser.setDownloadBehavior";

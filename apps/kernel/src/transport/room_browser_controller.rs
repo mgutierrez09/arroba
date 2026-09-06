@@ -193,6 +193,12 @@ pub(crate) enum RoomBrowserControllerCommand {
         action: crate::runtime::browser_controller_action::BrowserDialogAction,
     },
     ConfigureDownloads {
+        execution_id: String,
+        target_id: String,
+        document_id: String,
+    },
+    RecoverDownloadConfiguration {
+        execution_id: String,
         target_id: String,
         document_id: String,
     },
@@ -214,6 +220,14 @@ pub(crate) enum RoomBrowserControllerCommand {
         files: crate::runtime::browser_controller_file_transfer::BrowserUploadFiles,
     },
     Permission {
+        execution_id: String,
+        target_id: String,
+        document_id: String,
+        permission: crate::runtime::browser_controller_permission::BrowserPermissionName,
+        setting: crate::runtime::browser_controller_permission::BrowserPermissionSetting,
+    },
+    RecoverPermission {
+        execution_id: String,
         target_id: String,
         document_id: String,
         permission: crate::runtime::browser_controller_permission::BrowserPermissionName,
