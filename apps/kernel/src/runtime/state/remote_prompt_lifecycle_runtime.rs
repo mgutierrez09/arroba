@@ -266,52 +266,54 @@ impl KernelRuntimeState {
             } else {
                 None
             };
-            let submit_result = self
-                .with_app_side_effect(|app| {
-                    app.ensure_remote_agent_binding_protocol(&remote_execution)?;
-                    let relay_config = app.relay_config_for_remote_execution(&remote_execution);
-                    app.block_on_relay_future(
-                        crate::transport::relay_client::send_peer_request_via_temporary_connection_with_timeout(
-                            &relay_config,
-                            ClientTarget {
-                                daemon_id: Some(remote_execution.worker_kernel_id.clone()),
-                                daemon_alias: None,
-                            },
-                            RelayPeerRequest::SubmitLeasedPrompt {
-                                leased_agent_id: remote_execution.leased_agent_id.clone(),
-                                prompt: remote_prompt,
-                                hidden_system_context: started_next.hidden_system_context().to_string(),
-                                attachments,
-                                workflow_context,
-                                git_context: Some(remote_git_turn_context_for_prompt(
-                                    app,
-                                    session_id,
-                                    target_agent_id,
-                                    started_next,
-                                )),
-                                required_mcps,
-                                required_skills,
-                                remote_extension_manifest,
-                                provider_launch_credential: None,
-                            },
-                            crate::transport::relay_client::LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
-                        ),
-                    )
-                })
-                .await?;
-            if let RelayPeerResponse::LeasedPromptSubmitted {
-                provider_run_id, ..
-            } = submit_result
-            {
-                owned.echo_promoted_queued_prompt_to_attachments(
-                    session_id,
-                    &provider_run_id,
-                    started_next.id(),
-                    started_next.source_attachment_id(),
-                    started_next.prompt(),
-                    started_next.attachments(),
-                );
-            }
+            let session = owned.session_store.get_session(session_id)?;
+            let mut dispatch = crate::app::KernelRemotePromptDispatch {
+                session_id: session_id.to_string(),
+                agent_id: target_agent_id.to_string(),
+                prompt_id: started_next.id().to_string(),
+                worker_kernel_id: remote_execution.worker_kernel_id.clone(),
+                leased_agent_id: remote_execution.leased_agent_id.clone(),
+                relay_url: remote_execution.relay_url.clone(),
+                relay_token: remote_execution.relay_token.clone(),
+                source_attachment_id: started_next.source_attachment_id().to_string(),
+                prompt: remote_prompt.clone(),
+                hidden_system_context: started_next.hidden_system_context().to_string(),
+                attachments: started_next.attachments().to_vec(),
+                workspace_live_sync_mode: Some(
+                    crate::provider::provider_workspace_live_sync_mode_for_session(
+                        agent.provider(),
+                        &owned.config_projection.snapshot(),
+                        Some(&session),
+                    ),
+                ),
+                prompt_origin: started_next.prompt_origin(),
+                external_provider: started_next.external_provider().map(str::to_string),
+                external_provider_session_id: started_next
+                    .external_provider_session_id()
+                    .map(str::to_string),
+                external_provider_turn_id: started_next
+                    .external_provider_turn_id()
+                    .map(str::to_string),
+                workflow_context,
+            };
+            let provider_run_id = super::remote_prompt_worker_submission_runtime::submit_remote_prompt_to_worker_with_binding_refresh(
+                self,
+                &mut dispatch,
+                remote_prompt,
+                attachments,
+                required_mcps,
+                required_skills,
+                remote_extension_manifest,
+            )
+            .await?;
+            owned.echo_promoted_queued_prompt_to_attachments(
+                session_id,
+                &provider_run_id,
+                started_next.id(),
+                started_next.source_attachment_id(),
+                started_next.prompt(),
+                started_next.attachments(),
+            );
         }
         Ok(Some(completion))
     }
@@ -338,43 +340,6 @@ fn remote_prompt_completion_should_wait_for_binding_repair(
     };
     current_binding.leased_agent_id != attempted_binding.leased_agent_id
         || current_binding.active_worker_provider_run_id.is_none()
-}
-
-fn remote_git_turn_context_for_prompt(
-    app: &crate::app::DaemonApp,
-    session_id: &str,
-    agent_id: &str,
-    prompt: &crate::session::PromptQueueItem,
-) -> crate::transport::relay_peer::RemoteGitTurnContext {
-    let workspace_live_sync_mode =
-        app.sessions()
-            .get_session(session_id)
-            .ok()
-            .and_then(|session| {
-                app.agents().get_agent(agent_id).ok().map(|agent| {
-                    crate::provider::provider_workspace_live_sync_mode_for_session(
-                        agent.provider(),
-                        app.config(),
-                        Some(&session),
-                    )
-                })
-            });
-    crate::transport::relay_peer::RemoteGitTurnContext {
-        home_session_id: session_id.to_string(),
-        home_agent_id: agent_id.to_string(),
-        home_prompt_id: prompt.id().to_string(),
-        home_turn_id: prompt.id().to_string(),
-        source_attachment_id: Some(prompt.source_attachment_id().to_string()),
-        workspace_live_sync_mode,
-        prompt_origin: Some(prompt.prompt_origin()),
-        external_provider: prompt.external_provider().map(str::to_string),
-        external_provider_session_id: prompt.external_provider_session_id().map(str::to_string),
-        external_provider_turn_id: prompt.external_provider_turn_id().map(str::to_string),
-        prompt_summary: crate::prompt_transcript::render_prompt_transcript(
-            prompt.prompt(),
-            prompt.attachments(),
-        ),
-    }
 }
 
 #[cfg(test)]
