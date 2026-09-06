@@ -85,10 +85,33 @@ try {
   await client.close();
   await screen("stop");
   await screen("start");
-  const restarted = await client.ensureConnection();
+  let restarted = await client.ensureConnection();
   await assertSandbox(restarted);
-  const restartedSession = await openFixture(restarted, "/");
+  let restartedSession = await openFixture(restarted, "/");
   await assertStorage(restarted, restartedSession, `${phase}-restart`);
+  const displayPid = (await exec("pgrep", ["-x", "Xvfb"])).stdout;
+  for (const fault of ["closed", "killed"]) {
+    if (fault === "closed") await restarted.send("Browser.close");
+    else await exec("pkill", ["-KILL", "-f", "^/usr/lib/chromium/chromium( |$)"]);
+    await client.close();
+    await waitFor(async () => {
+      try { await fetch("http://127.0.0.1:9222/json/version"); return false; }
+      catch { return true; }
+    });
+    // Reopen through the product URL action while keeping the desktop alive.
+    const url = `${origin}/cold-fallback-${fault}`;
+    await screen("open-url", url);
+    restarted = await client.ensureConnection();
+    await assertSandbox(restarted);
+    const target = await waitFor(async () => {
+      const { targetInfos } = await restarted.send("Target.getTargets");
+      return targetInfos.find((target) => target.url === url);
+    });
+    restartedSession = await client.ensureTargetSession(restarted, target.targetId);
+    await waitFor(() => evaluate(restarted, restartedSession, "document.readyState === 'complete'"));
+    await assertStorage(restarted, restartedSession, `${phase}-cold-fallback-${fault}`);
+    assert.equal((await exec("pgrep", ["-x", "Xvfb"])).stdout, displayPid, "browser recovery must not restart the shared desktop");
+  }
   if (phase === "restore") {
     // Distinguish an external service revocation from lost browser data.
     sessionValid = false;
@@ -104,6 +127,9 @@ try {
   }
   await client.close();
   await screen("stop");
+  await assert.rejects(() => screen("open-url", `${origin}/must-not-start-desktop`),
+    (error) => /missing=.*(?:display|xvfb)/.test(error.stdout ?? ""));
+  console.log("STOPPED_DESKTOP_REMAINS_STOPPED_PASS");
   console.log(`SLICE_BROWSER_PROFILE_${phase.toUpperCase()}_PASS`);
 } finally {
   await client.close().catch(() => {});
@@ -113,6 +139,8 @@ try {
 }
 
 async function assertSandbox(connection) {
+  const { targetInfos } = await connection.send("Target.getTargets");
+  console.log(JSON.stringify({ phase, check: "sandbox", pageCount: targetInfos.filter((target) => target.type === "page").length }));
   // A real headed internal page checks Chromium's own reported sandbox layers.
   const sandbox = await connection.send("Target.createTarget", { url: "chrome://sandbox" });
   const sandboxSession = await client.ensureTargetSession(connection, sandbox.targetId);

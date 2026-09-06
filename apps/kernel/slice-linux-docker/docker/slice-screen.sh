@@ -228,18 +228,42 @@ require_screen_available() {
   return 1
 }
 
-start_desktop() {
+launch_chromium() {
   local -a chrome_secure_context_args=()
-  local -a chrome_startup_target_args=("$CHROME_URL")
+  local -a chrome_startup_target_args=()
   if [[ -n "$CHROME_TRUSTED_INSECURE_ORIGINS" ]]; then
     chrome_secure_context_args+=(
       "--unsafely-treat-insecure-origin-as-secure=$CHROME_TRUSTED_INSECURE_ORIGINS"
     )
   fi
-  if chromium_has_restorable_session; then
-    chrome_startup_target_args=(--restore-last-session)
+  if ! process_running "chromium.*$CHROME_PROFILE"; then
+    clear_chromium_profile_locks
+    configure_chromium_profile_preferences
+    if chromium_has_restorable_session; then
+      chrome_startup_target_args+=(--restore-last-session)
+    fi
+  fi
+  if [[ "$#" -gt 0 ]]; then
+    chrome_startup_target_args+=(--new-window -- "$@")
+  elif [[ "${#chrome_startup_target_args[@]}" -eq 0 ]]; then
+    chrome_startup_target_args=(-- "$CHROME_URL")
   fi
 
+  nohup chromium \
+    --user-data-dir="$CHROME_PROFILE" \
+    --password-store=basic \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-sync \
+    --disable-dev-shm-usage \
+    --disable-gpu \
+    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-port=9222 \
+    "${chrome_secure_context_args[@]}" \
+    "${chrome_startup_target_args[@]}" >>"$LOGS/chromium-gui.log" 2>&1 &
+}
+
+start_desktop() {
   if process_running "chromium.*$CHROME_PROFILE" || process_running "Xvfb $DISPLAY_ID" || process_running "x11vnc.*$DISPLAY_ID" || novnc_running; then
     stop_desktop || true
   fi
@@ -255,8 +279,6 @@ start_desktop() {
   stop_process_pattern "chromium.*$CHROME_PROFILE"
   stop_process_pattern "/usr/lib/chromium/chromium"
   stop_process_pattern "Xvfb $DISPLAY_ID"
-  clear_chromium_profile_locks
-  configure_chromium_profile_preferences
   rm -f "/tmp/.X${DISPLAY_ID#:}-lock" "/tmp/.X11-unix/X${DISPLAY_ID#:}"
 
   nohup Xvfb "$DISPLAY_ID" -screen 0 "$SCREEN_GEOMETRY" -ac +extension RANDR +extension XTEST >"$LOGS/xvfb.log" 2>&1 &
@@ -273,18 +295,7 @@ start_desktop() {
     nohup websockify --web=/usr/share/novnc/ "0.0.0.0:$NOVNC_PORT" "127.0.0.1:$VNC_PORT" >"$LOGS/novnc.log" 2>&1 &
   fi
 
-  nohup chromium \
-    --user-data-dir="$CHROME_PROFILE" \
-    --password-store=basic \
-    --no-first-run \
-    --no-default-browser-check \
-    --disable-sync \
-    --disable-dev-shm-usage \
-    --disable-gpu \
-    --remote-debugging-address=127.0.0.1 \
-    --remote-debugging-port=9222 \
-    "${chrome_secure_context_args[@]}" \
-    "${chrome_startup_target_args[@]}" >"$LOGS/chromium-gui.log" 2>&1 &
+  launch_chromium
 
   sleep 2
   require_process "Xvfb $DISPLAY_ID" "Xvfb" "$LOGS/xvfb.log"
@@ -721,14 +732,20 @@ find_text() {
 }
 
 open_url() {
-  require_screen_available
-  if node "$ROOT/browser-cdp.mjs" navigate "$1" >/dev/null 2>&1; then
+  # Opening a URL may recover the browser, but must not restart or create the
+  # shared desktop. Other input operations still require the full screen state.
+  if ! xdpyinfo -display "$DISPLAY_ID" >/dev/null 2>&1 || ! process_running "Xvfb $DISPLAY_ID"; then
+    status
+    return 1
+  fi
+  if process_running "chromium.*$CHROME_PROFILE" && run_browser_cdp navigate "$1" >/dev/null 2>&1; then
     sleep 1
     focus_chromium
     return 0
   fi
-  chromium --user-data-dir="$CHROME_PROFILE" --password-store=basic --new-window "$1" >/dev/null 2>&1 &
-  sleep 1
+  launch_chromium "$1"
+  sleep 2
+  require_process "chromium.*$CHROME_PROFILE" "Chromium" "$LOGS/chromium-gui.log"
   focus_chromium
 }
 

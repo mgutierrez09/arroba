@@ -25,7 +25,9 @@ const docker = async (...args) => {
   const result = await exec("docker", args, { timeout: 120_000, maxBuffer: 256 * 1024 });
   return result.stdout.trim();
 };
-const limits = ["--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "128", "--ulimit", "core=0"];
+// Match the production task cap: Linux counts renderer threads as well as
+// processes here. Memory and CPU remain independently capped for this drill.
+const limits = ["--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "1024", "--ulimit", "core=0"];
 try {
   await docker("image", "inspect", image);
   await create(legacy);
@@ -41,6 +43,12 @@ try {
   await docker("exec", "--user", "0", id, "chown", "-R", "1000:1000", "/home/slice");
   console.log(await docker("exec", id, "node", "/src/apps/kernel/slice-linux-docker/slice-browser-profile.drill.mjs", "restore"));
   console.log("SLICE_BROWSER_PROFILE_ROUNDTRIP_PASS");
+} catch (error) {
+  const memoryEvents = await docker("exec", id, "cat", "/sys/fs/cgroup/memory.events").catch(() => "unavailable");
+  const pidsEvents = await docker("exec", id, "cat", "/sys/fs/cgroup/pids.events").catch(() => "unavailable");
+  const usage = await docker("stats", "--no-stream", "--format", "{{.MemUsage}}", id).catch(() => "unavailable");
+  console.error(JSON.stringify({ check: "failed-drill-resources", memoryEvents, pidsEvents, usage }));
+  throw error;
 } finally {
   // Docker removal is idempotent here, but cleanup errors must fail the drill.
   const failures = [];

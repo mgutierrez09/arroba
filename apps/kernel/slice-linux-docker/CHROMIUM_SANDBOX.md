@@ -4,6 +4,11 @@ Headed startup, URL-open fallback and the headless smoke command use Chromium's
 renderer sandbox. None passes `--no-sandbox`. Browser profile persistence remains
 independent of sandboxing: all headed launch paths retain the same profile and
 password-store selection, and shutdown uses the existing browser close helper.
+Desktop startup and URL fallback share `launch_chromium`, including the
+loopback CDP endpoint, resource-related flags and session restoration. An
+explicit URL-open action can recover an exited Chromium process only while the
+existing Xvfb display is alive. It cannot create or restart the shared desktop.
+URL arguments follow the option terminator so they cannot become browser flags.
 
 Normal Docker slices use `chromium-seccomp.json`, derived from
 [moby/profiles default.json at 61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31](https://github.com/moby/profiles/blob/61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31/seccomp/default.json).
@@ -47,18 +52,23 @@ validate or select the product's streaming backend.
 The drill verifies namespace/PID/network isolation and Seccomp-BPF through the
 real `chrome://sandbox` page; persistent and session HttpOnly cookies; local
 storage, IndexedDB, Cache Storage and service-worker registration; forced CDP
-navigation failure through the actual URL fallback; and browser restart.
+navigation failure through the actual URL fallback; browser restart; and URL
+recovery after both a clean Chromium exit and forced process termination.
 It stops the actual desktop helper, archives the home, removes the entire
 container and home volume, restores into a new volume and container, and checks
 again. It cleans only its uniquely named containers, volume and temp archive.
 It runs one browser with 768 MiB and one CPU. Output contains auth booleans, not
 cookie payloads.
+The task cap matches the production default of 1,024. Linux counts renderer
+threads toward this cap; the old 128-task fixture ceiling caused CDP timeouts
+during multi-window recovery, without memory exhaustion. Failed runs report
+memory and task-limit counters before cleanup.
 
 Set `CHARIOX_BROWSER_PROFILE_LEGACY_SEED=1` to create the initial profile under
 Docker's default seccomp with the historical unsandboxed browser configuration,
 then restore the same archive into a new sandboxed container. Only the disposable
 seed fixture gets the legacy launch wrapper. Both browser restarts and the
-URL-open fallback are checked before and after that transition. This verifies
+URL-open fallback and forced-crash recovery are checked before and after that transition. This verifies
 profile compatibility, not automatic in-place migration of container settings.
 
 The restored fixture then revokes its server-side session without touching the
