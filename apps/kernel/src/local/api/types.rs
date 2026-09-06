@@ -66,5 +66,5 @@ pub use waiting_room::*;
 pub use workflow::*;
 pub use workspace::*;
 
-/// Version 311 adds cancellable browser configuration and execution receipt recovery.
-pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 311;
+/// Version 312 adds cancellable browser lifecycle operations and receipt recovery.
+pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 312;

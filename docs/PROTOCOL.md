@@ -949,6 +949,17 @@ result remains authoritative; cancellation acknowledgement is not rollback.
 The kernel retains the shared input reservation until terminal proof or the
 existing bounded controller fence settles the execution.
 
+Protocol v312 and relay peer v46 extend the same execution registry to tab
+activation and closure, history navigation and reload, URL navigation, and
+dialog replies. Human browser actions and agent actions pass their execution
+ID through the shared mutation lane. RecoverLifecycle binds that ID to the
+typed operation, target, document, and arguments, and only reads the original
+receipt. A lost receipt cannot cause a second physical action. Cancellation
+before physical dispatch settles the Action as cancelled; after dispatch the
+physical result remains authoritative. Queued URL navigation keeps the Tab
+selected at admission even if browser focus changes. Existing client minimum
+versions remain unchanged; workers must negotiate peer v46.
+
 Protocol v288 also removes the worker's advisory restart result. After
 a fence, the home is the only authority that starts and reconciles the
 controller.

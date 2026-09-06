@@ -5,7 +5,7 @@ import { updateAgentSubstitutesRequest } from "./ipc-agent-requests.js"
 import { LOCAL_DAEMON_PROTOCOL_VERSION } from "./kernel-types.js"
 
 test("agent substitute add request carries the chosen account profile", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(
     updateAgentSubstitutesRequest({
       sessionId: "session-1",

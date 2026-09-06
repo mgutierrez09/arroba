@@ -243,6 +243,7 @@ async fn room_environment_lifecycle_drives_the_managed_browser_controller() {
     let dialog_result = validation_state
         .handle_browser_environment_dialog(
             &session_id,
+            "00000000000000000000000000000003",
             "tab-1",
             crate::runtime::browser_controller_action::BrowserDialogAction::Dismiss,
         )

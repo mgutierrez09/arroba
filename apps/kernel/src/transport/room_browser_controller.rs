@@ -157,6 +157,24 @@ pub(crate) enum RoomComputerInputAction {
 /// Physical controller operations only. The home retains Room/tab authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum BrowserLifecycleOperation {
+    Tab {
+        action: crate::runtime::browser_controller_tab::BrowserTabAction,
+    },
+    History {
+        action: crate::runtime::browser_controller_history::BrowserHistoryAction,
+    },
+    Navigate {
+        url: crate::runtime::browser_controller_compatibility::BrowserNavigationUrl,
+    },
+    Dialog {
+        action: crate::runtime::browser_controller_action::BrowserDialogAction,
+    },
+}
+
+/// Physical controller operations only. The home retains Room/tab authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum RoomBrowserControllerCommand {
     Acquire,
     Reconcile {
@@ -167,16 +185,19 @@ pub(crate) enum RoomBrowserControllerCommand {
         document_id: String,
     },
     Tab {
+        execution_id: String,
         target_id: String,
         document_id: String,
         action: crate::runtime::browser_controller_tab::BrowserTabAction,
     },
     History {
+        execution_id: String,
         target_id: String,
         document_id: String,
         action: crate::runtime::browser_controller_history::BrowserHistoryAction,
     },
     Navigate {
+        execution_id: String,
         target_id: String,
         document_id: String,
         url: crate::runtime::browser_controller_compatibility::BrowserNavigationUrl,
@@ -188,9 +209,16 @@ pub(crate) enum RoomBrowserControllerCommand {
         timeout_ms: u64,
     },
     Dialog {
+        execution_id: String,
         target_id: String,
         document_id: String,
         action: crate::runtime::browser_controller_action::BrowserDialogAction,
+    },
+    RecoverLifecycle {
+        execution_id: String,
+        target_id: String,
+        document_id: String,
+        operation: BrowserLifecycleOperation,
     },
     ConfigureDownloads {
         execution_id: String,

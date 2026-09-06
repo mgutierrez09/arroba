@@ -81,7 +81,7 @@ test("Room Environment placement uses shared requests", () => {
 })
 
 test("Room Environment screenshot transfer uses bounded protocol 296 requests", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(
     captureRoomEnvironmentScreenshotRequest("session-1", "attachment-1"),
     {
@@ -112,7 +112,7 @@ test("Room Environment screenshot transfer uses bounded protocol 296 requests", 
 })
 
 test("Room Environment state request matches protocol 296", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(getRoomEnvironmentStateRequest("session-1"), {
     GetRoomEnvironmentState: {
       session_id: "session-1",
@@ -237,7 +237,7 @@ test("Room Environment state request matches protocol 296", () => {
 })
 
 test("Room Environment event replay request matches protocol 296", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(getRoomEnvironmentEventsRequest("session-1", 41), {
     GetRoomEnvironmentEvents: {
       session_id: "session-1",
@@ -409,7 +409,7 @@ test("Room Environment viewport update carries only dimensions and observed revi
 })
 
 test("Room Environment pointer update carries observed generations but no Actor identity", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(updateRoomEnvironmentPointerRequest("session-1", 3, 7, { x: 320, y: 180 }), {
     UpdateRoomEnvironmentPointer: {
       session_id: "session-1",
@@ -467,7 +467,7 @@ test("Room Environment Action cancellation request cannot forge Actor identity",
 })
 
 test("Room Environment pointer click submission carries observed generations but no Actor identity", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(
     submitRoomEnvironmentActionRequest("session-1", 4, 9, "input-1", {
       kind: "pointer_click",
@@ -496,7 +496,7 @@ test("Room Environment pointer click submission carries observed generations but
 })
 
 test("Room Environment browser history uses a stable tab without an Actor identity", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(
     submitRoomEnvironmentBrowserActionRequest("session-1", 4, "history-back-1", {
       kind: "history",
@@ -519,7 +519,7 @@ test("Room Environment browser history uses a stable tab without an Actor identi
 })
 
 test("Room Environment browser tab lifecycle uses a stable tab without an Actor identity", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   for (const action of ["activate", "close"] as const) {
     assert.deepEqual(
       submitRoomEnvironmentBrowserActionRequest("session-1", 4, `tab-${action}-1`, {
@@ -658,7 +658,7 @@ test("Room Environment keyboard submissions preserve text, chords, and repeat co
 })
 
 test("Room Environment clipboard requests use protocol 303 without accepting Actor identity", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(
     submitRoomEnvironmentActionRequest("session-1", 4, 9, "clipboard-1", {
       kind: "clipboard_write",

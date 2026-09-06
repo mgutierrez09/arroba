@@ -16,7 +16,7 @@ import {
 import { LOCAL_DAEMON_PROTOCOL_VERSION } from "./kernel-types.js"
 
 test("event connection lifecycle requests match protocol 261", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 312)
   assert.deepEqual(listEventConnectionsRequest({ generatorId: "dev.chariox.github" }), {
     ListEventConnections: {
       generator_id: "dev.chariox.github",

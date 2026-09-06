@@ -304,6 +304,7 @@ impl KernelRuntimeState {
     pub(crate) async fn manage_browser_environment_tab(
         &self,
         session_id: &str,
+        execution_id: &str,
         tab_id: &str,
         action: crate::runtime::browser_controller_tab::BrowserTabAction,
     ) -> Result<RoomEnvironmentSnapshot, DaemonError> {
@@ -316,6 +317,7 @@ impl KernelRuntimeState {
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::Tab {
+                    execution_id: execution_id.to_string(),
                     target_id: binding.runtime_target_id.clone(),
                     document_id: binding.document_id.clone(),
                     action,
@@ -341,6 +343,7 @@ impl KernelRuntimeState {
         tab_id: &str,
         action: crate::runtime::browser_controller_tab::BrowserTabAction,
     ) -> Result<super::BrowserControllerActionExecution<RoomEnvironmentSnapshot>, DaemonError> {
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.reconcile_browser_controller_environment(session_id)
             .await?;
         let binding = self
@@ -359,8 +362,8 @@ impl KernelRuntimeState {
                     "browser_tab_close"
                 }
             },
-            None,
-            self.manage_browser_environment_tab(session_id, tab_id, action),
+            Some(&execution_id),
+            self.manage_browser_environment_tab(session_id, &execution_id, tab_id, action),
         )
         .await
     }
@@ -368,6 +371,7 @@ impl KernelRuntimeState {
     pub(crate) async fn navigate_browser_environment_history(
         &self,
         session_id: &str,
+        execution_id: &str,
         tab_id: &str,
         action: crate::runtime::browser_controller_history::BrowserHistoryAction,
     ) -> Result<RoomEnvironmentSnapshot, DaemonError> {
@@ -380,6 +384,7 @@ impl KernelRuntimeState {
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::History {
+                    execution_id: execution_id.to_string(),
                     target_id: binding.runtime_target_id.clone(),
                     document_id: binding.document_id,
                     action,
@@ -405,6 +410,7 @@ impl KernelRuntimeState {
         tab_id: &str,
         action: crate::runtime::browser_controller_history::BrowserHistoryAction,
     ) -> Result<super::BrowserControllerActionExecution<RoomEnvironmentSnapshot>, DaemonError> {
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.reconcile_browser_controller_environment(session_id)
             .await?;
         let binding = self
@@ -426,8 +432,8 @@ impl KernelRuntimeState {
                     "browser_history_reload"
                 }
             },
-            None,
-            self.navigate_browser_environment_history(session_id, tab_id, action),
+            Some(&execution_id),
+            self.navigate_browser_environment_history(session_id, &execution_id, tab_id, action),
         )
         .await
     }
@@ -635,6 +641,7 @@ impl KernelRuntimeState {
     pub(crate) async fn handle_browser_environment_dialog(
         &self,
         session_id: &str,
+        execution_id: &str,
         tab_id: &str,
         action: crate::runtime::browser_controller_action::BrowserDialogAction,
     ) -> Result<crate::runtime::browser_controller_action::RoomBrowserDialogResult, DaemonError>
@@ -657,6 +664,7 @@ impl KernelRuntimeState {
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::Dialog {
+                    execution_id: execution_id.to_string(),
                     target_id,
                     document_id,
                     action,
@@ -704,14 +712,15 @@ impl KernelRuntimeState {
                 operation: "browser_controller.dialog",
                 message: format!("Room browser tab `{tab_id}` is not available"),
             })?;
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.execute_browser_mutation_as_agent(
             session_id,
             agent_id,
             tab_id,
             tab.document_revision,
             "dialog",
-            None,
-            self.handle_browser_environment_dialog(session_id, tab_id, action),
+            Some(&execution_id),
+            self.handle_browser_environment_dialog(session_id, &execution_id, tab_id, action),
         )
         .await
     }

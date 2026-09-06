@@ -71,7 +71,8 @@ impl std::fmt::Debug for RelayManagedSliceToken {
 
 /// Version 44 requires cancellable uploads and upload execution receipt recovery.
 /// Version 45 requires cancellable browser configuration and execution receipt recovery.
-pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 45;
+/// Version 46 requires cancellable browser lifecycle operations and receipt recovery.
+pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 46;
 pub const REMOTE_PROVIDER_LAUNCH_CREDENTIAL_REQUIRED_CODE: &str =
     "provider_launch_credential_required";
 

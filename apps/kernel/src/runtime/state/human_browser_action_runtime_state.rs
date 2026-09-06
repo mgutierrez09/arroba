@@ -111,23 +111,35 @@ impl KernelRuntimeState {
         validate_browser_input_authority(&environment, &actor.actor_id, tab_id)
             .map_err(human_browser_environment_error)?;
 
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         let execution = self
-            .execute_browser_mutation(&request.session_id, action_request, None, async {
-                match runtime_action {
-                    HumanBrowserRuntimeAction::History(action) => {
-                        self.navigate_browser_environment_history(
-                            &request.session_id,
-                            tab_id,
-                            action,
-                        )
-                        .await
-                    }
-                    HumanBrowserRuntimeAction::Tab(action) => {
-                        self.manage_browser_environment_tab(&request.session_id, tab_id, action)
+            .execute_browser_mutation(
+                &request.session_id,
+                action_request,
+                Some(&execution_id),
+                async {
+                    match runtime_action {
+                        HumanBrowserRuntimeAction::History(action) => {
+                            self.navigate_browser_environment_history(
+                                &request.session_id,
+                                &execution_id,
+                                tab_id,
+                                action,
+                            )
                             .await
+                        }
+                        HumanBrowserRuntimeAction::Tab(action) => {
+                            self.manage_browser_environment_tab(
+                                &request.session_id,
+                                &execution_id,
+                                tab_id,
+                                action,
+                            )
+                            .await
+                        }
                     }
-                }
-            })
+                },
+            )
             .await?;
         let environment = self
             .room_environment_snapshot(&request.session_id)
