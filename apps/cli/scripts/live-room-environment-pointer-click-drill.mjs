@@ -52,6 +52,9 @@ import { hasRoomReadyProjection } from "./lib/room-drill-ready-notices.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
+const sliceMemoryMb = Number(process.env.CHARIOX_ROOM_DRILL_MEMORY_MB ?? 2048)
+assert.ok(Number.isSafeInteger(sliceMemoryMb) && sliceMemoryMb > 0 && sliceMemoryMb <= 0xffff_ffff,
+  "CHARIOX_ROOM_DRILL_MEMORY_MB must be a positive u32 number of MiB")
 const companionOnly = process.env.CHARIOX_ROOM_DRILL_FOCUS === "web-companion"
 const realProviderOptions = roomRealProviderOptions(process.env)
 if (companionOnly && !process.env.CHARIOX_ROOM_DRILL_COORDINATION_DIR?.trim()) {
@@ -362,7 +365,7 @@ async function run() {
     "slice image relay protocol must match current source",
   )
   const limits = await dockerLimits()
-  assert.equal(limits.memoryBytes, 2048 * 1024 * 1024)
+  assert.equal(limits.memoryBytes, sliceMemoryMb * 1024 * 1024)
   assert.equal(limits.memorySwapBytes, limits.memoryBytes)
   assert.equal(limits.nanoCpus, 1_000_000_000)
   assert.equal(limits.pidsLimit, 1024)
@@ -2083,7 +2086,7 @@ async function seedConfig(tempRoot) {
     ...(process.env.CHARIOX_ROOM_DRILL_IMAGE?.trim()
       ? [`docker_image = ${JSON.stringify(process.env.CHARIOX_ROOM_DRILL_IMAGE.trim())}`, "build_image = \"never\""]
       : ["build_image = \"auto\""]),
-    "memory_mb = 2048",
+    `memory_mb = ${sliceMemoryMb}`,
     "cpus = \"1\"",
     "screen_width = 1280",
     "screen_height = 800",
