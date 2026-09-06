@@ -2503,6 +2503,11 @@ async function startFixture() {
       let clicks=${browserFixture.initialClicks};document.addEventListener("click",(event)=>{if(event.target.closest("[data-web-gesture]"))return;clicks+=1;document.body.style.background="#69d391";document.querySelector("#state").textContent="POINTER_CLICK_COUNT="+clicks})
       ${webPointerGestures ? `
       const selection=document.querySelector("#web-selection");
+      // Native input gives the physical content origin even when CDP emulates
+      // innerWidth/innerHeight. The Web drill reads this after its focus click.
+      document.addEventListener("mousedown",event=>{
+        if(event.isTrusted)window.charioxGestureOrigin={x:event.screenX-event.clientX,y:event.screenY-event.clientY};
+      },true);
       let geometry=null;
       const windowGeometry=()=>[window.screenX,window.screenY,window.outerWidth,window.outerHeight].join(":");
       selection.addEventListener("mousedown",()=>{geometry=windowGeometry()});
