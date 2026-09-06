@@ -1,7 +1,7 @@
 use super::*;
 
 impl KernelRuntimeState {
-    pub(super) fn activate_agent_mcp_grants_if_idle(
+    pub(super) async fn activate_agent_mcp_grants_if_idle(
         &self,
         session_id: &str,
         agent_id: &str,
@@ -9,7 +9,8 @@ impl KernelRuntimeState {
     ) -> Result<bool, DaemonError> {
         let reason = format!("MCP `{requested_mcp_name}`");
         Ok(matches!(
-            self.reload_agent_provider_if_idle(session_id, agent_id, &reason)?,
+            self.reload_agent_provider_if_idle(session_id, agent_id, &reason)
+                .await?,
             ProviderReloadOutcome::Reloaded
         ))
     }
@@ -110,7 +111,8 @@ impl KernelRuntimeState {
             &continuation.session_id,
             &continuation.agent_id,
             &continuation.mcp_name,
-        )?;
+        )
+        .await?;
         self.wait_for_agent_provider_relaunch(
             &continuation.session_id,
             &continuation.agent_id,

@@ -139,7 +139,10 @@ impl KernelRuntimeState {
         agent_id: &str,
         reason: &str,
     ) -> Result<ProviderReloadOutcome, DaemonError> {
-        match self.reload_agent_provider_if_idle(session_id, agent_id, reason)? {
+        match self
+            .reload_agent_provider_if_idle(session_id, agent_id, reason)
+            .await?
+        {
             ProviderReloadOutcome::Deferred => {
                 self.remember_pending_provider_reload(session_id, agent_id, reason);
                 Ok(ProviderReloadOutcome::Deferred)
@@ -148,7 +151,7 @@ impl KernelRuntimeState {
         }
     }
 
-    pub(super) fn reload_agent_provider_if_idle(
+    pub(super) async fn reload_agent_provider_if_idle(
         &self,
         session_id: &str,
         agent_id: &str,
@@ -194,8 +197,9 @@ impl KernelRuntimeState {
                     owned.session_store.get_session(session_id).ok().as_ref(),
                 ),
             );
-            let launch_request =
-                owned.prepare_provider_launch_request(launch_request, config.runtime_mcp_url())?;
+            let launch_request = self
+                .prepare_provider_launch_request_with_vault(launch_request, "reload provider run")
+                .await?;
             if ProviderLaunchFingerprint::from_run(&run)
                 == ProviderLaunchFingerprint::from_request(&launch_request)
             {

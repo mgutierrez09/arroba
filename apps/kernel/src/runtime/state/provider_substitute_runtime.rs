@@ -62,8 +62,12 @@ impl KernelRuntimeState {
                     owned.session_store.get_session(session_id).ok().as_ref(),
                 ),
             );
-            let launch_request =
-                owned.prepare_provider_launch_request(launch_request, config.runtime_mcp_url())?;
+            let launch_request = self
+                .prepare_provider_launch_request_with_vault(
+                    launch_request,
+                    "activate agent substitute",
+                )
+                .await?;
             owned.record_notice(
                 session_id,
                 None,

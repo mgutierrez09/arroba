@@ -503,6 +503,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn vaulted_claude_launch_waits_for_chariox_unlock_interaction() {
+        let _env = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-owned-vaulted-claude-launch-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        std::env::set_var("CHARIOX_HOME", &root);
+        let vault_path = root.join("credentials.vault");
+        let mut config = crate::config::DaemonConfig::for_tests()
+            .with_session_history_root(root.join("session-history"));
+        config.user_config.credential_vault.backend =
+            crate::config::CredentialVaultBackend::CharioxEncrypted;
+        config.user_config.credential_vault.path = vault_path.display().to_string();
+        config.user_config.state.path = Some(root.join("state.db").display().to_string());
+        config.user_config.history.operational.path =
+            Some(root.join("operational.db").display().to_string());
+        config.user_config.artifacts.operational.root =
+            Some(root.join("artifacts").display().to_string());
+        config.user_config.artifacts.operational.index_path =
+            Some(root.join("artifacts.db").display().to_string());
+
+        let mut app = crate::app::DaemonApp::bootstrap(config.clone()).expect("daemon bootstrap");
+        let (session, agent) = crate::app::KernelSessionService::new(&mut app)
+            .create_session(crate::session::CreateSessionRequest::new(
+                root.to_string_lossy(),
+                root.to_string_lossy(),
+            ))
+            .expect("session should create");
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "claude",
+                "Vaulted Claude",
+            )
+            .expect("managed Claude profile should create");
+        crate::secret::unlock_chariox_encrypted_vault(
+            &vault_path,
+            "correct horse battery staple",
+            crate::secret::VaultUnlockLease::KernelShutdown,
+        )
+        .expect("vault should initialize");
+        crate::provider::store_provider_account_credential(
+            &config,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "claude",
+            &profile.profile_id,
+            "setup-token-secret",
+            false,
+        )
+        .expect("provider credential should store");
+        crate::secret::lock_chariox_encrypted_vault(&vault_path).expect("vault should lock");
+        crate::secret::clear_vault_secret_process_cache().expect("secret cache should clear");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let request = crate::provider::LaunchProviderRequest::new(
+            session.id(),
+            "claude",
+            "claude",
+            &profile.profile_id,
+            "claude-sonnet",
+        )
+        .with_agent_id(agent.id());
+        let mut preparation = Box::pin(
+            runtime
+                .prepare_provider_launch_request_with_vault(request, "test vaulted Claude launch"),
+        );
+        tokio::select! {
+            result = &mut preparation => panic!("launch preparation resolved before unlock: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+        }
+        let pending_session = runtime
+            .owned
+            .session_store
+            .get_session(session.id())
+            .expect("session should remain available");
+        let interaction = pending_session
+            .active_interaction_for_agent(agent.id())
+            .expect("vault unlock interaction should be visible")
+            .clone();
+        assert_eq!(interaction.title(), Some("Unlock Chariox Vault"));
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                interaction.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("unlock interaction should resolve");
+        let prepared = preparation
+            .await
+            .expect("launch should prepare after Chariox unlock");
+        assert_eq!(
+            prepared.provider_credential_env.iter().collect::<Vec<_>>(),
+            vec![("CLAUDE_CODE_OAUTH_TOKEN", "setup-token-secret")]
+        );
+        assert!(
+            !crate::secret::chariox_encrypted_vault_status(&vault_path)
+                .expect("vault status should resolve")
+                .unlocked
+        );
+
+        std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn restore_env(name: &str, previous: Option<std::ffi::OsString>) {
         match previous {
             Some(value) => std::env::set_var(name, value),

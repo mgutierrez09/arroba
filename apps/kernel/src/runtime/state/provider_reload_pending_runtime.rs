@@ -40,11 +40,14 @@ impl KernelRuntimeState {
                         pending.remove(&agent_id)
                     };
                     if let Some(pending) = pending {
-                        if let Err(error) = state.reload_agent_provider_if_idle(
-                            &pending.session_id,
-                            &pending.agent_id,
-                            &pending.reason,
-                        ) {
+                        if let Err(error) = state
+                            .reload_agent_provider_if_idle(
+                                &pending.session_id,
+                                &pending.agent_id,
+                                &pending.reason,
+                            )
+                            .await
+                        {
                             crate::logging::warn_with_fields(
                                 "daemon.provider",
                                 "pending provider reload failed",
