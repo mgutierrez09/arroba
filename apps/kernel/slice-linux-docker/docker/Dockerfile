@@ -76,6 +76,7 @@ RUN printf '%s\n' 'deb [check-valid-until=no] https://snapshot.debian.org/archiv
     chromium-driver \
     chromium-sandbox \
     curl \
+    dbus \
     fonts-dejavu \
     fonts-liberation \
     gh \

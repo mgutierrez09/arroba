@@ -275,7 +275,7 @@ start_desktop() {
   stop_process_pattern "websockify.*$NOVNC_PORT"
   stop_process_pattern "x11vnc.*$DISPLAY_ID"
   stop_process_pattern "x11vnc.*$VNC_PORT"
-  stop_process_pattern "openbox"
+  stop_process_pattern '(^|/)openbox([[:space:]]|$)'
   stop_process_pattern "chromium.*$CHROME_PROFILE"
   stop_process_pattern "/usr/lib/chromium/chromium"
   stop_process_pattern "Xvfb $DISPLAY_ID"
@@ -284,7 +284,10 @@ start_desktop() {
   nohup Xvfb "$DISPLAY_ID" -screen 0 "$SCREEN_GEOMETRY" -ac +extension RANDR +extension XTEST >"$LOGS/xvfb.log" 2>&1 &
   wait_for_display
 
-  nohup openbox >"$LOGS/openbox.log" 2>&1 &
+  # Desktop-launched programs inherit one session bus. Without it, ordinary
+  # GTK applications cannot persist dconf settings. The supervisor stops the
+  # bus when Openbox exits, so stop only Openbox rather than killing both.
+  nohup dbus-run-session -- openbox >"$LOGS/openbox.log" 2>&1 &
   if [[ "$VIEWER_BACKEND" == "selkies" ]]; then
     if ! slice_selkies start >/dev/null; then
       stop_desktop
@@ -299,6 +302,7 @@ start_desktop() {
 
   sleep 2
   require_process "Xvfb $DISPLAY_ID" "Xvfb" "$LOGS/xvfb.log"
+  require_process '(^|/)openbox([[:space:]]|$)' "Openbox" "$LOGS/openbox.log"
   if [[ "$VIEWER_BACKEND" == "selkies" ]]; then
     slice_selkies status >/dev/null
   else
@@ -367,7 +371,7 @@ stop_desktop() {
   stop_process_pattern "websockify.*$NOVNC_PORT"
   stop_process_pattern "x11vnc.*$DISPLAY_ID"
   stop_process_pattern "x11vnc.*$VNC_PORT"
-  stop_process_pattern "openbox"
+  stop_process_pattern '(^|/)openbox([[:space:]]|$)'
   stop_process_pattern "Xvfb $DISPLAY_ID"
   clear_chromium_profile_locks
   return "$streamer_exit"
