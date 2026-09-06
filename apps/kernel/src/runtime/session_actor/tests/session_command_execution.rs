@@ -255,7 +255,11 @@ async fn room_environment_lifecycle_drives_the_managed_browser_controller() {
     assert_eq!(dialog_result.document_revision, 1);
     assert_eq!(dialog_result.action, "dismiss");
     let downloads = validation_state
-        .configure_browser_environment_downloads(&session_id, "tab-1")
+        .configure_browser_environment_downloads(
+            &session_id,
+            "00000000000000000000000000000001",
+            "tab-1",
+        )
         .await
         .expect("download configuration should cross the controller boundary");
     assert!(downloads.enabled);
@@ -275,6 +279,7 @@ async fn room_environment_lifecycle_drives_the_managed_browser_controller() {
     let permission = validation_state
         .set_browser_environment_permission(
             &session_id,
+            "00000000000000000000000000000002",
             "tab-1",
             crate::runtime::browser_controller_permission::BrowserPermissionName::Geolocation,
             crate::runtime::browser_controller_permission::BrowserPermissionSetting::Denied,

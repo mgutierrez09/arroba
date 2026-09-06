@@ -11,6 +11,7 @@ mod controller;
 mod controller_cancellation;
 mod controller_compatibility;
 mod controller_configuration;
+mod controller_configuration_cancellation;
 mod controller_configuration_queue;
 mod controller_configuration_recovery;
 mod controller_events;

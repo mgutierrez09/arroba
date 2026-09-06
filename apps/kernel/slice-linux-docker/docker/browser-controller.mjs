@@ -7,6 +7,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { BrowserCdpClient, BrowserControllerError } from "./browser-controller-cdp.mjs";
+import { BrowserActionError } from "./browser-controller-actions.mjs";
 
 export async function handleBrowserControllerRequest(
   request,
@@ -74,7 +75,7 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.downloads.configure") {
       return successResponse(
         request.id,
-        await browser.configureDownloads(request.params),
+        await browser.configureDownloads(request.params, { signal }),
       );
     }
     if (request.method === "browser.downloads.cancel") {
@@ -89,7 +90,7 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.permission") {
       return successResponse(
         request.id,
-        await browser.setPermission(request.params),
+        await browser.setPermission(request.params, { signal }),
       );
     }
     if (request.method === "browser.events.poll") {
@@ -113,7 +114,7 @@ export async function handleBrowserControllerRequest(
     );
   } catch (error) {
     const code =
-      error instanceof BrowserControllerError
+      error instanceof BrowserControllerError || error instanceof BrowserActionError
         ? error.code
         : "browser_controller_internal";
     return errorResponse(
@@ -184,7 +185,7 @@ export class BrowserControllerStdioServer {
         this.write(errorResponse(request.id, "controller_busy", "controller queue is full or request id is already pending"));
         continue;
       }
-      const action = ["browser.action", "browser.upload"].includes(request.method) ? new AbortController() : null;
+      const action = ["browser.action", "browser.upload", "browser.downloads.configure", "browser.permission"].includes(request.method) ? new AbortController() : null;
       if (action) actions.set(request.id, action);
       queued += 1;
       pending = pending.then(async () => {

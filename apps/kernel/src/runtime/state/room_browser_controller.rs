@@ -216,6 +216,28 @@ impl KernelRuntimeState {
 
 fn receipt_recovery_command(command: &Command) -> Option<Command> {
     match command {
+        Command::ConfigureDownloads {
+            execution_id,
+            target_id,
+            document_id,
+        } => Some(Command::RecoverDownloadConfiguration {
+            execution_id: execution_id.clone(),
+            target_id: target_id.clone(),
+            document_id: document_id.clone(),
+        }),
+        Command::Permission {
+            execution_id,
+            target_id,
+            document_id,
+            permission,
+            setting,
+        } => Some(Command::RecoverPermission {
+            execution_id: execution_id.clone(),
+            target_id: target_id.clone(),
+            document_id: document_id.clone(),
+            permission: *permission,
+            setting: *setting,
+        }),
         Command::Upload {
             execution_id,
             target_id,
@@ -444,11 +466,27 @@ async fn execute_local(
             .handle_browser_dialog(&session_id, &target_id, &document_id, &action)
             .map(|result| Response::Dialog { result }),
         Command::ConfigureDownloads {
+            execution_id,
             target_id,
             document_id,
-        } => processes
-            .configure_browser_downloads(&session_id, &target_id, &document_id)
-            .map(|result| Response::Downloads { result }),
+        } => processes.perform_cancellable_browser_configuration(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            crate::runtime::browser_controller_process::BrowserConfiguration::Downloads,
+        ),
+        Command::RecoverDownloadConfiguration {
+            execution_id,
+            target_id,
+            document_id,
+        } => processes.recover_cancellable_browser_configuration(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            crate::runtime::browser_controller_process::BrowserConfiguration::Downloads,
+        ),
         Command::CancelDownload { cancellation } => processes
             .cancel_browser_download(&session_id, &cancellation)
             .map(|result| Response::DownloadCancellation { result }),
@@ -481,13 +519,37 @@ async fn execute_local(
             &files,
         ),
         Command::Permission {
+            execution_id,
             target_id,
             document_id,
             permission,
             setting,
-        } => processes
-            .set_browser_permission(&session_id, &target_id, &document_id, permission, setting)
-            .map(|result| Response::Permission { result }),
+        } => processes.perform_cancellable_browser_configuration(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            crate::runtime::browser_controller_process::BrowserConfiguration::Permission {
+                name: permission,
+                setting,
+            },
+        ),
+        Command::RecoverPermission {
+            execution_id,
+            target_id,
+            document_id,
+            permission,
+            setting,
+        } => processes.recover_cancellable_browser_configuration(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            crate::runtime::browser_controller_process::BrowserConfiguration::Permission {
+                name: permission,
+                setting,
+            },
+        ),
         Command::PollEvents {
             browser_generation,
             cursor,

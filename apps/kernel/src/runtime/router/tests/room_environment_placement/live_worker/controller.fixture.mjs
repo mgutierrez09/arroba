@@ -312,4 +312,19 @@ browser.uploadFiles = async (request, options = {}) => {
   try { return await uploadFiles(request, options); }
   finally { options.signal?.removeEventListener("abort", observedAbort); }
 };
+for (const method of ["configureDownloads", "setPermission"]) {
+  const configure = browser[method].bind(browser);
+  browser[method] = async (request, options = {}) => {
+    const root = dirname(pidFile);
+    const observedAbort = () => writeFileSync(join(root, "configuration-cancel-observed"), "cancel observed");
+    options.signal?.addEventListener("abort", observedAbort, { once: true });
+    try {
+      if (existsSync(join(root, "hold-configuration"))) {
+        writeFileSync(join(root, "configuration-pending"), "pending");
+        while (existsSync(join(root, "hold-configuration"))) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return await configure(request, options);
+    } finally { options.signal?.removeEventListener("abort", observedAbort); }
+  };
+}
 await new BrowserControllerStdioServer({ browser }).run();

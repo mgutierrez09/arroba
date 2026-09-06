@@ -23,7 +23,7 @@ test("legacy slice creation does not add a backend field", () => {
 })
 
 test("slice backup restore uses the shared kernel lifecycle contract", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 310)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
   assert.deepEqual(
     restoreSliceBackupRequest("linux-dev", "gmail-ready-20260609"),
     {
@@ -36,7 +36,7 @@ test("slice backup restore uses the shared kernel lifecycle contract", () => {
 })
 
 test("Room display admission sends the attachment and viewer identity in protocol 293", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 310)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
   assert.deepEqual(
     getSliceDisplayEndpointRequest("slice-1", {
       sessionId: "room-1",
@@ -71,7 +71,7 @@ test("Room display endpoint exposes the encrypted stream metadata", () => {
 })
 
 test("slice create serializes exact multi-repository development selection", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 310)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 311)
   assert.deepEqual(
     createSliceRequest({
       name: "project-slice",

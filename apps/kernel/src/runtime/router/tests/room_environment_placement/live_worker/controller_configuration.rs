@@ -116,6 +116,7 @@ pub(super) async fn check(
         );
     }
     super::controller_configuration_queue::check(fixture, agent_id, tab).await;
+    super::controller_configuration_cancellation::check(fixture, token, agent_id, tab).await;
     std::fs::remove_file(quiet).unwrap();
 }
 

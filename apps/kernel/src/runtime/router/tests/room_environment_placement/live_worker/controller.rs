@@ -314,6 +314,7 @@ async fn check_slice_controller(fixture: &mut LiveWorker) {
                 action: crate::runtime::browser_controller_history::BrowserHistoryAction::Back,
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::ConfigureDownloads {
+                execution_id: "00000000000000000000000000000003".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
             },
@@ -333,6 +334,7 @@ async fn check_slice_controller(fixture: &mut LiveWorker) {
                 .unwrap(),
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::Permission {
+                execution_id: "00000000000000000000000000000004".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 permission: crate::runtime::browser_controller_permission::BrowserPermissionName::Geolocation,

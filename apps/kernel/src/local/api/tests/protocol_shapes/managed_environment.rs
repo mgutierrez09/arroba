@@ -3,7 +3,7 @@ use crate::local::*;
 
 #[test]
 fn local_daemon_managed_environment_control_shape_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 310);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 311);
     let policy = ManagedEnvironmentAutoStopPolicy {
         minimum_runtime_seconds: 0,
         idle_delay_seconds: Some(900),

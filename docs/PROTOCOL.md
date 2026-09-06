@@ -934,6 +934,21 @@ files were already dispatched, the final physical result remains authoritative.
 A stalled controller is fenced by the existing bounded cancellation timeout
 before the home releases input ownership.
 
+Protocol v311 and relay peer v45 extend that execution registry to download
+setup and permission changes. Each admitted configuration has one random
+execution ID and a fingerprint binding the command kind, target, document,
+permission name, and setting where applicable. RecoverDownloadConfiguration
+and RecoverPermission only recover the original execution; missing receipts
+or mismatched arguments never dispatch a new mutation. Workers must negotiate
+the new peer version. Existing Web and TUI minimum versions are unchanged.
+
+Configuration uses the same CancelAction/stdio browser.cancel path as uploads.
+The controller checks cancellation before changing download behavior or browser
+permission state. Once the CDP mutation has been dispatched, its physical
+result remains authoritative; cancellation acknowledgement is not rollback.
+The kernel retains the shared input reservation until terminal proof or the
+existing bounded controller fence settles the execution.
+
 Protocol v288 also removes the worker's advisory restart result. After
 a fence, the home is the only authority that starts and reconciles the
 controller.

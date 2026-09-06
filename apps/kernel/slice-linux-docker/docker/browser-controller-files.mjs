@@ -41,8 +41,11 @@ export async function configureBrowserDownloads({
   downloadDirectory,
   minimumFreeBytes = DEFAULT_MINIMUM_DOWNLOAD_FREE_BYTES,
   fileSystem = defaultFileSystem,
+  signal,
 }) {
+  assertNotCancelled(signal);
   await assertCurrentDocument(connection, sessionId, targetId, documentId);
+  assertNotCancelled(signal);
   if (typeof downloadDirectory !== "string" || !path.isAbsolute(downloadDirectory)) {
     throw new BrowserFileTransferError(
       "browser_download_unconfigured",
@@ -69,6 +72,7 @@ export async function configureBrowserDownloads({
     fileSystem,
   });
   await assertCurrentDocument(connection, sessionId, targetId, documentId);
+  assertNotCancelled(signal);
   await connection.send("Browser.setDownloadBehavior", {
     behavior: "allowAndName",
     downloadPath: resolvedDirectory,

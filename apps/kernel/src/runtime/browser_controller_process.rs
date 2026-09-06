@@ -31,6 +31,8 @@ use super::browser_controller_tab::{BrowserControllerTabResult, BrowserTabAction
 use crate::session::CanonicalViewport;
 
 mod cancellation;
+mod configuration_cancellation;
+pub(crate) use configuration_cancellation::BrowserConfiguration;
 #[cfg(test)]
 mod upload_cancellation_tests;
 
@@ -320,9 +322,15 @@ impl BrowserControllerProcessStdioBackend {
         } else {
             self.timeout
         };
-        let cancellation = matches!(method, "browser.action" | "browser.upload")
-            .then(|| self.action_cancellation.clone())
-            .flatten();
+        let cancellation = matches!(
+            method,
+            "browser.action"
+                | "browser.upload"
+                | "browser.downloads.configure"
+                | "browser.permission"
+        )
+        .then(|| self.action_cancellation.clone())
+        .flatten();
         if cancellation
             .as_ref()
             .is_some_and(|signal| signal.requested())
@@ -1381,23 +1389,6 @@ impl BrowserControllerProcessStore {
             .map(Some)
     }
 
-    pub(crate) fn configure_browser_downloads(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-    ) -> Result<Option<BrowserControllerDownloadsResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .configure_browser_downloads(session_id, target_id, document_id)
-            .map(Some)
-    }
-
     pub(crate) fn cancel_browser_download(
         &self,
         session_id: &str,
@@ -1411,25 +1402,6 @@ impl BrowserControllerProcessStore {
             .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
         ownership
             .cancel_browser_download(session_id, cancellation)
-            .map(Some)
-    }
-
-    pub(crate) fn set_browser_permission(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-        permission: BrowserPermissionName,
-        setting: BrowserPermissionSetting,
-    ) -> Result<Option<BrowserControllerPermissionResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .set_browser_permission(session_id, target_id, document_id, permission, setting)
             .map(Some)
     }
 

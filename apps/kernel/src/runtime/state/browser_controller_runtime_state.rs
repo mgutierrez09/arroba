@@ -719,6 +719,7 @@ impl KernelRuntimeState {
     pub(crate) async fn configure_browser_environment_downloads(
         &self,
         session_id: &str,
+        execution_id: &str,
         tab_id: &str,
     ) -> Result<
         crate::runtime::browser_controller_file_transfer::RoomBrowserDownloadsResult,
@@ -732,19 +733,26 @@ impl KernelRuntimeState {
             .map_err(|error| environment_runtime_error("browser_controller.downloads", error))?;
         let target_id = binding.runtime_target_id.clone();
         let document_id = binding.document_id.clone();
-        let RoomBrowserControllerResult::Downloads { result } = self
+        let response = self
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::ConfigureDownloads {
+                    execution_id: execution_id.to_string(),
                     target_id,
                     document_id,
                 },
             )
-            .await?
-        else {
-            return Err(controller_route_error(
-                "unexpected controller downloads response",
-            ));
+            .await?;
+        let result = match response {
+            RoomBrowserControllerResult::Downloads { result } => result,
+            RoomBrowserControllerResult::ActionCancelled { controller_fenced } => {
+                return Err(DaemonError::BrowserControllerActionCancelled { controller_fenced });
+            }
+            _ => {
+                return Err(controller_route_error(
+                    "unexpected controller downloads response",
+                ))
+            }
         };
         let result = result.ok_or_else(|| DaemonError::LocalTransport {
             operation: "browser_controller.downloads",
@@ -835,6 +843,7 @@ impl KernelRuntimeState {
     pub(crate) async fn set_browser_environment_permission(
         &self,
         session_id: &str,
+        execution_id: &str,
         tab_id: &str,
         permission: crate::runtime::browser_controller_permission::BrowserPermissionName,
         setting: crate::runtime::browser_controller_permission::BrowserPermissionSetting,
@@ -850,21 +859,28 @@ impl KernelRuntimeState {
             .map_err(|error| environment_runtime_error("browser_controller.permission", error))?;
         let target_id = binding.runtime_target_id.clone();
         let document_id = binding.document_id.clone();
-        let RoomBrowserControllerResult::Permission { result } = self
+        let response = self
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::Permission {
+                    execution_id: execution_id.to_string(),
                     target_id,
                     document_id,
                     permission,
                     setting,
                 },
             )
-            .await?
-        else {
-            return Err(controller_route_error(
-                "unexpected controller permission response",
-            ));
+            .await?;
+        let result = match response {
+            RoomBrowserControllerResult::Permission { result } => result,
+            RoomBrowserControllerResult::ActionCancelled { controller_fenced } => {
+                return Err(DaemonError::BrowserControllerActionCancelled { controller_fenced });
+            }
+            _ => {
+                return Err(controller_route_error(
+                    "unexpected controller permission response",
+                ))
+            }
         };
         let result = result.ok_or_else(|| DaemonError::LocalTransport {
             operation: "browser_controller.permission",
