@@ -20,6 +20,7 @@ pub(super) fn spawn_claude_child(
     program: &str,
     args: &[String],
     env: &BTreeMap<String, String>,
+    provider_credential_env: &crate::provider::ProviderCredentialEnvironment,
     env_remove: &[String],
     working_directory: Option<&PathBuf>,
     operation: &'static str,
@@ -39,6 +40,9 @@ pub(super) fn spawn_claude_child(
         command.env_remove(name);
     }
     for (name, value) in env {
+        command.env(name, value);
+    }
+    for (name, value) in provider_credential_env.iter() {
         command.env(name, value);
     }
     if let Some(working_directory) = working_directory {

@@ -8,7 +8,9 @@ use crate::provider::{
 use crate::session::PromptAttachment;
 
 use super::super::{
-    claude_runtime::{initialize_claude_runtime, ClaudeRunSelection, ClaudeRuntimeBinding},
+    claude_runtime::{
+        initialize_claude_runtime_with_credentials, ClaudeRunSelection, ClaudeRuntimeBinding,
+    },
     codex_runtime::{initialize_codex_runtime, CodexRuntimeBinding},
     opencode_binding::{initialize_opencode_runtime, OpenCodeRunSelection, OpenCodeRuntimeBinding},
 };
@@ -31,11 +33,29 @@ impl ProviderProcessService {
     pub(crate) fn initialize_runtime_binding(
         run: &RuntimeProviderRun,
     ) -> Result<Option<ProviderRuntimeBinding>, DaemonError> {
+        Self::initialize_runtime_binding_with_credentials(
+            run,
+            &crate::provider::ProviderCredentialEnvironment::default(),
+        )
+    }
+
+    pub(crate) fn initialize_runtime_binding_with_credentials(
+        run: &RuntimeProviderRun,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
+    ) -> Result<Option<ProviderRuntimeBinding>, DaemonError> {
+        #[cfg(test)]
+        if crate::provider::record_provider_credential_delivery_for_test(
+            run.id(),
+            "runtime_binding",
+            credentials,
+        ) {
+            return Ok(None);
+        }
         // Cold prompt launches can reach this synchronous provider handshake
         // from an async worker. The provider calls back into this kernel's MCP
         // server during initialization, so yield the worker while waiting.
         // Calls already on a blocking thread or outside Tokio stay synchronous.
-        let initialize = || Self::initialize_runtime_binding_sync(run);
+        let initialize = || Self::initialize_runtime_binding_sync(run, credentials);
         if tokio::runtime::Handle::try_current().is_ok_and(|handle| {
             handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
         }) {
@@ -47,6 +67,7 @@ impl ProviderProcessService {
 
     fn initialize_runtime_binding_sync(
         run: &RuntimeProviderRun,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
     ) -> Result<Option<ProviderRuntimeBinding>, DaemonError> {
         if run.adapter_key() == "dev-stub" && run.provider() == "runtime-init-fail" {
             return Err(DaemonError::ProviderProtocol {
@@ -64,7 +85,7 @@ impl ProviderProcessService {
             && run.client_interface().is_chariox()
             && !crate::provider::provider_run_uses_claude_native_bridge(run)
         {
-            return initialize_claude_runtime(run)
+            return initialize_claude_runtime_with_credentials(run, credentials)
                 .map(ProviderRuntimeBinding::Claude)
                 .map(Some);
         }

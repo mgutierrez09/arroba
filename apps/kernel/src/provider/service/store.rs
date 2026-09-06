@@ -239,6 +239,19 @@ impl ProviderProcessServiceStore {
         Ok(())
     }
 
+    pub(crate) fn initialize_runtime_with_credentials(
+        &self,
+        run: &RuntimeProviderRun,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
+    ) -> Result<(), DaemonError> {
+        let binding =
+            ProviderProcessService::initialize_runtime_binding_with_credentials(run, credentials)?;
+        if let Some(binding) = binding {
+            self.write().apply_runtime_binding(run.id(), binding)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_runtime_binding(
         &self,
         run_id: &str,

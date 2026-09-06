@@ -73,6 +73,11 @@ struct KernelRuntimeOwnedState {
     agent_store: AgentServiceStore,
     attachment_store: AttachmentServiceStore,
     provider_store: ProviderProcessServiceStore,
+    pending_provider_launch_credentials: Arc<
+        std::sync::Mutex<
+            BTreeMap<String, crate::provider::ProviderCredentialEnvironment>,
+        >,
+    >,
     workflow_provider_launch_lock: Arc<std::sync::Mutex<()>>,
     workflow_instance_provision_lock: Arc<std::sync::Mutex<()>>,
     publication_activation: Arc<publication_activation::PublicationActivation>,
@@ -502,6 +507,9 @@ impl KernelRuntimeState {
                 agent_store,
                 attachment_store,
                 provider_store,
+                pending_provider_launch_credentials: Arc::new(std::sync::Mutex::new(
+                    BTreeMap::new(),
+                )),
                 workflow_provider_launch_lock: Arc::new(std::sync::Mutex::new(())),
                 workflow_instance_provision_lock: Arc::new(std::sync::Mutex::new(())),
                 publication_activation,

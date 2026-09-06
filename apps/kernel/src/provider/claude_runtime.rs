@@ -34,8 +34,19 @@ pub(crate) use state::{ClaudeRunSelection, ClaudeRuntimeBinding, ClaudeRuntimeSt
 use usage::apply_claude_usage_capture;
 use watchdog::ClaudeTurnStallAction;
 
+#[cfg(test)]
 pub(crate) fn initialize_claude_runtime(
     run: &RuntimeProviderRun,
+) -> Result<ClaudeRuntimeBinding, DaemonError> {
+    initialize_claude_runtime_with_credentials(
+        run,
+        &crate::provider::ProviderCredentialEnvironment::default(),
+    )
+}
+
+pub(crate) fn initialize_claude_runtime_with_credentials(
+    run: &RuntimeProviderRun,
+    credentials: &crate::provider::ProviderCredentialEnvironment,
 ) -> Result<ClaudeRuntimeBinding, DaemonError> {
     let program = run
         .pty_program()
@@ -70,6 +81,7 @@ pub(crate) fn initialize_claude_runtime(
         &program,
         &args,
         &env,
+        credentials,
         &env_remove,
         working_directory.as_ref(),
         "initialize_claude_runtime",
@@ -80,6 +92,7 @@ pub(crate) fn initialize_claude_runtime(
             program,
             args,
             env,
+            provider_credential_env: credentials.clone(),
             env_remove,
             working_directory,
             context_file,
@@ -427,6 +440,7 @@ fn restart_claude_runtime(
         &state.program,
         &args,
         &state.env,
+        &state.provider_credential_env,
         &state.env_remove,
         state.working_directory.as_ref(),
         operation,
@@ -555,6 +569,7 @@ mod tests {
                 program: "/bin/sh".to_string(),
                 args: vec!["-c".to_string(), "cat >/dev/null".to_string()],
                 env: Default::default(),
+                provider_credential_env: Default::default(),
                 env_remove: Vec::new(),
                 working_directory: None,
                 context_file: None,

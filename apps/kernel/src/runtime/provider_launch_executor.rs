@@ -113,8 +113,12 @@ impl ProviderLaunchCommandExecutor {
                 launch_started_at_ms,
             );
             let run = started.run.clone();
+            let provider_credential_env = started.provider_credential_env.clone();
             let binding = tokio::task::spawn_blocking(move || {
-                ProviderProcessService::initialize_runtime_binding(&run)
+                ProviderProcessService::initialize_runtime_binding_with_credentials(
+                    &run,
+                    &provider_credential_env,
+                )
             })
             .await
             .map_err(|error| DaemonError::LocalTransport {

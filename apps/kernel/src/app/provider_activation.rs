@@ -10,6 +10,7 @@ use super::provider_liveness::clear_active_provider_run_session_pointer;
 pub(crate) struct StartedProviderLaunch {
     pub(crate) run: RuntimeProviderRun,
     pub(crate) previous_active_run_id: Option<String>,
+    pub(crate) provider_credential_env: crate::provider::ProviderCredentialEnvironment,
 }
 
 pub(super) struct ProviderRunActivationState;
@@ -59,7 +60,7 @@ impl ProviderRunActivationState {
 
     pub(super) fn start_provider_run_for_session(
         app: &mut DaemonApp,
-        request: LaunchProviderRequest,
+        mut request: LaunchProviderRequest,
     ) -> Result<StartedProviderLaunch, DaemonError> {
         let session_id = request.session_id.clone();
         let mut previous_active_run_id = app
@@ -138,12 +139,14 @@ impl ProviderRunActivationState {
             app.update_provider_run_projection(outcome.into_run());
         }
 
+        let provider_credential_env = std::mem::take(&mut request.provider_credential_env);
         let outcome = app.providers.start_run_provider_only(request)?;
         app.sessions
             .set_active_provider_run(&session_id, Some(outcome.run().id().to_string()))?;
         Ok(StartedProviderLaunch {
             run: outcome.into_run(),
             previous_active_run_id,
+            provider_credential_env,
         })
     }
 

@@ -6,6 +6,31 @@
 use super::*;
 
 impl KernelRuntimeOwnedState {
+    pub(super) fn retain_pending_provider_launch_credentials(
+        &self,
+        provider_run_id: &str,
+        credentials: crate::provider::ProviderCredentialEnvironment,
+    ) {
+        if credentials.is_empty() {
+            return;
+        }
+        self.pending_provider_launch_credentials
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(provider_run_id.to_string(), credentials);
+    }
+
+    pub(super) fn take_pending_provider_launch_credentials(
+        &self,
+        provider_run_id: &str,
+    ) -> crate::provider::ProviderCredentialEnvironment {
+        self.pending_provider_launch_credentials
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(provider_run_id)
+            .unwrap_or_default()
+    }
+
     pub(super) fn workflow_agent_has_prompt_work(
         &self,
         session_id: &str,
@@ -186,6 +211,8 @@ impl KernelRuntimeOwnedState {
             .with_workflow_event_context(event_context_enabled)
             .with_workflow_event_actions(event_actions_enabled);
         let started = self.start_provider_launch(request)?;
+        let provider_run_id = started.run.id().to_string();
+        let provider_credential_env = started.provider_credential_env;
         // The owned workflow admission path is synchronous, so it cannot use the async app
         // launch helper. Enable the workflow tool surface before the detached launch is spawned;
         // otherwise an idle ordinary provider run can be reused and the workflow prompt is
@@ -200,7 +227,8 @@ impl KernelRuntimeOwnedState {
             run
         };
         self.provider_run_projection.update(run.clone());
-        Ok((run.id().to_string(), retired_provider_run_id))
+        self.retain_pending_provider_launch_credentials(&provider_run_id, provider_credential_env);
+        Ok((provider_run_id, retired_provider_run_id))
     }
 
     pub(super) fn workflow_prompt_requires_fresh_provider_context(

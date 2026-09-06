@@ -472,6 +472,10 @@ pub struct LaunchProviderRequest {
     /// execution kernel resolves the stable profile id against its registry.
     #[serde(skip)]
     pub(crate) provider_account_env: BTreeMap<String, String>,
+    /// Vault-resolved values for this in-flight launch. This is excluded from
+    /// every serialized request shape and uses a redacted debug projection.
+    #[serde(skip)]
+    pub(crate) provider_credential_env: super::ProviderCredentialEnvironment,
     #[serde(
         default,
         skip_serializing_if = "ProviderWriteAccessMode::is_unrestricted"
@@ -638,6 +642,7 @@ impl LaunchProviderRequest {
             provider_config_overrides: BTreeMap::new(),
             provider_env_remove: Vec::new(),
             provider_account_env: BTreeMap::new(),
+            provider_credential_env: super::ProviderCredentialEnvironment::default(),
             write_access_mode: ProviderWriteAccessMode::Unrestricted,
             execution_mode: None,
             permission_level: None,
@@ -717,6 +722,14 @@ impl LaunchProviderRequest {
         environment: BTreeMap<String, String>,
     ) -> Self {
         self.provider_account_env = environment;
+        self
+    }
+
+    pub(crate) fn with_provider_credential_env(
+        mut self,
+        environment: super::ProviderCredentialEnvironment,
+    ) -> Self {
+        self.provider_credential_env = environment;
         self
     }
 
@@ -846,6 +859,25 @@ mod tests {
         LaunchProviderRequest, ProviderResumeState,
     };
     use crate::provider::{ControlCapabilityMode, ControlOperation};
+    use zeroize::Zeroizing;
+
+    #[test]
+    fn provider_credentials_are_absent_from_wire_and_debug_shapes() {
+        let mut credentials = super::super::ProviderCredentialEnvironment::default();
+        credentials.insert(
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            Zeroizing::new("setup-token-secret".to_string()),
+        );
+        let request = LaunchProviderRequest::new("session-1", "claude", "claude", "work", "sonnet")
+            .with_provider_credential_env(credentials);
+
+        let encoded = serde_json::to_string(&request).expect("launch request should serialize");
+        let debug = format!("{request:?}");
+        assert!(!encoded.contains("CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!encoded.contains("setup-token-secret"));
+        assert!(!debug.contains("CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!debug.contains("setup-token-secret"));
+    }
 
     #[test]
     fn launch_request_tracks_managed_workspace_live_sync_mode() {
