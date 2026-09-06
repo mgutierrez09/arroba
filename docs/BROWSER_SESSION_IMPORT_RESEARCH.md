@@ -85,14 +85,86 @@ the Chariox web app can assume is present.
 | Web, local TUI and remote TUI | Same kernel authorization and result, no client-specific authority |
 | Real Google session | Explicit user-consented acceptance test; fixture success is not Google proof |
 
+## OSS implementation review
+
+Reviewed on 2026-09-06. Browser import is established functionality and we should
+reuse its interaction patterns and tested implementations where they fit. The
+distinction below is between saved passwords and an already signed-in session,
+not an objection to supporting import.
+
+| Source and pinned revision | What the inspected code does | Reuse decision |
+| --- | --- | --- |
+| [Firefox ChromeProfileMigrator](https://github.com/mozilla-firefox/firefox/blob/ae0bb53a873d228e4e61b796e184dc3c687ff82e/browser/components/migration/ChromeProfileMigrator.sys.mjs) | Enumerates source profiles and available resources. Imports bookmarks, history, form data and extensions, plus passwords and payment methods when supported. Its `getResources` does not register cookie import. Individual resource discovery failures do not prevent other resources from being offered. | Reuse the profile/category selection and per-resource failure pattern. Do not describe its password importer as a live-session importer. |
+| [Firefox macOS login crypto](https://github.com/mozilla-firefox/firefox/blob/ae0bb53a873d228e4e61b796e184dc3c687ff82e/browser/components/migration/ChromeMacOSLoginCrypto.sys.mjs) | Retrieves the source browser's password-encryption secret through macOS Keychain. The migrator handles cancellation of that access. | Do not port this path into unattended Chariox. It would reintroduce the OS authorization dependency the user rejected. |
+| [Brave import coordinator](https://github.com/brave/brave-core/blob/a8ccd4875e747fb959ce733765b302a23c7ec479/browser/importer/brave_external_process_importer_host.cc) and [password importer](https://github.com/brave/brave-core/blob/a8ccd4875e747fb959ce733765b302a23c7ec479/browser/importer/brave_password_importer.cc) | Copies `Login Data`, reads it through Chromium's password database and OS decryptor, then submits credentials to the destination password store. The coordinator allows this password path only for Brave-to-Brave on macOS and Linux. It distinguishes an empty database from a read failure. | Reuse the failure distinctions and source-preserving approach, not the Chromium-internal dependency graph or OS decryptor. These are browser-integrated C++ components, not a standalone Chariox library. |
+| [Cookie-Editor handler](https://github.com/Moustachauve/cookie-editor/blob/9f3f8fb6f7d94985009d612a9cbfd0e7f439d77d/interface/lib/genericCookieHandler.js) and [MV3 manifest](https://github.com/Moustachauve/cookie-editor/blob/9f3f8fb6f7d94985009d612a9cbfd0e7f439d77d/manifest.chrome.json) | Uses the browser cookies API, optional host permissions and browser-specific field normalization. `prepareCookie` preserves several common fields but does not copy `partitionKey` at this revision. | Useful working reference for cookie transfer, not a complete fidelity implementation. Do not copy its normalization unchanged. Its repository declares GPL-3.0; no code has been copied or license-compatibility decision made. |
+| [Google MV3 cookie sample](https://github.com/GoogleChrome/chrome-extensions-samples/tree/6c3c302b349160c754138f0fd940f0f5e96ef614/api-samples/cookies/cookie-clearer) | Demonstrates a popup calling the browser cookies API. This particular example deletes cookies and requests all hosts at installation. | Reuse small MV3/API wiring examples where helpful. Do not carry over deletion or broad host access. The repository declares Apache-2.0, but file notices and any dependencies still need checking when taking code. |
+
+Firefox and the inspected Brave files declare MPL-2.0 in their source headers.
+Keep upstream revision, license and notices with any future copied or adapted
+code. This investigation adds no third-party implementation or dependency.
+
+Brave's current [user documentation](https://support.brave.app/hc/en-us/articles/360019782291-How-do-I-import-or-export-browsing-data)
+also separates the standard import dialog from Chrome password import, which it
+directs through explicit password export/import. That supports offering familiar
+browser/profile/category choices, without implying every category has the same
+transfer mechanism. No claim is made about the proprietary Codex browser's
+import implementation.
+
+### Recommended implementation order
+
+Use the normal first-run interaction: choose a browser/profile, choose what to
+import, choose the destination, then see the result. Keep "Browser sign-ins" and
+"Saved passwords" separate. For the user's requested sign-ins, implement the
+browser-mediated path first. Saved passwords, bookmarks and history can be
+separate categories; they must not delay session transfer or appear as supported
+before they are implemented.
+
+1. Add a small MV3 connector using the documented cookies API and optional site
+   permissions. The source profile is the profile running that connector, not
+   arbitrary profiles on disk. Explain that boundary in the picker. An extension
+   cannot silently read another Chrome profile just because it is installed in
+   one profile.
+2. Keep cookie values inside the connector, encrypted transfer and destination
+   controller. Reuse Chariox's authenticated encrypted transport and kernel-owned
+   authorization. Add the import request and progress/result projection to the
+   shared protocol, not an independent web endpoint with its own authority.
+3. Share one field validator and normalization contract across the transfer and
+   destination adapter. Test host-only versus domain scope, session expiry,
+   SameSite, Secure, HttpOnly, path and partition keys. Source browser store IDs
+   identify the source store; they must not be blindly reused as destination IDs.
+4. Use an explicit bounded transaction with a destination snapshot and rollback
+   or an equivalent atomic publication mechanism. Cancellation, expiry or failure
+   must not leave an import reported as complete. Do not clear the entire browser
+   cookie store or import unrelated domains.
+5. Run the two-profile fixture and security matrix below before offering the
+   connector for real sign-ins. Then validate supported services with the user.
+
+This is an implementation recommendation, not proof that the connector or its
+authorization exists. The browser API supplies cookie access, not Chariox's
+pairing, consent, encrypted routing, replay prevention or destination lifecycle.
+Those product responsibilities remain to be implemented.
+
+The [Chrome cookie API](https://developer.chrome.com/docs/extensions/reference/api/cookies)
+documents permission, store and partition semantics. Browser-mediated access
+avoids implementing Chrome's on-disk decryption inside Chariox. It does not turn
+device-bound credentials into transferable credentials. Follow the site's normal
+reauthentication when [DBSC](https://developer.chrome.com/docs/web-platform/device-bound-session-credentials)
+or another service check rejects the copied session.
+
 ## Current evidence and remaining work
 
-The repository already saves browser home state and has a live Docker browser
-state drill. That fixture currently authenticates using a persistent HttpOnly
-cookie. Session-cookie coverage and the reported Google shutdown loss need
-separate verification. No Chrome extension importer was found in the inspected
-runtime paths, and no real Chrome profile, cookies or Keychain item was read for
-this research.
+The repository saves browser home state and has a live Docker browser state
+drill. Local validation now includes persistent and session cookies plus browser
+storage through restart and full container/home-volume removal, recorded outside
+Git in the browser-computer-use evidence directory. This proves fixture
+persistence, not importing a Mac profile. The user-attended Google restore test
+has restored a Gmail tab with Chromium namespace and seccomp sandbox checks
+passing; confirmation that Google still accepts the login is pending. No cookie
+values or inbox content were captured for that check.
+
+No Chrome extension importer was found in the inspected runtime paths. No real
+host Chrome profile, cookies or Keychain item was read for this research.
 
 First fix and validate saved browser state and renderer sandboxing. Then build
 the opt-in import with a deterministic two-profile fixture before touching real
