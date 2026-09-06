@@ -376,6 +376,35 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
 
     let upload_path = fixture._worker_state.root.join("relay-upload.txt");
     std::fs::write(&upload_path, b"relay upload").expect("write bounded upload fixture");
+    let upload_target = json!({"kind":"browser_tab","tab_id":tab_id});
+    dispatch_json(
+        &fixture.home,
+        json!({"RequestRoomEnvironmentInputTakeover":{
+            "session_id":room,"target":upload_target
+        }}),
+    )
+    .await
+    .expect("human reserves the upload tab");
+    let denied_upload = runtime
+        .dispatch_authenticated_runtime_tool_call(
+            token,
+            "slice_browser_upload",
+            json!({"field_id": upload_field, "files": [upload_path.clone()]}),
+        )
+        .await
+        .expect_err("agent upload must respect human tab ownership");
+    assert!(
+        denied_upload.to_string().contains("belongs to"),
+        "{denied_upload}"
+    );
+    dispatch_json(
+        &fixture.home,
+        json!({"ReleaseRoomEnvironmentInput":{
+            "session_id":room,"target":upload_target
+        }}),
+    )
+    .await
+    .expect("release upload tab before retry");
     let upload = runtime
         .dispatch_authenticated_runtime_tool_call(
             token,
@@ -387,6 +416,29 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
     assert!(upload.ok, "{:?}", upload.payload);
     assert_eq!(upload.payload["file_count"], 1);
     assert_eq!(upload.payload["total_bytes"], 12);
+    let uploaded_state = dispatch_json(
+        &fixture.home,
+        json!({"GetRoomEnvironmentState":{"session_id":room}}),
+    )
+    .await
+    .expect("upload action history");
+    let uploads = uploaded_state["RoomEnvironmentState"]["environment"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|action| action["kind"] == "upload" && action["state"] == "completed")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        uploads.len(),
+        1,
+        "exactly one upload may complete after release"
+    );
+    assert_eq!(
+        uploads[0]["actor_id"],
+        crate::session::agent_environment_actor_id(agent_id)
+    );
+    assert_eq!(uploads[0]["targets"], json!([upload_target]));
+    assert!(!uploads[0].to_string().contains("relay-upload.txt"));
     assert!(
         !upload.payload.to_string().contains("relay-upload.txt"),
         "upload paths must not return through runtime MCP"
