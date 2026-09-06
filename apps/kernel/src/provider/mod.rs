@@ -28,6 +28,8 @@ mod types;
 mod workspace_live_sync_policy;
 mod workspace_write_fence;
 
+#[cfg(test)]
+pub(crate) use account_credential::provider_account_credential_id;
 pub(crate) use account_credential::resolve_provider_account_credentials;
 pub(crate) use claude::ensure_claude_native_hidden_context_fits;
 pub(crate) use claude::probe_claude_account_usage;

@@ -414,6 +414,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workflow_launch_retains_vaulted_environment_until_detached_spawn() {
+        let _env = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-workflow-provider-credentials-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        std::env::set_var("CHARIOX_HOME", &root);
+        std::env::set_var("CHARIOX_TEST_CLAUDE_SETUP_TOKEN", "workflow-setup-token");
+
+        let mut app = DaemonApp::bootstrap(
+            DaemonConfig::for_tests().with_session_history_root(root.join("session-history")),
+        )
+        .expect("daemon should boot");
+        let (session, _default_agent) = KernelSessionService::new(&mut app)
+            .create_session(CreateSessionRequest::new(
+                root.to_string_lossy(),
+                root.to_string_lossy(),
+            ))
+            .expect("session should create");
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "claude",
+                "Workflow Claude",
+            )
+            .expect("managed Claude profile should create");
+        let credential_id = crate::provider::provider_account_credential_id(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "claude",
+            &profile.profile_id,
+        );
+        crate::credential::CharioxCredentialRegistry::user()
+            .expect("credential registry should resolve")
+            .upsert(crate::config::UserCredentialConfig {
+                id: credential_id,
+                description: None,
+                source: crate::config::UserCredentialSourceConfig::Env {
+                    name: "CHARIOX_TEST_CLAUDE_SETUP_TOKEN".to_string(),
+                },
+                allowed_hosts: Vec::new(),
+                allowed_uses: vec![crate::config::UserCredentialUse::Provider],
+                injection: crate::config::UserCredentialInjectionConfig::Provider,
+                metadata: None,
+            })
+            .expect("provider credential should register");
+        let workflow_agent = KernelSessionService::new(&mut app)
+            .spawn_agent(
+                CreateAgentRequest::new(session.id(), "claude")
+                    .with_model("claude-sonnet")
+                    .with_account_profile(profile.profile_id),
+            )
+            .expect("workflow agent should create");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let (provider_run_id, retired_provider_run_id) = runtime
+            .owned
+            .workflow_ensure_provider_run(
+                session.id(),
+                workflow_agent.id(),
+                false,
+                false,
+                false,
+                false,
+                None,
+            )
+            .expect("workflow provider should start");
+        assert!(retired_provider_run_id.is_none());
+        let credentials = runtime
+            .owned
+            .take_pending_provider_launch_credentials(&provider_run_id);
+        assert_eq!(
+            credentials.iter().collect::<Vec<_>>(),
+            vec![("CLAUDE_CODE_OAUTH_TOKEN", "workflow-setup-token")]
+        );
+        let pty_credentials = credentials.clone();
+        let structured_credentials = credentials.clone();
+        assert_eq!(
+            pty_credentials.iter().collect::<Vec<_>>(),
+            structured_credentials.iter().collect::<Vec<_>>()
+        );
+        assert!(runtime
+            .owned
+            .take_pending_provider_launch_credentials(&provider_run_id)
+            .is_empty());
+
+        std::env::remove_var("CHARIOX_TEST_CLAUDE_SETUP_TOKEN");
+        std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn workflow_prompt_stays_bound_to_the_replacement_provider_run() {
         let mut app = DaemonApp::bootstrap(DaemonConfig::for_tests()).expect("daemon should boot");
         let (session, _default_agent) = KernelSessionService::new(&mut app)
@@ -3127,6 +3223,9 @@ impl KernelRuntimeState {
                     );
                 }
             }
+            let provider_credential_env = state
+                .owned
+                .take_pending_provider_launch_credentials(&provider_run_id);
             let run = match state.owned.provider_store.get_run(&provider_run_id) {
                 Ok(run) if run.state() == crate::provider::ProviderRunState::Starting => run,
                 _ => return,
@@ -3134,11 +3233,12 @@ impl KernelRuntimeState {
             let started = crate::app::StartedProviderLaunch {
                 run: run.clone(),
                 previous_active_run_id: None,
-                provider_credential_env: Default::default(),
+                provider_credential_env,
             };
             let spawn_result = state
                 .with_app_side_effect(|app| {
-                    crate::app::ProviderLaunchProcessRuntime::new(app).spawn_for_launch(&run)
+                    crate::app::ProviderLaunchProcessRuntime::new(app)
+                        .spawn_for_launch_with_credentials(&run, &started.provider_credential_env)
                 })
                 .await;
             if let Err(error) = spawn_result {
@@ -3154,8 +3254,12 @@ impl KernelRuntimeState {
             if runtime_init_delay_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(runtime_init_delay_ms)).await;
             }
+            let provider_credential_env = started.provider_credential_env.clone();
             let binding = tokio::task::spawn_blocking(move || {
-                crate::provider::ProviderProcessService::initialize_runtime_binding(&run)
+                crate::provider::ProviderProcessService::initialize_runtime_binding_with_credentials(
+                    &run,
+                    &provider_credential_env,
+                )
             })
             .await
             .map_err(|error| DaemonError::LocalTransport {

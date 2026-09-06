@@ -22,6 +22,10 @@ impl ProviderCredentialEnvironment {
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
 }
 
 impl Clone for ProviderCredentialEnvironment {
