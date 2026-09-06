@@ -3,8 +3,8 @@ use crate::local::{
     DeleteCredentialSecretRequest, GetCredentialVaultStatusRequest, GetUserConfigRequest,
     GetUserConfigSchemaRequest, LocalDaemonRequest, LocalDaemonResponse,
     LockCredentialVaultRequest, ManageCredentialVaultRequest, SetCredentialSecretRequest,
-    SetUserConfigValueRequest, SetWorkspaceLiveSyncModeRequest, UnsetUserConfigValueRequest,
-    UserConfigMutationEffect,
+    SetProviderAccountCredentialRequest, SetUserConfigValueRequest,
+    SetWorkspaceLiveSyncModeRequest, UnsetUserConfigValueRequest, UserConfigMutationEffect,
 };
 use crate::runtime::command::{command_caller_user_id, KernelCommand};
 use crate::runtime::projection::DaemonConfigProjectionStore;
@@ -53,6 +53,15 @@ pub(crate) async fn execute_user_config_request(
             )
             .await
         }
+        LocalDaemonRequest::SetProviderAccountCredential(request) => {
+            execute_set_provider_account_credential_request(
+                config_projection,
+                runtime_state,
+                command,
+                request,
+            )
+            .await
+        }
         LocalDaemonRequest::GetCredentialVaultStatus(request) => {
             execute_get_credential_vault_status_request(config_projection, request).await
         }
@@ -67,6 +76,51 @@ pub(crate) async fn execute_user_config_request(
             message: "unsupported user config request".to_string(),
         }),
     }
+}
+
+pub(crate) async fn execute_set_provider_account_credential_request(
+    config_projection: &DaemonConfigProjectionStore,
+    runtime_state: &KernelRuntimeState,
+    command: &KernelCommand,
+    request: SetProviderAccountCredentialRequest,
+) -> Result<LocalDaemonResponse, DaemonError> {
+    let owner_user_id =
+        runtime_state.provider_account_authority_owner_user_id(&command_caller_user_id(command));
+    let provider = crate::provider::canonical_provider_family(&request.provider)
+        .ok_or_else(|| DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "unsupported provider",
+        })?
+        .to_string();
+    let profile = runtime_state.provider_account_profile_registry().get(
+        &owner_user_id,
+        &provider,
+        &request.account_profile,
+    )?;
+    let _vault_unlock = runtime_state
+        .ensure_vault_unlocked_for_command_context(
+            command,
+            request.session_id.as_deref(),
+            request.agent_id.as_deref(),
+            "provider_account_credential_set",
+        )
+        .await?;
+    let config = config_projection.snapshot();
+    let stored = crate::provider::store_provider_account_credential(
+        &config,
+        &owner_user_id,
+        &provider,
+        &profile.profile_id,
+        &request.value,
+        request.overwrite,
+    )?;
+    runtime_state.record_waiting_room_change();
+    Ok(LocalDaemonResponse::ProviderAccountCredentialStored {
+        provider,
+        account_profile: profile.profile_id,
+        credential_id: stored.credential_id,
+        replaced: stored.replaced,
+    })
 }
 
 pub(crate) async fn execute_get_user_config_request(

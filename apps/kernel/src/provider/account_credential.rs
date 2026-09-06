@@ -7,6 +7,12 @@ use super::ProviderCredentialEnvironment;
 
 const CLAUDE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
+#[derive(Debug)]
+pub(crate) struct StoredProviderAccountCredential {
+    pub(crate) credential_id: String,
+    pub(crate) replaced: bool,
+}
+
 /// Stable handle for the Chariox-vault credential assigned to one provider
 /// account. The handle contains no provider secret or host-local path.
 pub(crate) fn provider_account_credential_id(
@@ -93,6 +99,74 @@ fn unattended_claude_credential_error_message() -> &'static str {
     }
 }
 
+pub(crate) fn store_provider_account_credential(
+    config: &DaemonConfig,
+    owner_user_id: &str,
+    provider: &str,
+    profile_id: &str,
+    secret: &str,
+    overwrite: bool,
+) -> Result<StoredProviderAccountCredential, DaemonError> {
+    let provider = crate::provider::canonical_provider_family(provider).ok_or_else(|| {
+        DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "unsupported provider",
+        }
+    })?;
+    if provider != "claude" {
+        return Err(DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "vault-backed account credentials are currently supported only for Claude",
+        });
+    }
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return Err(DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "Claude setup token must not be empty",
+        });
+    }
+    let credential_id = provider_account_credential_id(owner_user_id, provider, profile_id);
+    let registry = crate::credential::CharioxCredentialRegistry::user()?;
+    let existing = registry.get(&credential_id)?;
+    let replaced = existing.is_some();
+    let now_ms = crate::session::unix_epoch_ms();
+    let created_at_ms = existing
+        .as_ref()
+        .and_then(|credential| credential.metadata.as_ref())
+        .and_then(|metadata| metadata.created_at_ms)
+        .unwrap_or(now_ms);
+    let credential = crate::config::UserCredentialConfig {
+        id: credential_id.clone(),
+        description: Some(format!("{provider} account profile {profile_id}")),
+        source: crate::config::UserCredentialSourceConfig::Vault {
+            key: credential_id.clone(),
+        },
+        allowed_hosts: Vec::new(),
+        allowed_uses: vec![crate::config::UserCredentialUse::Provider],
+        injection: crate::config::UserCredentialInjectionConfig::Provider,
+        metadata: Some(crate::config::UserCredentialMetadataConfig {
+            created_by_kind: Some("provider_account_profile".to_string()),
+            created_by_id: Some(profile_id.to_string()),
+            session_id: None,
+            provider: Some(provider.to_string()),
+            provider_run_id: None,
+            vault_key: Some(credential_id.clone()),
+            created_at_ms: Some(created_at_ms),
+            updated_at_ms: Some(now_ms),
+        }),
+    };
+    let service = crate::secret::RuntimeSecretService::with_vault_config(
+        Vec::new(),
+        &config.user_config.credential_vault,
+    )?;
+    service.upsert_vault_backed_credential_with_secret(&registry, credential, secret, overwrite)?;
+    Ok(StoredProviderAccountCredential {
+        credential_id,
+        replaced,
+    })
+}
+
 fn canonical_label(provider: &str) -> &'static str {
     crate::provider::canonical_provider_family(provider).unwrap_or("provider")
 }
@@ -177,6 +251,88 @@ mod tests {
 
         std::env::remove_var("CHARIOX_TEST_CLAUDE_SETUP_TOKEN");
         std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn store_provider_credential_uses_vault_source_and_provider_policy() {
+        let _guard = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-provider-account-store-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::env::set_var("CHARIOX_HOME", &root);
+        std::env::set_var("CHARIOX_ALLOW_VOLATILE_PROCESS_MEMORY_VAULT", "1");
+        let mut config = crate::config::DaemonConfig::for_tests();
+        config.user_config.credential_vault.backend =
+            crate::config::CredentialVaultBackend::ProcessMemory;
+
+        let stored = store_provider_account_credential(
+            &config,
+            "local",
+            "claude",
+            "work",
+            "  setup-token-secret  ",
+            false,
+        )
+        .expect("provider credential should store");
+        assert!(!stored.replaced);
+        let credential = crate::credential::CharioxCredentialRegistry::user()
+            .expect("registry should open")
+            .get(&stored.credential_id)
+            .expect("credential should read")
+            .expect("credential should exist");
+        assert_eq!(
+            credential.source,
+            crate::config::UserCredentialSourceConfig::Vault {
+                key: stored.credential_id.clone()
+            }
+        );
+        assert_eq!(
+            credential.allowed_uses,
+            vec![crate::config::UserCredentialUse::Provider]
+        );
+        assert_eq!(
+            credential.injection,
+            crate::config::UserCredentialInjectionConfig::Provider
+        );
+        let resolved = resolve_provider_account_credentials(&config, "local", "claude", "work")
+            .expect("stored credential should resolve");
+        assert_eq!(
+            resolved.iter().collect::<Vec<_>>(),
+            vec![(CLAUDE_OAUTH_TOKEN_ENV, "setup-token-secret")]
+        );
+        let duplicate = store_provider_account_credential(
+            &config,
+            "local",
+            "claude",
+            "work",
+            "replacement-token",
+            false,
+        )
+        .expect_err("replacement should require explicit overwrite");
+        assert!(duplicate.to_string().contains("overwrite=true"));
+        let replacement = store_provider_account_credential(
+            &config,
+            "local",
+            "claude",
+            "work",
+            "replacement-token",
+            true,
+        )
+        .expect("explicit replacement should succeed");
+        assert!(replacement.replaced);
+        let resolved = resolve_provider_account_credentials(&config, "local", "claude", "work")
+            .expect("replacement should resolve");
+        assert_eq!(
+            resolved.iter().collect::<Vec<_>>(),
+            vec![(CLAUDE_OAUTH_TOKEN_ENV, "replacement-token")]
+        );
+
+        std::env::remove_var("CHARIOX_HOME");
+        std::env::remove_var("CHARIOX_ALLOW_VOLATILE_PROCESS_MEMORY_VAULT");
         let _ = std::fs::remove_dir_all(root);
     }
 }

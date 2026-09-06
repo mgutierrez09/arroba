@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn local_daemon_managed_context_outbound_shape_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 307);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 308);
     let plan = crate::managed_bootstrap::ManagedKernelContextPlan::source_project_for_tests(
         "context-1",
         "realm-1",

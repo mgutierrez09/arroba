@@ -227,6 +227,7 @@ pub enum LocalDaemonResponse {
     ProviderAccountProfile { profile: crate::account_profile::ProviderAccountProfile, },
     ProviderAccountProfileRemoved { profile: crate::account_profile::ProviderAccountProfile, },
     ProviderAccountProfileDataDeleted { profile: crate::account_profile::ProviderAccountProfile, },
+    ProviderAccountCredentialStored { provider: String, account_profile: String, credential_id: String, replaced: bool, },
     ProviderProcessesListed { processes: Vec<ProviderProcessInfo>, },
     ProviderProcessesTornDown { processes: Vec<ProviderProcessInfo>, },
     SessionHistoryOutline { agents: Vec<SessionHistoryOutlineAgent>, },

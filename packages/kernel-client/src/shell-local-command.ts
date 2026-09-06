@@ -26,7 +26,7 @@ export function executeShellLocalCommand(parsed: ParsedShellCommand, context: Sh
           "workflow list|new|show|run|runs|cancel|resume|node|edge|endpoint",
           "recall search|semantic-search",
           "prompt [agent-ref] <prompt> [--wait] [--show-reply|--show-summary]",
-          "provider status|login|logout|reauth|processes [provider]|processes teardown <provider>",
+          "provider status|login|setup-token|logout|reauth|processes [provider]|processes teardown <provider>",
           "stop",
           "context",
           "pwd",

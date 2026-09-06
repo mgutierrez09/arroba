@@ -137,6 +137,16 @@ fn local_request_payload(request: &LocalDaemonRequest) -> Value {
                 "value": "[redacted]"
             }
         }),
+        LocalDaemonRequest::SetProviderAccountCredential(request) => serde_json::json!({
+            "SetProviderAccountCredential": {
+                "session_id": request.session_id,
+                "agent_id": request.agent_id,
+                "provider": request.provider,
+                "account_profile": request.account_profile,
+                "value": "[redacted]",
+                "overwrite": request.overwrite
+            }
+        }),
         LocalDaemonRequest::RespondToInteraction(request) => serde_json::json!({
             "RespondToInteraction": {
                 "session_id": request.session_id,
@@ -171,8 +181,8 @@ mod tests {
         AliasSessionRequest, AttachToSessionRequest, DestroyAgentRequest, EndSessionRequest,
         FocusAgentRequest, GetDaemonHealthRequest, LocalDaemonRequest, PollRuntimeNoticesRequest,
         RequestCredentialEnrollmentInteractionRequest, RespondToInteractionRequest,
-        SetCredentialSecretRequest, SpawnAgentRequest, SubmitPromptRequest,
-        UpdateSessionConfigRequest,
+        SetCredentialSecretRequest, SetProviderAccountCredentialRequest, SpawnAgentRequest,
+        SubmitPromptRequest, UpdateSessionConfigRequest,
     };
     use crate::runtime::command::{
         KernelCaller, KernelCallerKind, KernelCommand, KernelCommandPriority, KernelCommandSource,
@@ -407,6 +417,35 @@ mod tests {
         assert!(!serde_json::to_string(&command.payload)
             .unwrap()
             .contains("super-secret"));
+    }
+
+    #[test]
+    fn redacts_provider_account_credential_payloads() {
+        let request =
+            LocalDaemonRequest::SetProviderAccountCredential(SetProviderAccountCredentialRequest {
+                session_id: Some("session-1".to_string()),
+                agent_id: Some("agent-1".to_string()),
+                provider: "claude".to_string(),
+                account_profile: "work".to_string(),
+                value: "super-secret-setup-token".to_string(),
+                overwrite: true,
+            });
+        let command = KernelCommand::from_local_request(
+            "credential-2",
+            None,
+            Some("attachment-1".to_string()),
+            &request,
+        );
+
+        assert_eq!(command.command_type, "provider_account.credential.set");
+        assert_eq!(
+            command.payload["SetProviderAccountCredential"]["value"],
+            "[redacted]"
+        );
+        assert!(!format!("{request:?}").contains("super-secret-setup-token"));
+        assert!(!serde_json::to_string(&command.payload)
+            .unwrap()
+            .contains("super-secret-setup-token"));
     }
 
     #[test]
