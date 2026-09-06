@@ -4,8 +4,8 @@
 
 Chariox spans two main repositories:
 
-- `chariox`: open-source runtime. It owns the kernel, relay, local/remote TUI CLIs, provider adapters, iOS work, and planned Android client foundations.
-- `chariox-cloud`: hosted control plane and web app. It owns browser auth, Cloud waiting room, hosted relay token issuance, staging deployment, and the web CLI UI.
+- `chariox`: open-source runtime. It owns the kernel, relay, local/remote TUI CLIs, provider adapters, the shared React terminal runtime, and the Tauri installed client for iOS, Android, macOS, Windows, and Linux.
+- `chariox-cloud`: hosted control plane and browser host. It owns browser auth and adapters, account and billing state, Cloud waiting-room control-plane data, hosted relay token issuance, staging deployment, and Cloud-only UI contributions.
 
 ## Runtime Architecture
 
@@ -21,9 +21,8 @@ Primary connectivity:
 
 - Local TUI CLI: `local TUI <-> kernel <-> agent`
 - Remote/orphaned TUI CLI: `remote TUI <-> relay <-> kernel <-> agent`
-- Web CLI: `browser <-> hosted relay <-> kernel <-> agent`; Cloud is bootstrap/control plane only and must not proxy runtime terminal traffic.
-- iOS client: native client planned to use the same kernel/relay protocol surfaces.
-- Android client: planned, same architecture as iOS.
+- Browser terminal: `browser <-> hosted relay <-> kernel <-> agent`; Cloud is bootstrap/control plane only and must not proxy runtime terminal traffic.
+- Installed terminal: Tauri uses the same shared React terminal and kernel/relay protocol surfaces. Mobile is remote-only; desktop may also connect to or start a local kernel.
 
 Cloud may authenticate users, issue relay tokens, select relay targets, and display waiting-room/control-plane state. Cloud must not fork kernel runtime behavior.
 
