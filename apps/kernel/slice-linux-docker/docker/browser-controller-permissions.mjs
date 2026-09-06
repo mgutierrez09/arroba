@@ -1,3 +1,5 @@
+import { assertNotCancelled } from "./browser-controller-actions.mjs";
+
 const PERMISSION_DESCRIPTORS = new Map([
   ["camera", { name: "camera" }],
   ["clipboard-read-write", { name: "clipboard-read" }],
@@ -28,7 +30,9 @@ export async function setBrowserPermission({
   targetUrl,
   permission,
   setting,
+  signal,
 }) {
+  assertNotCancelled(signal);
   const descriptor = PERMISSION_DESCRIPTORS.get(permission);
   if (!descriptor || !PERMISSION_SETTINGS.has(setting)) {
     throw new BrowserPermissionError(
@@ -54,6 +58,7 @@ export async function setBrowserPermission({
       "browser permissions require the current HTTP or HTTPS origin",
     );
   }
+  assertNotCancelled(signal);
   await connection.send("Browser.setPermission", {
     permission: descriptor,
     setting,

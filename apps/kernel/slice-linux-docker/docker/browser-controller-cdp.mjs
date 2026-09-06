@@ -520,7 +520,8 @@ export class BrowserCdpClient {
     };
   }
 
-  async configureDownloads(rawRequest) {
+  async configureDownloads(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const { connection, sessionId } = await this.resolvePageTarget(targetId);
@@ -535,6 +536,7 @@ export class BrowserCdpClient {
           downloadDirectory: this.downloadDirectory,
           minimumFreeBytes: this.minimumDownloadFreeBytes,
           fileSystem: this.fileSystem,
+          signal,
         }),
       };
     } catch (error) {
@@ -582,7 +584,8 @@ export class BrowserCdpClient {
     }
   }
 
-  async setPermission(rawRequest) {
+  async setPermission(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const { connection, sessionId, target } = await this.resolvePageTarget(targetId);
@@ -597,6 +600,7 @@ export class BrowserCdpClient {
           targetUrl: target.url,
           permission: rawRequest?.permission,
           setting: rawRequest?.setting,
+          signal,
         }),
       };
     } catch (error) {
