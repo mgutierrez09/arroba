@@ -72,6 +72,48 @@ both signals, repeated signals during cleanup, and temporary-state removal.
 import operation before spawning. Keep this separate from the normal automatic
 transfer path so import-and-launch regressions can be reproduced.
 
+## Graphical office work
+
+Set `CHARIOX_ROOM_DRILL_COMPUTER_TASK=office` with standalone `real-provider`
+focus and Computer mode. This uses the same official agent after its initial
+click check, not a second provider or a driver issuing MCP calls as an agent.
+The fixture installs Mousepad and xterm and establishes a synthetic webmail
+session before the office prompts. It does not create the document.
+
+The first prompt asks the agent to use the real Openbox Terminal emulator menu,
+launch Mousepad through graphical terminal input, type a multiline Unicode
+document with Computer tools, save it, and leave the editor focused. The driver
+checks the exact saved contents, corresponding agent-attributed keyboard Action,
+completed prompt identity, idle agent, and matching notices in both TUIs. A
+physical screenshot must preserve Mousepad focus.
+
+The next prompt asks the same agent to use structured Browser tools to compose
+one message and attach that file. Acceptance compares the filename, byte length
+and SHA-256 received by the authenticated mail fixture with the actual saved
+document. It requires a fresh attributed upload followed by one submit and both
+TUI notices. No real email is sent. The fixture listener closes on success or
+failure; the parent drill removes the installed applications, document and
+provider processes with its disposable container and home volume.
+
+The office mode intentionally rejects Web-companion focus until that viewer's
+office-work verification exists. It does not establish vault login, external
+email, provider save/resume, other office scenarios, all providers, or managed
+deployment. The usual runtime image, memory bounds, source identity and cleanup
+requirements still apply. A successful initial click alone never passes the
+office mode.
+
+### Office validation status
+
+On 2026-09-06 the live official-provider run proved graphical editor input,
+exact saved file bytes, preserved editor focus and both TUI observations. The
+mail turn then exposed an expired submitting client attachment. The office
+runner now creates and releases an attachment per prompt; two focused
+regressions reproduce the old failure and pass with that fix.
+
+A full rerun was rejected before slice creation by memory admission while two
+other tests held the VM's reserved capacity. End-to-end office acceptance and
+Web office coverage remain unproven. Unit tests do not replace that run.
+
 ## Optional Web companion
 
 With `CHARIOX_ROOM_DRILL_FOCUS=web-companion`, additionally set
