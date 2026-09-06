@@ -381,6 +381,7 @@ test("failure retains lifecycle and unrecognized provider error without copying 
   assert.equal(diagnostic.activeTurnPhase, "awaiting_first_output")
   assert.equal(diagnostic.turns[0].lifecycle, "completed")
   assert.equal(diagnostic.entryCounts.provider_error, 1)
+  assert.deepEqual(diagnostic.providerErrorSignals, ["provider"])
   assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
 })
 
@@ -567,6 +568,14 @@ for (const [message, expected] of [
   ["You're out of extra usage", "usage_limit"],
   ["API Error: 529 overloaded_error", "provider_request_failed"],
   ["Claude Code reported an error", "unknown_provider_error"],
+  ["Codex reported an unknown error", "unknown_provider_error"],
+  ["Codex turn failed", "unknown_provider_error"],
+  ["The model gpt-example does not exist or you do not have access to it", "model_unavailable"],
+  ["unexpected status 404 Not Found", "provider_request_failed"],
+  ["error sending request: certificate verify failed", "tls_error"],
+  ["error sending request: dns error", "dns_error"],
+  ["Not logged in. Please run login", "auth_required"],
+  ["JSON-RPC error: Invalid params", "provider_protocol_error"],
 ]) {
   test(`classifies ${expected} without retaining its payload`, async () => {
     const run = fixture({ turns: [{ lifecycle: "completed", entries: [entry("provider_error", `${message}: ${secret}`)], blobs: [] }] })
@@ -575,6 +584,17 @@ for (const [message, expected] of [
     assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
   })
 }
+
+test("unclassified provider errors retain only fixed diagnostic signals, not arbitrary words", async () => {
+  const run = fixture({ turns: [{ lifecycle: "completed", entries: [
+    entry("user_prompt", "quota credentials sandbox timeout", 1),
+    entry("provider_error", `Thread expired at private.example with ${secret}`, 2),
+  ], blobs: [] }] })
+  await assert.rejects(runRoomRealProvider(run.input))
+  assert.deepEqual(run.checkpoints.at(-1).diagnostic.providerErrorSignals, ["expired", "thread"])
+  assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
+  assert.equal(JSON.stringify(run.checkpoints).includes("private.example"), false)
+})
 
 test("completed error turn ends the action wait without exhausting its deadline", async () => {
   const run = fixture({ turns: [{ lifecycle: "completed", entries: [entry("provider_error", secret)], blobs: [] }] })

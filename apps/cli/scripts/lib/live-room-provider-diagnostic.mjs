@@ -5,6 +5,15 @@ const diagnosticTools = new Set([
   "slice_screen_status", "slice_screenshot", "slice_mouse", "slice_keyboard",
   "slice_browser_find", "slice_browser_click", "slice_browser_fill", "slice_browser_submit",
 ])
+// Presence signals narrow an otherwise unclassified failure. They are not a
+// diagnosis, and are taken only from provider errors, never the user's prompt.
+const errorSignals = [
+  "account", "authentication", "certificate", "configuration", "credentials",
+  "denied", "dns", "expired", "keychain", "launch", "login", "model", "network",
+  "permission", "protocol", "provider", "quota", "refresh", "request", "response",
+  "sandbox", "session", "thread", "timeout", "token", "transport", "unsupported",
+  "vault", "workspace",
+].map(signal => [signal, new RegExp(`\\b${signal}\\b`, "i")])
 const diagnosticPatterns = [
   ["endpoint_unhealthy", /(?:codex|claude|opencode)_endpoint_unhealthy/i],
   ["provider_launch", /provider launch/i],
@@ -12,14 +21,18 @@ const diagnosticPatterns = [
   ["auth_refresh_failed", /token refresh failed/i],
   ["rate_limit", /rate.?limit|too many requests/i],
   ["usage_limit", /hit your (?:usage )?limit|out of (?:extra )?usage|usage limit (?:reached|exceeded)|(?:don['’]t|do not) have usage credits/i],
-  ["model_unavailable", /model.{0,40}(?:not found|not available|unsupported)|ProviderModelNotFoundError/i],
+  ["model_unavailable", /model.{0,100}(?:not found|not available|unsupported|does not exist|not supported|do not have access)|ProviderModelNotFoundError/i],
   ["tool_unavailable", /(?:unknown tool|tool not found|no such tool)/i],
   ["permission_denied", /permission denied|not permitted/i],
   ["connection_failed", /connection refused|econnrefused|connection reset/i],
   ["missing_api_key", /api.?key.{0,40}(?:missing|required|not set)|(?:missing|required).{0,40}api.?key/i],
   ["mcp_setup", /opencode_mcp_ready|MCP server.{0,160}(?:failed|needs_auth|needs_client_registration)|timed out waiting for OpenCode MCP/i],
-  ["unknown_provider_error", /OpenCode reported an unknown (?:session|assistant) error|Claude Code reported an error/i],
-  ["provider_request_failed", /OpenCode request failed|\bAPI Error\b/i],
+  ["unknown_provider_error", /OpenCode reported an unknown (?:session|assistant) error|Claude Code reported an error|Codex reported an unknown error|Codex turn failed/i],
+  ["provider_request_failed", /OpenCode request failed|\bAPI Error\b|unexpected status [45]\d\d\b/i],
+  ["tls_error", /certificate.{0,40}(?:failed|invalid|unknown|expired)|(?:tls|ssl).{0,40}(?:error|failed)/i],
+  ["dns_error", /\bdns error\b|failed to resolve|name resolution failed/i],
+  ["auth_required", /not logged in|please (?:run )?login|authentication required/i],
+  ["provider_protocol_error", /JSON-RPC error|invalid params|method not found/i],
   ["invalid_tool_schema", /invalid.{0,40}schema|schema.{0,40}(?:invalid|not supported)/i],
   ["missing_module", /Cannot find (?:module|package)|ModuleNotFound/i],
   ["context_overflow", /ContextOverflowError|context.{0,30}(?:too long|exceed)/i],
@@ -39,10 +52,11 @@ export async function captureRoomProviderDiagnostic(input) {
     agentState: "unknown", activityStatus: "unknown", promptStatus: "unknown", activeTurnPhase: "unknown",
     turns: [], entryCounts: counters([...entryKinds, "unknown"]),
     blobCounts: counters([...entryKinds, "unknown"]), actionCounts: counters([...actionStates, "unknown"]),
-    computerToolMentioned: false, observedTools: [], browserFindResults: [], truncated: false, codes: [],
+    computerToolMentioned: false, observedTools: [], browserFindResults: [], truncated: false, codes: [], providerErrorSignals: [],
   }
   const codes = new Set()
   const observedTools = new Set()
+  const observedErrorSignals = new Set()
   let inspectedChars = 0
   let inspectedEntries = 0
   let loadedBlobs = 0
@@ -58,12 +72,15 @@ export async function captureRoomProviderDiagnostic(input) {
   const section = async (code, action) => {
     try { await action() } catch { codes.add(code) }
   }
-  const inspectText = (value, tool = false) => {
+  const inspectText = (value, tool = false, providerError = false) => {
     if (typeof value !== "string") return
     const text = value.slice(0, Math.min(4096, Math.max(0, 131072 - inspectedChars)))
     inspectedChars += text.length
     if (text.length < value.length) result.truncated = true
     for (const [code, pattern] of diagnosticPatterns) if (pattern.test(text)) codes.add(code)
+    if (providerError) {
+      for (const [signal, pattern] of errorSignals) if (pattern.test(text)) observedErrorSignals.add(signal)
+    }
     if (tool && /\bslice_mouse\b/.test(text)) result.computerToolMentioned = true
     return text
   }
@@ -78,7 +95,7 @@ export async function captureRoomProviderDiagnostic(input) {
     if (Number.isSafeInteger(item.entry_index)) {
       seen.add(item.entry_index)
     }
-    const text = inspectText(item.entry.text, kind === "provider_tool")
+    const text = inspectText(item.entry.text, kind === "provider_tool", kind === "provider_error")
     if (kind === "provider_tool") {
       try {
         const value = JSON.parse(text)
@@ -132,7 +149,7 @@ export async function captureRoomProviderDiagnostic(input) {
       if ((turn.blobs?.length ?? 0) > 16) result.truncated = true
       for (const blob of (turn.blobs ?? []).slice(0, 16)) {
         result.blobCounts[known(blob.kind, entryKinds)] += 1
-        inspectText(blob.summary, blob.kind === "provider_tool")
+        inspectText(blob.summary, blob.kind === "provider_tool", blob.kind === "provider_error")
         if (loadedIds.has(blob.blob_id)) continue
         if (typeof blob.blob_id !== "string" || !Number.isSafeInteger(blob.total_chars)
           || blob.total_chars < 0 || blob.total_chars > 32768 || loadedBlobs >= 8
@@ -153,5 +170,6 @@ export async function captureRoomProviderDiagnostic(input) {
   })
   result.codes = [...codes].sort()
   result.observedTools = [...observedTools].sort()
+  result.providerErrorSignals = [...observedErrorSignals].sort()
   return result
 }
