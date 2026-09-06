@@ -95,9 +95,11 @@ the local `Claude Code-credentials` Keychain payload into the worker
 `~/.claude/.credentials.json` makes `claude auth status` green on the worker.
 After that transfer, Claude Code passes the actual Hetzner prompt/turn,
 permission, and image prompt-attachment drill through the remote-rendered PTY
-path. The Keychain export used by this historical drill is retired. Current
+path. The Keychain export used by this historical drill is retired. Managed
 validation must use a provider-supported `claude setup-token` credential from
-the Chariox encrypted vault and must not access macOS Keychain.
+the Chariox encrypted vault. The legacy direct-worker drill fails closed until
+it uses that managed materialization path. It must not access macOS Keychain or
+copy refreshable credentials into a worker profile.
 
 2026-05-15 home-managed slice validation update: Codex, OpenCode, and Claude
 Code pass the local Docker home-managed slice drill for prompt/turns, provider
@@ -107,9 +109,11 @@ execution on the slice worker through `slice_ref` and reuses the existing
 leased-runtime projection path. Codex/OpenCode run in server-in-kernel mode with
 worker-owned provider endpoints. Claude uses the remote-rendered PTY path.
 Local Docker slice auth import historically copied Claude Code credentials.
-Current validation must inject a vaulted `CLAUDE_CODE_OAUTH_TOKEN` into the
-official Claude CLI process and mark `/workspace` trusted in the slice. It must
-not read or write macOS Keychain.
+Managed validation must inject a vaulted `CLAUDE_CODE_OAUTH_TOKEN` into the
+official Claude CLI process and mark `/workspace` trusted in the slice. The
+legacy direct-worker drill fails closed until it adopts that managed path.
+Neither path may read or write macOS Keychain or copy a refreshable credential
+into a worker profile.
 
 2026-05-16 MCP/skills update: Native TUI MCP/skill drills now validate
 agent-scoped grants for Codex and OpenCode in local, same-host standard
@@ -182,9 +186,9 @@ Permissions:
   --include-permissions`. Native-origin and Chariox-origin prompts both surface
   permission interactions through Chariox. The remote-rendered Claude TUI remains
   coherent while the launcher detects the PTY prompt and injects the resolved
-  decision back into the provider run. This passes in same-host relay mode and
-  with the actual Hetzner worker once the Linux worker has Claude credentials in
-  `~/.claude/.credentials.json`.
+  decision back into the provider run. This historically passed in same-host
+  relay mode and with the actual Hetzner worker. Current direct-worker Claude
+  runs fail closed until the managed vault setup-token path reaches the worker.
 - Home-managed slice Codex/OpenCode/Claude: covered by
   `live-remote-native-tui-drill.mjs --home-managed-slice-local-docker
   --include-permissions`.
@@ -316,8 +320,10 @@ Provider notes:
        in same-host home-worker relay mode and against the Hetzner worker.
      - Claude: prompt/turn, image prompt-attachment, and permission drills pass
        in same-host home-worker relay mode and against the Hetzner worker
-       through the remote-rendered PTY path, after transferring the local
-       Keychain credential payload to the worker's Linux credentials file.
+       through the remote-rendered PTY path. The historical pass transferred a
+       local Keychain credential payload to the worker; that fallback is now
+       retired and current runs must use the managed vault path. The legacy
+       direct-worker drill fails closed until that integration lands.
    - Required product work:
      - validate native TUI `--machine`/`--kernel-ref` placement arguments for
        Codex, OpenCode, and Claude;

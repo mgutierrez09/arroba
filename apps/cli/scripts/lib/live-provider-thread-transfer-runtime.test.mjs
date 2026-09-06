@@ -27,6 +27,9 @@ import {
   providerThreadKernelEventSnapshot,
   providerRunSnapshot,
   providersNeedClaudeCredentials,
+  prepareIsolatedWorkerProviderEnv,
+  prepareSliceModeProviderEnv,
+  repoRoot,
   relayClaims,
   terminalProviderHistoryError,
   sliceRestartContinuityChecks,
@@ -445,6 +448,36 @@ test("Claude credential payloads are validated and written mode 600", async () =
     )
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("legacy Claude worker drills fail closed before copying credentials", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chariox-claude-fail-closed-test-"))
+  try {
+    await assert.rejects(
+      prepareSliceModeProviderEnv(root, ["claude"]),
+      /managed Chariox-vault setup-token path/,
+    )
+    await assert.rejects(
+      prepareIsolatedWorkerProviderEnv(["claude"], "test-worker"),
+      /will not read macOS Keychain or copy refreshable credentials/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("unattended Claude drills never invoke macOS Keychain", async () => {
+  const sources = await Promise.all([
+    "apps/cli/scripts/lib/live-provider-thread-transfer-runtime.mjs",
+    "apps/cli/scripts/live-claude-headless-slice-drill.mjs",
+    "apps/cli/scripts/live-remote-native-tui-drill.mjs",
+  ].map((relativePath) => readFile(path.join(repoRoot, relativePath), "utf8")))
+
+  for (const source of sources) {
+    assert.doesNotMatch(source, /find-generic-password/)
+    assert.doesNotMatch(source, /(?:spawn|execFile|commandOutput)\s*\(\s*["']security["']/)
+    assert.doesNotMatch(source, /exportClaudeCredentials/)
   }
 })
 
