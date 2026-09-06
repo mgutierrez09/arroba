@@ -149,6 +149,30 @@ export function deleteProviderAccountProfileDataRequest(provider: string, accoun
   return { DeleteProviderAccountProfileData: { provider, account_profile: accountProfile, confirmation_profile_id: confirmationProfileId } }
 }
 
+export type ProviderAccountCredentialRequestContext = {
+  readonly sessionId?: string | null
+  readonly agentId?: string | null
+}
+
+export function setProviderAccountCredentialRequest(
+  provider: string,
+  accountProfile: string,
+  value: string,
+  overwrite = false,
+  context: ProviderAccountCredentialRequestContext = {},
+) {
+  return {
+    SetProviderAccountCredential: {
+      ...(context.sessionId ? { session_id: context.sessionId } : {}),
+      ...(context.agentId ? { agent_id: context.agentId } : {}),
+      provider,
+      account_profile: accountProfile,
+      value,
+      overwrite,
+    },
+  }
+}
+
 export function launchProviderRunRequest(
   sessionId: string,
   provider: string,

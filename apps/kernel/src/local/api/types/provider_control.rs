@@ -316,6 +316,39 @@ pub struct DeleteProviderAccountProfileDataRequest {
     pub confirmation_profile_id: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetProviderAccountCredentialRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    pub provider: String,
+    pub account_profile: String,
+    pub value: String,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+impl std::fmt::Debug for SetProviderAccountCredentialRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SetProviderAccountCredentialRequest")
+            .field("session_id", &self.session_id)
+            .field("agent_id", &self.agent_id)
+            .field("provider", &self.provider)
+            .field("account_profile", &self.account_profile)
+            .field("value", &"[REDACTED]")
+            .field("overwrite", &self.overwrite)
+            .finish()
+    }
+}
+
+impl Drop for SetProviderAccountCredentialRequest {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.value);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListProviderProcessesRequest {
     pub provider: Option<String>,

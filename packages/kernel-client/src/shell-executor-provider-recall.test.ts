@@ -81,7 +81,7 @@ test("executeShellCommand manages provider auth and processes", async () => {
   assert.equal(teardown.ok, true)
   assert.match(teardown.message ?? "", /tore down 1 provider process/)
   assert.equal(unknown.ok, false)
-  assert.match(unknown.message ?? "", /usage: provider status\|login\|login-status\|login-cancel\|logout\|reauth\|processes \[provider\]\|processes teardown <provider>/)
+  assert.match(unknown.message ?? "", /usage: provider status\|login\|setup-token\|login-status\|login-cancel\|logout\|reauth\|processes \[provider\]\|processes teardown <provider>/)
   assert.deepEqual(requests, [
     { StartProviderLogin: { provider: "codex", account_profile: "default" } },
     { LogoutProvider: { provider: "codex", account_profile: "default" } },
@@ -90,6 +90,54 @@ test("executeShellCommand manages provider auth and processes", async () => {
     { ListProviderProcesses: { provider: "codex" } },
     { TeardownProviderProcesses: { provider: "codex", force: false } },
   ])
+})
+
+test("executeShellCommand stores Claude setup tokens through hidden input", async () => {
+  const requests: Record<string, unknown>[] = []
+  const context = createDefaultShellContext({
+    workspace: "/repo",
+    worktree: "/repo",
+    sessionId: "session-1",
+    agentId: "agent-1",
+  })
+  const result = await executeShellCommand(
+    parseShellCommand("provider setup-token claude work --replace"),
+    context,
+    {
+      client: {
+        send: async (request) => {
+          requests.push(request)
+          return {
+            ProviderAccountCredentialStored: {
+              provider: "claude",
+              account_profile: "work",
+              credential_id: "provider-account-claude-redacted",
+              replaced: true,
+            },
+          }
+        },
+      },
+      readSecret: async () => "  setup-token-secret  ",
+    },
+  )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.message, "claude/work setup token replaced in Chariox Vault")
+  assert.deepEqual(result.data, {
+    provider: "claude",
+    account_profile: "work",
+    replaced: true,
+  })
+  assert.deepEqual(requests, [{
+    SetProviderAccountCredential: {
+      session_id: "session-1",
+      agent_id: "agent-1",
+      provider: "claude",
+      account_profile: "work",
+      value: "setup-token-secret",
+      overwrite: true,
+    },
+  }])
 })
 
 test("executeShellCommand searches current session recall", async () => {

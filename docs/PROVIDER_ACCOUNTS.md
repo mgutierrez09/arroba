@@ -36,6 +36,8 @@ Materialization is denied before launch when the existing trust/ownership policy
 
 Each vaulted provider credential has a deterministic, non-secret handle derived from the account owner, provider, and stable profile ID. Launch preparation resolves that handle through `RuntimeSecretService`. The resulting value travels in a redacted, non-serializable, zeroizing launch environment; it is excluded from provider-run persistence, relay payloads, projections, and debug output. Claude's live runtime retains that protected environment only so a provider child process can restart without returning to macOS credential storage.
 
+After creating the setup token with the official `claude setup-token` command, an interactive Chariox client stores it with `provider setup-token claude <account-profile>`. Input is hidden. Replacement requires `--replace`. The kernel verifies that the profile belongs to the caller's account authority, requests a Chariox Vault unlock through `RuntimeInteraction` when needed, and writes the vault value and provider-only credential policy as one operation. The setup token is never stored in the Claude profile directory or macOS Keychain.
+
 Model catalogs are cached by owner, selected profile, and execution location. Remote/slice selections must have a kernel-projected materialization record; clients never infer availability from labels.
 
 OpenCode account transfer exports `data/opencode/auth.json` and the portable
