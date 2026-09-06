@@ -154,6 +154,30 @@
     "expected_blocked": false
   },
   {
+    "name": "fresh exhausted credits cannot discard another stale credit meter",
+    "provider": "codex",
+    "model": "gpt-5.6-luna",
+    "now_ms": 200000000,
+    "meters": [
+      { "meter_id": "rolling/10080/codex", "label": "Weekly", "kind": "rolling_limit", "state": "exhausted", "observed_at_ms": 200000000 },
+      { "meter_id": "credits", "label": "Credits", "kind": "credit_balance", "state": "exhausted", "observed_at_ms": 200000000 },
+      { "meter_id": "extra", "label": "Extra usage", "kind": "spend_limit", "state": "healthy", "observed_at_ms": 113599999 }
+    ],
+    "expected_state": "warning",
+    "expected_blocked": false
+  },
+  {
+    "name": "unscoped OpenCode exhaustion cannot block every upstream service",
+    "provider": "opencode",
+    "model": "default",
+    "now_ms": 200000000,
+    "meters": [
+      { "meter_id": "monthly", "label": "Monthly", "kind": "rolling_limit", "state": "exhausted", "observed_at_ms": 200000000 }
+    ],
+    "expected_state": "warning",
+    "expected_blocked": false
+  },
+  {
     "name": "arbitrary OpenCode upstream without a meter remains unknown",
     "provider": "opencode",
     "model": "fireworks/deepseek-v4-pro",

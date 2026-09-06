@@ -28,8 +28,8 @@ const credits: ProviderAccountUsageMeter = {
 
 test("blocks provider exhaustion but requires both allowance and credits for Claude and Codex", () => {
   const openCode = profile("opencode", [usage])
-  assert.equal(providerAccountCapacity(openCode, nowMs).state, "exhausted")
-  assert.equal(providerAccountCapacityLabel(openCode, nowMs), "Account (exhausted)")
+  assert.equal(providerAccountCapacity(openCode, nowMs).state, "warning")
+  assert.equal(providerAccountCapacityLabel(openCode, nowMs), "Account")
 
   for (const provider of ["codex", "claude", "claude-headless", "claude-p"]) {
     assert.equal(providerAccountCapacity(profile(provider, [usage]), nowMs).state, "warning")

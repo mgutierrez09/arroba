@@ -64,7 +64,14 @@ test("TUI marks hard exhaustion without hiding Claude and Codex accounts backed 
 
   assert.equal(
     providerAccountDisplayLabel(accountWithUsage("opencode", [allowance])),
-    "Account (exhausted)",
+    "Account",
+    "unscoped exhaustion must not mark every OpenCode service exhausted",
+  )
+  assert.equal(
+    providerAccountDisplayLabel(accountWithUsage("opencode", [
+      { ...allowance, service_id: "opencode-go" },
+    ]), "opencode-go/test-model"),
+    "Account · OpenCode Go (exhausted)",
   )
   for (const provider of ["claude", "claude-headless", "claude-p", "codex"]) {
     assert.equal(
@@ -76,6 +83,17 @@ test("TUI marks hard exhaustion without hiding Claude and Codex accounts backed 
       providerAccountDisplayLabel(accountWithUsage(provider, [allowance, credits])),
       "Account (exhausted)",
       `${provider} must be marked exhausted when allowance and credits are exhausted`,
+    )
+    assert.equal(
+      providerAccountDisplayLabel(accountWithUsage(provider, [allowance, credits, {
+        ...credits,
+        meter_id: "extra-spend",
+        kind: "spend_limit",
+        state: "healthy",
+        observed_at_ms: Date.now() - 86_400_001,
+      }])),
+      "Account",
+      `${provider} must not discard a stale credit meter to claim total exhaustion`,
     )
   }
 })

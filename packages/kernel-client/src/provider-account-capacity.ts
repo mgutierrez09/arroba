@@ -50,7 +50,7 @@ export function providerAccountCapacity(
   if (provider === "codex" || provider === "claude") {
     const exhaustedUsage = exhausted.filter((meter) => meter.kind !== "credit_balance" && meter.kind !== "spend_limit")
     const creditCapacity = meters.filter((meter) => (
-      (meter.kind === "credit_balance" || meter.kind === "spend_limit") && isFresh(meter)
+      meter.kind === "credit_balance" || meter.kind === "spend_limit"
     ))
     if (exhaustedUsage.length && creditCapacity.length && creditCapacity.every(currentlyExhausted)) {
       return { state: "exhausted", detail: "usage allowance and credits exhausted" }
@@ -58,7 +58,7 @@ export function providerAccountCapacity(
     if (exhaustedUsage.length) {
       const creditDetail = creditCapacity.length === 0
         ? "credits not reported"
-        : creditCapacity.some((meter) => meter.state === "healthy" || meter.state === "warning")
+        : creditCapacity.some((meter) => isFresh(meter) && (meter.state === "healthy" || meter.state === "warning"))
           ? "credits available"
           : "credits not confirmed exhausted"
       return {
@@ -66,7 +66,7 @@ export function providerAccountCapacity(
         detail: `usage allowance exhausted · ${creditDetail}`,
       }
     }
-  } else if (exhausted.length) {
+  } else if (exhausted.length && (provider !== "opencode" || selectedOpenCodeService)) {
     return { state: "exhausted", detail: "usage exhausted" }
   }
   if (relevantMeters.length > 0 && freshRelevantMeters.length === 0) {
@@ -84,7 +84,7 @@ export function providerAccountCapacity(
       detail: `${openCodeServiceLabel(profile, selectedOpenCodeService)} balance not reported`,
     }
   }
-  if (provider === "opencode" && !selectedOpenCodeService && meters.some((meter) => currentlyExhausted(meter) && openCodeMeterService(meter))) {
+  if (provider === "opencode" && !selectedOpenCodeService && meters.some(currentlyExhausted)) {
     return { state: "warning", detail: "one OpenCode service is exhausted" }
   }
   return { state: "ready", detail: "usage available" }
