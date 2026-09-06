@@ -138,7 +138,9 @@ export async function captureRoomProviderDiagnostic(input) {
     const outline = await request(requests.getSessionHistoryOutlineRequest(sessionId, [agentId], 2), "SessionHistoryOutline")
     const turns = outline.agents?.find((item) => item.agent_id === agentId)?.turns ?? []
     if (turns.length > 2) result.truncated = true
-    for (const turn of turns.slice(0, 2)) {
+    // History outlines are chronological. Spend the bounded blob budget on
+    // the failed/current turn before an older screenshot-heavy turn.
+    for (const turn of turns.slice(-2).reverse()) {
       const seen = new Set()
       const discovered = new Set()
       result.turns.push({ lifecycle: known(turn.lifecycle, ["open", "completed", "cancelled"]) })

@@ -5,6 +5,16 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
+test("office work explicitly selects the standalone Computer provider drill", () => {
+  const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
+    CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_COMPUTER_TASK: "office" }
+  assert.equal(roomRealProviderOptions(env).computerTask, "office")
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser" }), /Computer task/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_COMPUTER_TASK: "unknown" }), /Computer task/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
+    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /standalone/)
+})
+
 test("a completed Room action cannot pass while its provider turn remains open", async () => {
   const run = fixture({ actions: [{ actor_id: "agent:agent-2", kind: "pointer_click", state: "completed", mode: "computer",
     action_id: "action-1", sequence: 1, arguments: { x: 640, y: 400, button: "left", click_count: 1 },
@@ -525,6 +535,26 @@ test("partial evidence survives a blob timeout and starts no later requests", as
   assert.ok(diagnostic.codes.includes("blob_unavailable"))
   assert.equal(diagnostic.truncated, true)
   assert.equal(run.calls.filter((r) => r.name === "getSessionHistoryBlobContent").length, 1)
+  assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
+})
+
+test("latest provider failure is inspected before an older screenshot-heavy turn consumes the blob budget", async () => {
+  const olderBlobs = Array.from({ length: 8 }, (_, index) => ({
+    blob_id: `older-${index}`, total_chars: 10, kind: "provider_tool", summary: "",
+  }))
+  const run = fixture({ turns: [
+    { turn_id: "older", lifecycle: "completed", entries: [], blobs: olderBlobs },
+    { turn_id: "latest", lifecycle: "completed", entries: [], blobs: [
+      { blob_id: "latest-error", total_chars: 100, kind: "provider_error", summary: "" },
+    ] },
+  ], blobs: {
+    ...Object.fromEntries(olderBlobs.map(blob => [blob.blob_id, [entry("provider_tool", "{}")]])),
+    "latest-error": [entry("provider_error", `permission denied ${secret}`)],
+  } })
+  await assert.rejects(runRoomRealProvider(run.input))
+  const diagnostic = run.checkpoints.at(-1).diagnostic
+  assert.ok(diagnostic.codes.includes("permission_denied"))
+  assert.equal(diagnostic.truncated, true)
   assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
 })
 
