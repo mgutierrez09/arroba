@@ -347,6 +347,40 @@ async fn proxied_peer_requests_are_handled_through_relay() {
         }
     );
 
+    let missing_lease = send_peer_request_via_relay(
+        &app_a,
+        &state_a,
+        ClientTarget {
+            daemon_id: None,
+            daemon_alias: Some("beta".to_string()),
+        },
+        RelayPeerRequest::SubmitLeasedPrompt {
+            leased_agent_id: "missing-leased-agent".to_string(),
+            prompt: "continue".to_string(),
+            hidden_system_context: String::new(),
+            attachments: Vec::new(),
+            workflow_context: None,
+            git_context: None,
+            required_mcps: Vec::new(),
+            required_skills: None,
+            remote_extension_manifest: Default::default(),
+            provider_launch_credential: Some(
+                crate::transport::relay_peer::RemoteProviderLaunchCredential {
+                    provider: "claude".to_string(),
+                    account_profile: "work".to_string(),
+                    secret_input: crate::transport::relay_peer::RemoteCredentialSecretInput::new(
+                        "relay-secret-canary".to_string(),
+                    ),
+                },
+            ),
+        },
+    )
+    .await
+    .expect_err("the worker should reject an unknown leased agent");
+    let diagnostic = missing_lease.to_string();
+    assert!(diagnostic.contains("leased agent"));
+    assert!(!diagnostic.contains("relay-secret-canary"));
+
     let _ = shutdown_a_tx.send(true);
     let _ = shutdown_b_tx.send(true);
     connector_a.await.expect("connector A should join");
