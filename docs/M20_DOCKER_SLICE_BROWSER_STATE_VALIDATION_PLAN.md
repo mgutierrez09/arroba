@@ -112,13 +112,19 @@ Drill:
 1. Launch a Docker slice.
 2. Open Chromium to a local test page.
 3. Store data in cookies, localStorage, IndexedDB, and a service worker cache.
-4. Install a small package or program inside the slice.
+4. Install Mousepad from the image's pinned Debian snapshot. Open a real
+   document, type Unicode text with the production Computer input helpers,
+   save it, and set the editor's line-number preference.
 5. Save the slice.
 6. Fully remove the running container.
 7. Relaunch from the saved slice.
-8. Verify the installed program still exists.
-9. Download a fixture file through Chromium and create application
-   configuration and user-data markers under the slice home.
+8. Verify the installed binary and desktop launcher are unchanged. Reopen the
+   document, read its displayed text through the Computer clipboard, edit and
+   save it again, and verify the editor retains focus during Computer input
+   and screenshots.
+9. Download a fixture file through Chromium before saving the slice. Preserve
+   the real editor's configuration and document under the slice home, not
+   synthetic application marker files.
 10. Record the machine ID, hostname, user, UID/GID, home, headed display
     geometry, viewer backend, browser profile, and password-store policy.
     The hostname must be RFC 1123-safe even when the user-facing slice name
@@ -149,7 +155,9 @@ Pass criteria:
 - Machine/user identity, display geometry, Selkies selection, persistent
   Chromium profile, and deterministic `basic` password-store policy remain
   stable.
-- Installed program survives.
+- Mousepad's binary, desktop launcher, line-number preference, and Unicode
+  document survive. The restored editor can display, edit, and save the
+  document after both saved-state restore and repeated named-backup restore.
 - Service-side session invalidation is recorded as external reauthentication,
   not browser-state loss, and a fresh login restores normal use.
 - No manual file repair is needed after restore.
@@ -158,6 +166,25 @@ Run locally with
 `pnpm --dir apps/cli browser-computer:persistence-drill`. The retained manifest
 records the exact Git head, kernel hash, initial and restored slice runtime
 identity, resource samples, assertions, screenshots, and cleanup result.
+
+The default command builds the kernel and client. For a previously verified
+local runtime, `M20_USE_PREBUILT=1` requires an absolute `M20_KERNEL_BINARY`
+and explicit `M20_SLICE_IMAGE`. The drill checks the host binary/client protocol
+pair and records the binary hash and build mode. The operator must separately
+verify that the binary and image match the intended runtime source; protocol
+equality alone is not source provenance or production-release evidence.
+
+`CHARIOX_ROOM_DRILL_MEMORY_MB` accepts a positive u32 MiB value and defaults to
+2048. The actual initial and restored containers must retain that limit, no
+additional swap, and one CPU. Reducing a drill's cap does not bypass kernel
+admission checks. SIGINT and SIGTERM use the shared interruption lifecycle,
+allow in-flight provisioning to settle, and clean up before reporting failure.
+
+This deterministic drill uses production Computer input helpers directly. It
+does not establish provider-driven office work, vault injection, or Web/TUI
+projection. Those remain separate acceptance drills. Package installation
+requires access to the pinned Debian snapshot; an installation failure must
+fail the run rather than skip the graphical application checks.
 
 The first-party fixture also exposes a one-time OAuth authorization flow. The
 real-Chrome Browser Controller acceptance test must open the authorization

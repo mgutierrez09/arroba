@@ -96,7 +96,7 @@ try {
   await docker(["cp", screen, `${container}:${root}/slice-screen.sh`])
   await docker(["cp", path.join(path.dirname(screen), "slice-keyboard.py"), `${container}:${root}/slice-keyboard.py`])
   await docker(["exec", "-u", "root", container, "chown", "-R", "slice:slice", root])
-  await exec(["node", "-e", "const fs=require('node:fs');let data='';process.stdin.on('data',c=>data+=c);process.stdin.on('end',()=>fs.writeFileSync(process.argv[1],data));", `${root}/fixture.html`], '<!doctype html><input id="input" type="password" autofocus><script>window.busy=false;setInterval(()=>{if(!busy)return;const end=performance.now()+120;while(performance.now()<end){}},160)</script>')
+  await exec(["node", "-e", "const fs=require('node:fs');let data='';process.stdin.on('data',c=>data+=c);process.stdin.on('end',()=>fs.writeFileSync(process.argv[1],data));", `${root}/fixture.html`], '<!doctype html><input id="input" type="password" autofocus><textarea id="multiline"></textarea><script>window.busy=false;setInterval(()=>{if(!busy)return;const end=performance.now()+120;while(performance.now()<end){}},160)</script>')
   await docker(["exec", "-d", "-u", "slice", container, "Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "XTEST"])
   await pause(500)
   await docker(["exec", "-d", "-u", "slice", "-e", "DISPLAY=:99", container, "chromium", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${profile}`, "--remote-debugging-port=9222", `file://${root}/fixture.html`])
@@ -109,11 +109,21 @@ try {
   assert.ok(ready, "keyboard fixture ready")
   report.containerStats = (await docker(["stats", "--no-stream", "--format", "{{json .}}", container])).trim()
   report.versions = (await exec(["bash", "-lc", "chromium --version; xdotool version"])).trim()
+  for (const separator of ["\n", "\r"]) {
+    await evaluate("document.querySelector('#multiline').value='';document.querySelector('#multiline').focus();true")
+    await exec([`${root}/slice-screen.sh`, "computer-type-stdin"], `first${separator}Grüße 世界${separator}`)
+    const actual = await evaluate("document.querySelector('#multiline').value")
+    report.cases.push({ kind: "multiline", separator: separator === "\n" ? "LF" : "CR",
+      matches: actual === "first\nGrüße 世界\n" })
+    assert.equal(actual, "first\nGrüße 世界\n", "physical typing must preserve line breaks")
+  }
+  await evaluate("document.querySelector('#input').focus();true")
   await exec(["xdotool", "keydown", "Shift_L"])
   const timeoutResult = await exec(["timeout", "--foreground", "--kill-after=2s", "1.5s", "/opt/chariox-selkies/bin/python", `${root}/slice-keyboard.py`], "x".repeat(400)).then(
     () => ({ failed: false }),
     (error) => ({ failed: true, error: error.message }),
   )
+  report.timeoutOutcome = timeoutResult
   assert.ok(timeoutResult.failed && timeoutResult.error.includes("124"), "watchdog must terminate active typing")
   const shiftRestored = (await exec(["/opt/chariox-selkies/bin/python", "-c", "from selkies.Xlib import display,XK; d=display.Display(); code=d.keysym_to_keycode(XK.string_to_keysym('Shift_L')); print(bool(d.query_keymap()[code//8] & (1<<(code%8)))); d.close()"])).trim() === "True"
   await exec([`${root}/slice-screen.sh`, "computer-input-reset"])
