@@ -719,6 +719,8 @@ async function captureSourceIdentity(kernelBinary) {
     buildMode: usePrebuilt ? "explicit-prebuilt" : "local-build",
     drillSha256: createHash("sha256").update(await readFile(fileURLToPath(import.meta.url))).digest("hex"),
     editorDrillSha256: createHash("sha256").update(await readFile(new URL("./lib/browser-state-drill-editor.mjs", import.meta.url))).digest("hex"),
+    editorMenuSha256: createHash("sha256").update(await readFile(new URL("./fixtures/browser-state-editor/menu.xml", import.meta.url))).digest("hex"),
+    editorLaunchSha256: createHash("sha256").update(await readFile(new URL("./fixtures/browser-state-editor/launch.sh", import.meta.url))).digest("hex"),
     kernelBinary,
     kernelSha256: kernelHash.stdout.trim().split(/\s+/)[0],
   }
@@ -956,6 +958,7 @@ async function writeManifest(ok, error = null) {
       "installed Mousepad binary and desktop launcher survived committed-image restore",
       "browser download, real editor preference, and GUI-edited Unicode document survived",
       "restored editor displayed its document and accepted Computer input without focusing Chromium",
+      "editor launched through Openbox with its normal session bus, default settings backend and working accessibility service",
       "durable slice port assignments and the projected Selkies endpoint remained stable",
       "machine id, hostname, user, UID/GID, home, display, browser profile, and password-store policy remained stable",
       "cookie, localStorage, IndexedDB, Cache Storage, and service-worker registration survived",

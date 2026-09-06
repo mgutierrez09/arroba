@@ -1,0 +1,9 @@
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="Browser state validation">
+    <item label="Graphical editor">
+      <action name="Execute">
+        <command>sh /home/slice/.config/chariox-browser-state-editor/launch.sh</command>
+      </action>
+    </item>
+  </menu>
+</openbox_menu>
