@@ -70,7 +70,8 @@ pub(crate) fn resolve_provider_account_credentials_for_launch(
     if !environment.is_empty()
         || crate::provider::canonical_provider_family(provider) != Some("claude")
         || client_interface == crate::provider::ProviderClientInterface::NativeTui
-        || profiles.has_portable_claude_credentials(owner_user_id, profile_id)?
+        || (portable_claude_credentials_authorize_unattended_launch()
+            && profiles.has_portable_claude_credentials(owner_user_id, profile_id)?)
     {
         return Ok(environment);
     }
@@ -78,6 +79,10 @@ pub(crate) fn resolve_provider_account_credentials_for_launch(
         field: "provider account credential",
         message: "unattended Claude launch requires a Chariox-vault setup token or a portable provider-native credential; use `provider setup-token claude <account-profile>` or launch the native Claude TUI to sign in interactively",
     })
+}
+
+fn portable_claude_credentials_authorize_unattended_launch() -> bool {
+    std::env::consts::OS == "linux"
 }
 
 fn canonical_label(provider: &str) -> &'static str {
@@ -106,6 +111,14 @@ mod tests {
         assert_ne!(
             provider_account_credential_id("local", "claude", "personal"),
             provider_account_credential_id("local", "claude", "work")
+        );
+    }
+
+    #[test]
+    fn portable_claude_credentials_authorize_unattended_launch_only_on_linux() {
+        assert_eq!(
+            portable_claude_credentials_authorize_unattended_launch(),
+            cfg!(target_os = "linux")
         );
     }
 

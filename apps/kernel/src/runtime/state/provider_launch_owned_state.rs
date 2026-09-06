@@ -386,6 +386,16 @@ mod tests {
                 "Missing Claude credential",
             )
             .expect("managed Claude profile should create");
+        let claude_config_dir = std::path::PathBuf::from(
+            app.provider_account_profile_registry()
+                .resolve_environment(
+                    crate::session::DEFAULT_LOCAL_USER_ID,
+                    "claude",
+                    &profile.profile_id,
+                )
+                .expect("Claude environment should resolve")["CLAUDE_CONFIG_DIR"]
+                .clone(),
+        );
         let agent = crate::app::KernelSessionService::new(&mut app)
             .spawn_agent(
                 crate::agent::CreateAgentRequest::new(session.id(), "claude")
@@ -417,11 +427,29 @@ mod tests {
         let foreground = runtime
             .owned
             .prepare_provider_launch_request(
-                request.with_client_interface(crate::provider::ProviderClientInterface::NativeTui),
+                request
+                    .clone()
+                    .with_client_interface(crate::provider::ProviderClientInterface::NativeTui),
                 "http://127.0.0.1:43120/mcp".to_string(),
             )
             .expect("native Claude TUI must remain available for interactive sign-in");
         assert!(foreground.provider_credential_env.is_empty());
+
+        std::fs::write(
+            claude_config_dir.join(".credentials.json"),
+            br#"{"claudeAiOauth":{"refreshToken":"portable-refresh-token"}}"#,
+        )
+        .expect("portable Claude credential fixture should write");
+        let portable_launch = runtime
+            .owned
+            .prepare_provider_launch_request(request, "http://127.0.0.1:43120/mcp".to_string());
+        if cfg!(target_os = "linux") {
+            portable_launch.expect("Linux may use portable provider-native credentials");
+        } else {
+            portable_launch.expect_err(
+                "macOS and Windows unattended launches must require a Chariox setup token",
+            );
+        }
 
         std::env::remove_var("CHARIOX_HOME");
         let _ = std::fs::remove_dir_all(root);
