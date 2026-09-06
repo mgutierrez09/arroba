@@ -29,9 +29,15 @@ def type_text(text):
     try:
         keysyms = []
         for character in text:
-            keysym = character_to_layout_keysym(character)
-            if not keyboard.layout_carries(keysym):
+            # Some layouts carry Linefeed, which Chromium accepts but GTK
+            # editors ignore. Text line breaks need the universal Return
+            # binding even when a layout advertises the control character.
+            if character in ("\n", "\r", "\t"):
                 keysym = universal_text_keysym(character)
+            else:
+                keysym = character_to_layout_keysym(character)
+                if not keyboard.layout_carries(keysym):
+                    keysym = universal_text_keysym(character)
             if keysym is None:
                 raise ValueError("unsupported text character")
             keysyms.append(keysym)

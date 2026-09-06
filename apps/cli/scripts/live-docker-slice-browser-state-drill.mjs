@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
@@ -12,9 +13,20 @@ import { resolveBrowserStateDrillPaths } from "./lib/browser-state-drill-paths.m
 import { startBrowserComputerFixture } from "./lib/browser-computer-fixture.mjs"
 import { finalizeDrillArtifacts } from "./lib/drill-artifacts.mjs"
 import { resolveBuiltBinary } from "./lib/drill-runtime-helpers.mjs"
+import { createBrowserStateEditorDrill } from "./lib/browser-state-drill-editor.mjs"
+import { createDrillInterruption } from "./lib/drill-interruption.mjs"
 
 const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(cliRoot, "..", "..")
+const sliceMemoryMb = Number(process.env.CHARIOX_ROOM_DRILL_MEMORY_MB ?? 2048)
+assert.ok(Number.isSafeInteger(sliceMemoryMb) && sliceMemoryMb > 0 && sliceMemoryMb <= 0xffff_ffff,
+  "CHARIOX_ROOM_DRILL_MEMORY_MB must be a positive u32 number of MiB")
+const usePrebuilt = process.env.M20_USE_PREBUILT === "1"
+if (usePrebuilt) {
+  assert.ok(process.env.M20_KERNEL_BINARY && path.isAbsolute(process.env.M20_KERNEL_BINARY),
+    "M20_USE_PREBUILT requires an absolute M20_KERNEL_BINARY")
+  assert.ok(process.env.M20_SLICE_IMAGE?.trim(), "M20_USE_PREBUILT requires an explicit M20_SLICE_IMAGE")
+}
 const startedAt = new Date().toISOString()
 const stamp = startedAt.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
 const runId = `m20-docker-state-${process.pid}-${stamp}`
@@ -41,8 +53,6 @@ const markers = {
   stateIndexedDb: `idb-${process.pid}-${Date.now()}`,
   stateCacheStorage: `cache-${process.pid}-${Date.now()}`,
   downloadedFile: "CHARIOX_FIXTURE_DOWNLOAD",
-  appConfig: `app-config-${process.pid}-${Date.now()}`,
-  appUserData: `app-data-${process.pid}-${Date.now()}`,
   backupMutationOne: `backup-mutation-one-${process.pid}-${Date.now()}`,
   backupMutationTwo: `backup-mutation-two-${process.pid}-${Date.now()}`,
   firstSubject: `M20 first ${process.pid}`,
@@ -66,21 +76,19 @@ const sliceRuntime = {}
 const persistenceIdentity = {}
 const externalServiceReauthentication = {}
 const resources = []
+const interruption = createDrillInterruption()
+const editor = createBrowserStateEditorDrill({
+  containerName, runId, dockerText, sliceScreenWithStdin, screenshot, waitFor,
+  dockerResult: (args) => runCommand("docker", args, { timeoutMs: 15_000 }),
+})
 
 await mkdir(artifactDir, { recursive: true })
 await mkdir(tempRoot, { recursive: true })
 
 let failure = null
-try {
-  await run()
-} catch (error) {
-  failure = error
-}
-try {
-  cleanupResult = await cleanup()
-} catch (error) {
-  failure ??= error
-}
+await interruption.run(run, async () => {
+  try { cleanupResult = await cleanup() } catch (error) { failure ??= error }
+}, (error) => { failure ??= error })
 if (failure) {
   await writeManifest(false, failure)
   await finalizeDrillArtifacts({
@@ -123,10 +131,10 @@ async function run() {
   await assertFixtureAlive()
   log(`fixture listening on ${fixturePort}`)
 
-  log("building kernel")
+  log(usePrebuilt ? "checking prebuilt kernel/client protocol" : "building kernel")
   const kernel = await buildKernel()
   sourceIdentity = await captureSourceIdentity(kernel)
-  log("building kernel client")
+  log(usePrebuilt ? "using prebuilt kernel client" : "building kernel client")
   await buildKernelClient()
   log("starting disposable kernel")
   start("kernel", kernel, [], {
@@ -157,7 +165,7 @@ async function run() {
   requests = importedRequests
   log(`waiting for kernel ${kernelUrl}`)
   client = await waitFor(async () => {
-    const candidate = new LocalIpcClient(kernelUrl)
+    const candidate = interruption.guardClient(new LocalIpcClient(kernelUrl))
     try {
       await candidate.send(requests.listSlicesRequest())
       return candidate
@@ -205,8 +213,8 @@ async function run() {
   await inspectState("initial")
   persistenceIdentity.initial = await inspectPersistenceIdentity()
   assertInitialPersistenceIdentity(persistenceIdentity.initial)
-  log("installing program marker")
-  await installProgramMarker()
+  log("installing the graphical editor")
+  await editor.install()
   log("running local browser state phase")
   await runLocalBrowserStatePhase("before")
   log("running first webmail phase")
@@ -257,8 +265,6 @@ async function run() {
     persistenceIdentity.initial,
     "slice identity, display, browser profile, and password-store policy should survive restore",
   )
-  log("verifying program marker")
-  await verifyProgramMarker()
   log("verifying downloaded file and application state after restore")
   await verifyUserPersistenceMarkers()
   log("verifying local browser state after restore")
@@ -296,7 +302,7 @@ async function run() {
   )
 
   log("creating a corrupt candidate without mutating the known-good backup")
-  await writeSliceFile("/home/slice/.config/m20-state-app/config.txt", `${markers.backupMutationOne}\n`)
+  await writeSliceFile(editor.report.document, `${markers.backupMutationOne}\n`)
   const corruptBackupResult = unwrap(
     await client.send(requests.createSliceBackupRequest(slice.id, "corrupt-candidate")),
     "SliceBackupCreated",
@@ -344,7 +350,7 @@ async function run() {
   await screenshot("04-after-named-backup-restore")
 
   log("restoring the same immutable backup again by id")
-  await writeSliceFile("/home/slice/.config/m20-state-app/config.txt", `${markers.backupMutationTwo}\n`)
+  await writeSliceFile(editor.report.document, `${markers.backupMutationTwo}\n`)
   await client.send(requests.stopSliceRequest(slice.id))
   slice = await waitForSliceStatus(slice.id, "stopped")
   const secondBackupRestore = unwrap(
@@ -395,7 +401,7 @@ async function seedConfig() {
     ...browserStateDrillImageConfig(process.env),
     "screen_width = 1280",
     "screen_height = 800",
-    "memory_mb = 2048",
+    `memory_mb = ${sliceMemoryMb}`,
     "cpus = \"1.0\"",
     "",
   ].join("\n"))
@@ -496,18 +502,8 @@ async function verifyExternalServiceReauthentication() {
   await writeFile(path.join(artifactDir, "fixture-messages.json"), JSON.stringify(fixture.messages, null, 2))
 }
 
-async function installProgramMarker() {
-  await docker(["exec", "-u", "root", containerName, "bash", "-lc", "printf '#!/usr/bin/env bash\\necho M20_PROGRAM_SURVIVED\\n' >/usr/local/bin/m20-state-tool && chmod +x /usr/local/bin/m20-state-tool"])
-}
-
-async function verifyProgramMarker() {
-  const output = await dockerText(["exec", containerName, "m20-state-tool"])
-  assert.match(output, /M20_PROGRAM_SURVIVED/)
-}
-
 async function seedUserPersistenceMarkers() {
-  await writeSliceFile("/home/slice/.config/m20-state-app/config.txt", `${markers.appConfig}\n`)
-  await writeSliceFile("/home/slice/.local/share/m20-state-app/user-data.txt", `${markers.appUserData}\n`)
+  await editor.seed()
 
   await sliceScreen(["open-url", fixtureUrl("/interactions")])
   await waitForBrowserText("Fixture interactions", 30_000, "download fixture did not open")
@@ -526,16 +522,7 @@ async function verifyUserPersistenceMarkers() {
     markers.downloadedFile,
     "browser download should survive saved-state restore",
   )
-  assert.equal(
-    (await readSliceFile("/home/slice/.config/m20-state-app/config.txt")).trim(),
-    markers.appConfig,
-    "application configuration should survive saved-state restore",
-  )
-  assert.equal(
-    (await readSliceFile("/home/slice/.local/share/m20-state-app/user-data.txt")).trim(),
-    markers.appUserData,
-    "application user data should survive saved-state restore",
-  )
+  await editor.verify()
 }
 
 async function readSliceFile(filePath) {
@@ -684,6 +671,15 @@ async function removeContainerAndHomeVolume() {
 }
 
 async function buildKernel() {
+  if (usePrebuilt) {
+    const binary = process.env.M20_KERNEL_BINARY
+    await access(binary)
+    const { LOCAL_DAEMON_PROTOCOL_VERSION } = await import("../../../packages/kernel-client/dist/kernel-types.js")
+    const result = await runCommand(binary, ["--print-local-daemon-protocol-version"], { timeoutMs: 10_000 })
+    assert.equal(result.code, 0, "prebuilt kernel protocol probe failed")
+    assert.equal(result.stdout.trim(), String(LOCAL_DAEMON_PROTOCOL_VERSION), "prebuilt kernel/client protocol mismatch")
+    return binary
+  }
   const manifest = path.join(repoRoot, "apps/kernel/Cargo.toml")
   const binary = path.join(repoRoot, "apps/kernel/target/debug/chariox-kernel")
   const result = await runCommand("cargo", ["build", "--manifest-path", manifest, "--bin", "chariox-kernel"], { timeoutMs: 180_000 })
@@ -692,6 +688,7 @@ async function buildKernel() {
 }
 
 async function buildKernelClient() {
+  if (usePrebuilt) return
   const result = await runCommand("pnpm", ["--workspace-root", "run", "build:kernel-client"], { timeoutMs: 180_000 })
   if (result.code !== 0) throw new Error(`kernel client build failed\n${result.stdout}\n${result.stderr}`)
 }
@@ -708,6 +705,9 @@ async function captureSourceIdentity(kernelBinary) {
   return {
     gitCommit: commit.stdout.trim(),
     trackedWorktreeClean: trackedStatus.stdout.trim().length === 0,
+    buildMode: usePrebuilt ? "explicit-prebuilt" : "local-build",
+    drillSha256: createHash("sha256").update(await readFile(fileURLToPath(import.meta.url))).digest("hex"),
+    editorDrillSha256: createHash("sha256").update(await readFile(new URL("./lib/browser-state-drill-editor.mjs", import.meta.url))).digest("hex"),
     kernelBinary,
     kernelSha256: kernelHash.stdout.trim().split(/\s+/)[0],
   }
@@ -749,7 +749,7 @@ async function inspectSliceRuntime() {
 }
 
 function assertSliceResourceLimits(limits, label) {
-  assert.equal(limits.memoryBytes, 2048 * 1024 * 1024, `${label} memory limit`)
+  assert.equal(limits.memoryBytes, sliceMemoryMb * 1024 * 1024, `${label} memory limit`)
   assert.equal(limits.memorySwapBytes, limits.memoryBytes, `${label} swap must not exceed memory`)
   assert.equal(limits.nanoCpus, 1_000_000_000, `${label} CPU limit`)
 }
@@ -814,6 +814,7 @@ async function dockerText(args, options = {}) {
 }
 
 async function runCommand(command, args, options = {}) {
+  interruption.check()
   return await new Promise((resolve, reject) => {
     let settled = false
     const child = spawn(command, args, {
@@ -937,11 +938,13 @@ async function writeManifest(ok, error = null) {
     markers,
     screenshots,
     externalServiceReauthentication,
+    editor: editor.report,
     resources,
     assertions: [
-      "initial and restored slices retained the 2 GiB memory, no-extra-swap, and one-CPU caps",
-      "installed program survived committed-image restore",
-      "browser download, application configuration, and application user data survived",
+      `initial and restored slices retained the ${sliceMemoryMb} MiB memory, no-extra-swap, and one-CPU caps`,
+      "installed Mousepad binary and desktop launcher survived committed-image restore",
+      "browser download, real editor preference, and GUI-edited Unicode document survived",
+      "restored editor displayed its document and accepted Computer input without focusing Chromium",
       "durable slice port assignments and the projected Selkies endpoint remained stable",
       "machine id, hostname, user, UID/GID, home, display, browser profile, and password-store policy remained stable",
       "cookie, localStorage, IndexedDB, Cache Storage, and service-worker registration survived",
@@ -1023,7 +1026,7 @@ async function waitFor(predicate, timeoutMs, message) {
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return interruption.sleep(ms)
 }
 
 function escapeRegExp(value) {
