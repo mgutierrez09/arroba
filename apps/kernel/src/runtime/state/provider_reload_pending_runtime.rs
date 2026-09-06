@@ -40,7 +40,7 @@ impl KernelRuntimeState {
                         pending.remove(&agent_id)
                     };
                     if let Some(pending) = pending {
-                        if let Err(error) = state
+                        match state
                             .reload_agent_provider_if_idle(
                                 &pending.session_id,
                                 &pending.agent_id,
@@ -48,15 +48,25 @@ impl KernelRuntimeState {
                             )
                             .await
                         {
-                            crate::logging::warn_with_fields(
-                                "daemon.provider",
-                                "pending provider reload failed",
-                                serde_json::json!({
-                                    "session_id": pending.session_id,
-                                    "agent_id": pending.agent_id,
-                                    "error": error.to_string(),
-                                }),
-                            );
+                            Ok(ProviderReloadOutcome::Deferred) => {
+                                state.remember_pending_provider_reload(
+                                    &pending.session_id,
+                                    &pending.agent_id,
+                                    &pending.reason,
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                crate::logging::warn_with_fields(
+                                    "daemon.provider",
+                                    "pending provider reload failed",
+                                    serde_json::json!({
+                                        "session_id": pending.session_id,
+                                        "agent_id": pending.agent_id,
+                                        "error": error.to_string(),
+                                    }),
+                                );
+                            }
                         }
                     }
                     return;
