@@ -68,6 +68,7 @@ RUN printf '%s\n' 'deb [check-valid-until=no] https://snapshot.debian.org/archiv
   && rm -f /etc/apt/sources.list.d/debian.sources \
   && apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends --allow-downgrades \
+    at-spi2-core \
     bash \
     bubblewrap \
     build-essential \
