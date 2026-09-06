@@ -374,6 +374,7 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str) {
         clicks_before_queue_fault + 1,
         "only the explicit post-recovery mutation may change the page"
     );
+    super::controller_upload_recovery::check_restart(fixture, token).await;
     eprintln!(
         "{}",
         json!({

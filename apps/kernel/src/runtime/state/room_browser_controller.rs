@@ -30,6 +30,7 @@ impl KernelRuntimeState {
         let admitted_mutation_command = matches!(
             &command,
             Command::Action { .. }
+                | Command::Upload { .. }
                 | Command::Tab { .. }
                 | Command::History { .. }
                 | Command::Dialog { .. }

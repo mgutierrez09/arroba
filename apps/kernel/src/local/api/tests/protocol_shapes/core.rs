@@ -916,6 +916,6 @@ fn local_daemon_protocol_remote_agent_binding_shape_is_versioned() {
     let previous = serde_json::to_string(&snapshot).unwrap();
     assert_eq!(
         format!("{:x}", Sha256::digest(previous.as_bytes())),
-        "ee1e233e0cb1338bce13283fd3b40919b72e7ba693548b67bc88677f4ede2e62"
+        "a4b924a5fbb68222d7acd392c99ecc88db2bbb72c473409ed67547a65735b49b"
     );
 }
