@@ -5,14 +5,14 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
-test("office work explicitly selects the standalone Computer provider drill", () => {
+test("office work explicitly selects Computer mode for standalone and Web companion drills", () => {
   const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
     CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_COMPUTER_TASK: "office" }
   assert.equal(roomRealProviderOptions(env).computerTask, "office")
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser" }), /Computer task/)
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_COMPUTER_TASK: "unknown" }), /Computer task/)
-  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
-    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /standalone/)
+  assert.equal(roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
+    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }).computerTask, "office")
 })
 
 test("a completed Room action cannot pass while its provider turn remains open", async () => {
