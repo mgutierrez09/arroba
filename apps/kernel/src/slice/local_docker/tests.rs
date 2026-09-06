@@ -755,6 +755,7 @@ fn linux_docker_slice_support_refresh_includes_runtime_dependencies() {
         "start-runtime.sh",
         "start-providers.sh",
         "slice-screen.sh",
+        "tint2rc",
         "browser-cdp.mjs",
         "browser-controller-actions.mjs",
         "browser-controller-cdp.mjs",

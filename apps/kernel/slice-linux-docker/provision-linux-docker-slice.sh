@@ -299,12 +299,25 @@ configure_slice_state_directory() {
 }
 
 refresh_slice_support_files() {
+  # Saved images retain their original packages. Install the new desktop
+  # dependency before overlaying a launcher that requires it.
+  run_with_timeout 180 docker exec -u root "$SLICE_NAME" bash -lc '
+    set -euo pipefail
+    if ! command -v tint2 >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get -qq update
+      apt-get -y -qq --no-install-recommends install tint2
+      apt-get clean
+    fi
+  ' || fail "could not prepare the desktop taskbar in the existing slice image"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/start-runtime.sh" "$SLICE_NAME:/opt/chariox-slice/start-runtime.sh" \
     || log "runtime script overlay refresh unavailable; continuing"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/start-providers.sh" "$SLICE_NAME:/opt/chariox-slice/start-providers.sh" \
     || log "provider server script overlay refresh unavailable; continuing"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/slice-screen.sh" "$SLICE_NAME:/opt/chariox-slice/slice-screen.sh" \
     || log "screen script overlay refresh unavailable; continuing"
+  run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/tint2rc" "$SLICE_NAME:/opt/chariox-slice/tint2rc" \
+    || log "applications taskbar configuration refresh unavailable; continuing"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/slice-text-finder.py" "$SLICE_NAME:/opt/chariox-slice/slice-text-finder.py" \
     || log "screen text finder overlay refresh unavailable; continuing"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/slice-selkies.py" "$SLICE_NAME:/opt/chariox-slice/slice-selkies.py" \
