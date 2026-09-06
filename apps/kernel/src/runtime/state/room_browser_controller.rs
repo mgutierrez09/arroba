@@ -31,6 +31,8 @@ impl KernelRuntimeState {
             &command,
             Command::Action { .. }
                 | Command::Upload { .. }
+                | Command::ConfigureDownloads { .. }
+                | Command::Permission { .. }
                 | Command::Tab { .. }
                 | Command::History { .. }
                 | Command::Dialog { .. }
