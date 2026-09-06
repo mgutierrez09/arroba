@@ -19,7 +19,12 @@ for (const boundary of ["office-installing", "office-mailing"]) {
     ].map((name) => [`${name}Request`, (...args) => ({ name, args })]))
     const input = {
       requests, sessionId: "room", agentId: "agent", options: { provider: "codex", model: "fixture" },
-      checkpoint: async ({ phase }) => { if (phase === boundary) live.clear() },
+      checkpoint: async ({ phase, office }) => {
+        // The standard slice controller permits /workspace and Downloads,
+        // not arbitrary files under the user's home directory.
+        assert.ok(office.document.startsWith("/workspace/"), "office document must stay in the authorized upload workspace")
+        if (phase === boundary) live.clear()
+      },
       screenshot: async () => {}, waitForTuis: async () => {},
       withTimeout: async (promise) => promise,
       waitFor: async (check) => {

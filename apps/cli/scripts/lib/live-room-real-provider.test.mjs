@@ -538,6 +538,26 @@ test("partial evidence survives a blob timeout and starts no later requests", as
   assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
 })
 
+test("latest provider failure is inspected before an older screenshot-heavy turn consumes the blob budget", async () => {
+  const olderBlobs = Array.from({ length: 8 }, (_, index) => ({
+    blob_id: `older-${index}`, total_chars: 10, kind: "provider_tool", summary: "",
+  }))
+  const run = fixture({ turns: [
+    { turn_id: "older", lifecycle: "completed", entries: [], blobs: olderBlobs },
+    { turn_id: "latest", lifecycle: "completed", entries: [], blobs: [
+      { blob_id: "latest-error", total_chars: 100, kind: "provider_error", summary: "" },
+    ] },
+  ], blobs: {
+    ...Object.fromEntries(olderBlobs.map(blob => [blob.blob_id, [entry("provider_tool", "{}")]])),
+    "latest-error": [entry("provider_error", `permission denied ${secret}`)],
+  } })
+  await assert.rejects(runRoomRealProvider(run.input))
+  const diagnostic = run.checkpoints.at(-1).diagnostic
+  assert.ok(diagnostic.codes.includes("permission_denied"))
+  assert.equal(diagnostic.truncated, true)
+  assert.equal(JSON.stringify(run.checkpoints).includes(secret), false)
+})
+
 test("many small blobs still obey the total request budget", async () => {
   const run = fixture({ turns: [{ lifecycle: "open", entries: [], blobs:
     Array.from({ length: 40 }, (_, index) => ({ blob_id: `blob-${index}`, total_chars: 10, kind: "provider_output" })),
