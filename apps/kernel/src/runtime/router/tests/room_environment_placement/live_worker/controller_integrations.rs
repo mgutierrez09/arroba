@@ -376,7 +376,9 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
 
     let upload_path = fixture._worker_state.root.join("relay-upload.txt");
     std::fs::write(&upload_path, b"relay upload").expect("write bounded upload fixture");
-    let upload_target = json!({"kind":"browser_tab","tab_id":tab_id});
+    let upload_target =
+        serde_json::to_value(crate::session::InputTarget::BrowserTab(tab_id.into()))
+            .expect("serialize upload target");
     dispatch_json(
         &fixture.home,
         json!({"RequestRoomEnvironmentInputTakeover":{
