@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { startBrowserComputerFixture } from "./browser-computer-fixture.mjs"
 import { waitForRoomProviderSettlement } from "./live-room-provider-settlement.mjs"
 import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.mjs"
+import { verifyRoomDesktopHealth } from "./live-room-desktop-health.mjs"
 
 // The driver installs applications and establishes a synthetic mail session.
 // Only the official provider may create/edit/save/upload the document.
@@ -58,6 +59,7 @@ export async function runRoomOfficeWork(input) {
 
   try {
     await phase("office-installing")
+    report.desktop = await verifyRoomDesktopHealth(command)
     await docker(["exec", "-u", "root", containerName, "bash", "-c", [
       "set -euo pipefail", "apt-get -qq update",
       "apt-get -y -qq --no-install-recommends install mousepad=0.5.10-2 xterm",
@@ -104,6 +106,8 @@ export async function runRoomOfficeWork(input) {
     assert.match(await activeClass(), /Mousepad/i, "provider did not leave the graphical editor focused")
     await input.screenshot("office-editor-saved")
     assert.match(await activeClass(), /Mousepad/i, "screenshot forced browser focus during office work")
+    report.desktop = await verifyRoomDesktopHealth(command, { editor: true })
+    assert.match(await activeClass(), /Mousepad/i, "desktop health check forced browser focus during office work")
     const editActions = fresh(await actions())
     const typed = editActions.find((a) => a.kind === "keyboard_text" && a.state === "completed"
       && a.arguments?.utf8_byte_count === Buffer.byteLength(contents))
