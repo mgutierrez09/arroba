@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { assertRoomRealProviderAction, assertRoomBrowserFormActions } from "./live-room-real-provider.mjs"
 import { assertRoomBrowserRecoveryActions } from "./live-room-browser-recovery.mjs"
+import { roomDrillCompanionTimeoutMs } from "./room-drill-companion-budget.mjs"
 
 import {
   publishRoomDrillCompanionReady,
@@ -14,7 +15,7 @@ export async function runRoomEnvironmentCompanion(input) {
   if (!path.isAbsolute(directory)) {
     throw new Error("CHARIOX_ROOM_DRILL_COORDINATION_DIR must be an absolute disposable directory")
   }
-  const timeoutMs = companionTimeoutMs(input.env.CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS)
+  const timeoutMs = roomDrillCompanionTimeoutMs(input.env)
   await input.prepare?.()
   await publishRoomDrillCompanionReady(directory, {
     schema: "chariox.room_environment.companion_ready.v1",
@@ -183,15 +184,6 @@ function validateCompanionResult(companion) {
     typeof companion.screenshot === "string" && path.isAbsolute(companion.screenshot),
     "companion screenshot must be an absolute path",
   )
-}
-
-function companionTimeoutMs(value) {
-  if (value === undefined || value.trim() === "") return 180_000
-  const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 600_000) {
-    throw new Error("CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS must be an integer from 1 to 600000")
-  }
-  return parsed
 }
 
 function unwrap(response, variant) {

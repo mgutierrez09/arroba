@@ -99,3 +99,19 @@ The isolated provider mode still verifies physical input and both TUIs through
 `runRoomRealProvider`. Structured Browser operations, persistence, permission
 denial and all-provider acceptance remain in the end-to-end plan. The new Web
 mode needs live acceptance and exact-head review in both repositories.
+
+## Long companion budgets
+
+`room-drill-companion-budget.mjs` owns timeout validation for both the OSS waiter
+and the paired Web launcher. Normal defaults remain three minutes for a direct
+OSS companion and four minutes for Web. An active soak automatically receives
+its requested duration plus ten minutes for setup and final verification.
+An explicit `CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS` is preserved, but Web rejects
+it before provisioning if it is too short for the configured soak. The maximum
+is 24 hours plus ten minutes, covering the longest planned gate without an
+unbounded wait. Allowing that duration does not implement or prove the idle soak.
+
+The paired Web launcher loads this helper from `CHARIOX_OSS_REPO`; select matching
+OSS and Cloud branches. The OSS wait remains interruptible during a long budget.
+Tests exercise eight-hour and 24-hour configurations without sleeping for those
+durations. They are configuration/cancellation evidence, not completed soak runs.
