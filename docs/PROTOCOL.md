@@ -954,6 +954,17 @@ permission changes, caller isolation for every new command, and process cleanup.
 Existing clients' minimum versions remain unchanged because these are
 home-worker transport additions, not new public local-daemon request shapes.
 
+Authenticated agent download setup and permission changes also use the shared
+kernel mutation queue and Action ledger. Download setup reserves the Desktop
+and every current Tab because Chromium applies it browser-wide. Permission
+changes reserve the Desktop and current Tabs on the selected Tab's HTTP(S)
+origin. Human ownership of an affected target blocks dispatch; ownership of an
+unrelated-origin Tab does not block a permission change. Before a queued change
+executes, the kernel checks that its target set still matches the reservation.
+A changed scope fails with an explicit refresh-and-retry error. Controller
+restart recovery settles the admitted Action before reconciling the controller.
+This admission change adds no serialized fields or protocol variants.
+
 Protocol v290 and relay peer v26 route bounded browser-event polling through
 the authenticated Room worker that owns the browser controller and event
 journal. The worker validates generation, cursor, and batch limits before

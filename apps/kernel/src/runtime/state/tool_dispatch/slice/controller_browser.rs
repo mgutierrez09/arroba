@@ -434,10 +434,12 @@ impl KernelRuntimeState {
                 message: "the Room browser has no focused tab".to_string(),
             })?;
         let result = self
-            .configure_browser_environment_downloads(session_id, &tab_id)
+            .configure_browser_downloads_as_agent(session_id, agent_id, &tab_id)
             .await?;
         Ok(controller_browser_downloads_tool_result(
-            slice_id, agent_id, result,
+            slice_id,
+            agent_id,
+            result.value,
         ))
     }
 
@@ -502,10 +504,12 @@ impl KernelRuntimeState {
                 message: "the Room browser has no focused tab".to_string(),
             })?;
         let result = self
-            .set_browser_environment_permission(session_id, &tab_id, permission, setting)
+            .set_browser_permission_as_agent(session_id, agent_id, &tab_id, permission, setting)
             .await?;
         Ok(controller_browser_permission_tool_result(
-            slice_id, agent_id, result,
+            slice_id,
+            agent_id,
+            result.value,
         ))
     }
 }

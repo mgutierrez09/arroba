@@ -111,6 +111,7 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
         .and_then(|tab| tab["tab_id"].as_str())
         .expect("stable popup tab id")
         .to_string();
+    super::controller_configuration::check(fixture, token, agent_id, tab_id, &popup_tab_id).await;
     let activated = runtime
         .dispatch_authenticated_runtime_tool_call(
             token,

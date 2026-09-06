@@ -229,6 +229,7 @@ mod browser_controller_action_cancellation_runtime_state;
 mod browser_controller_action_execution_runtime_state;
 mod browser_controller_compatibility_runtime_state;
 pub(crate) use browser_controller_action_execution_runtime_state::BrowserControllerActionExecution;
+mod browser_configuration_runtime_state;
 mod browser_controller_runtime_state;
 mod browser_download_cancellation_runtime_state;
 mod browser_upload_runtime_state;

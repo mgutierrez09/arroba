@@ -233,6 +233,7 @@ const chromium = {
         } });
         return {};
       case "Browser.setDownloadBehavior":
+        state.downloadConfigureCount = (state.downloadConfigureCount ?? 0) + 1;
         state.downloads = params;
         persist();
         emit({ method: "Browser.downloadWillBegin", params: {
@@ -255,8 +256,10 @@ const chromium = {
         return {};
       case "DOM.setFileInputFiles": state.uploadCount = (state.uploadCount ?? 0) + 1; state.upload = { backendNodeId: params.objectId === "worker-note" ? 104 : params.backendNodeId, fileCount: params.files.length }; persist(); return {};
       case "Browser.setPermission":
+        state.permissionCount = (state.permissionCount ?? 0) + 1;
         state.permission = params;
         persist();
+        if (existsSync(join(dirname(pidFile), "quiet-permission-events"))) return {};
         emit({ method: "Runtime.consoleAPICalled", sessionId: "worker-cdp-session", params: {
           type: "warning", args: [{ value: "must-not-cross-relay" }],
         } });

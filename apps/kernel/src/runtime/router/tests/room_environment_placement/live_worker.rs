@@ -10,6 +10,8 @@ mod computer_input;
 mod controller;
 mod controller_cancellation;
 mod controller_compatibility;
+mod controller_configuration;
+mod controller_configuration_queue;
 mod controller_events;
 mod controller_integrations;
 mod controller_mutations;
