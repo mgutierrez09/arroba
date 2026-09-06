@@ -467,7 +467,6 @@ mod tests {
                     .with_account_profile(profile.profile_id.clone()),
             )
             .expect("Claude agent should create");
-
         let app = Arc::new(Mutex::new(app));
         let runtime = owned_runtime_state(&app).await;
         let request = crate::provider::LaunchProviderRequest::new(
@@ -742,6 +741,251 @@ mod tests {
         );
 
         std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn mcp_continuation_retries_when_prompt_starts_during_vault_unlock() {
+        let _env = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-mcp-continuation-vault-race-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        let previous_home = std::env::var_os("CHARIOX_HOME");
+        let previous_claude_bin = std::env::var_os("CHARIOX_CLAUDE_BIN");
+        std::env::set_var("CHARIOX_HOME", &root);
+        std::env::set_var(
+            "CHARIOX_CLAUDE_BIN",
+            std::env::current_exe().expect("test executable should resolve"),
+        );
+
+        let vault_path = root.join("credentials.vault");
+        let mut config = crate::config::DaemonConfig::for_tests()
+            .with_session_history_root(root.join("session-history"));
+        config.user_config.credential_vault.backend =
+            crate::config::CredentialVaultBackend::CharioxEncrypted;
+        config.user_config.credential_vault.path = vault_path.display().to_string();
+        config.user_config.state.path = Some(root.join("state.db").display().to_string());
+        config.user_config.history.operational.path =
+            Some(root.join("operational.db").display().to_string());
+        config.user_config.artifacts.operational.root =
+            Some(root.join("artifacts").display().to_string());
+        config.user_config.artifacts.operational.index_path =
+            Some(root.join("artifacts.db").display().to_string());
+
+        let mut app = crate::app::DaemonApp::bootstrap(config.clone()).expect("daemon bootstrap");
+        let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
+            .create_session(crate::session::CreateSessionRequest::new(
+                root.to_string_lossy(),
+                root.to_string_lossy(),
+            ))
+            .expect("session should create");
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "claude",
+                "Vaulted continuation Claude",
+            )
+            .expect("managed Claude profile should create");
+        let agent = crate::app::KernelSessionService::new(&mut app)
+            .spawn_agent(
+                crate::agent::CreateAgentRequest::new(session.id(), "claude")
+                    .with_model("claude-sonnet")
+                    .with_account_profile(profile.profile_id.clone()),
+            )
+            .expect("Claude agent should create");
+        let attachment = crate::app::KernelSessionService::new(&mut app)
+            .attach(crate::attachment::AttachRequest::new(
+                session.id(),
+                "mcp-continuation-vault-race-client",
+                crate::attachment::ClientCapabilityLevel::FullTerminal,
+            ))
+            .expect("test client should attach");
+        crate::secret::unlock_chariox_encrypted_vault(
+            &vault_path,
+            "correct horse battery staple",
+            crate::secret::VaultUnlockLease::KernelShutdown,
+        )
+        .expect("vault should initialize");
+        crate::provider::store_provider_account_credential(
+            &config,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "claude",
+            &profile.profile_id,
+            "setup-token-secret",
+            false,
+        )
+        .expect("provider credential should store");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let request = crate::provider::LaunchProviderRequest::new(
+            session.id(),
+            "claude",
+            "claude",
+            &profile.profile_id,
+            "claude-sonnet",
+        )
+        .with_agent_id(agent.id());
+        let prepared = runtime
+            .prepare_provider_launch_request_with_vault(request, "prepare test provider run")
+            .await
+            .expect("initial launch should prepare while vault is unlocked");
+        let started = runtime
+            .owned
+            .provider_store
+            .start_run_provider_only(prepared)
+            .expect("test provider run should start");
+        let running = runtime
+            .owned
+            .provider_store
+            .mark_run_running(started.run().id())
+            .expect("test provider run should become idle and running");
+        runtime
+            .owned
+            .provider_run_projection
+            .update(running.clone());
+        crate::secret::lock_chariox_encrypted_vault(&vault_path).expect("vault should lock");
+        crate::secret::clear_vault_secret_process_cache().expect("secret cache should clear");
+
+        runtime.remember_pending_mcp_continuation(
+            session.id(),
+            agent.id(),
+            attachment.id(),
+            "playwright",
+            "continue after granting playwright",
+        );
+        let first_unlock = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(interaction) = runtime
+                    .owned
+                    .session_store
+                    .get_session(session.id())
+                    .expect("session should remain available")
+                    .active_interaction_for_agent(agent.id())
+                {
+                    break interaction.clone();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first vault unlock interaction should appear");
+        let active_prompt = crate::session::PromptQueueItem::new(
+            "prompt-started-during-unlock",
+            attachment.id(),
+            agent.id(),
+            "new prompt",
+            crate::session::PromptStatus::Running,
+        )
+        .with_prompt_origin(crate::session::PromptOrigin::External);
+        app.lock()
+            .await
+            .prompt_owner_sync_external_active_prompt(session.id(), agent.id(), Some(active_prompt))
+            .expect("active prompt should start during unlock");
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                first_unlock.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("first vault unlock should resolve");
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if runtime
+                    .owned
+                    .pending_mcp_continuations
+                    .write()
+                    .contains_key(agent.id())
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("deferred MCP continuation should remain pending");
+        assert_eq!(
+            runtime
+                .owned
+                .provider_store
+                .get_run_for_agent(session.id(), agent.id())
+                .expect("provider run should remain available")
+                .id(),
+            running.id()
+        );
+
+        app.lock()
+            .await
+            .prompt_owner_sync_external_active_prompt(session.id(), agent.id(), None)
+            .expect("agent should become idle");
+        let second_unlock = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(interaction) = runtime
+                    .owned
+                    .session_store
+                    .get_session(session.id())
+                    .expect("session should remain available")
+                    .active_interaction_for_agent(agent.id())
+                {
+                    if interaction.title() == Some("Unlock Chariox Vault") {
+                        break interaction.clone();
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("idle retry should request vault unlock again");
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                second_unlock.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("retry vault unlock should resolve");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let resumed = runtime
+                    .owned
+                    .operational_history_store
+                    .query_events(crate::history::HistoryEventQuery {
+                        session_id: Some(session.id().to_string()),
+                        agent_id: Some(agent.id().to_string()),
+                        text: Some("continue after granting playwright".to_string()),
+                        limit: Some(10),
+                        ..crate::history::HistoryEventQuery::default()
+                    })
+                    .expect("continuation history should remain queryable")
+                    .into_iter()
+                    .any(|event| {
+                        event
+                            .prompt_id
+                            .as_deref()
+                            .is_some_and(|prompt_id| prompt_id.starts_with("prompt-"))
+                    });
+                if resumed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("MCP continuation should resume after the agent becomes idle");
+
+        let _ = crate::secret::lock_chariox_encrypted_vault(&vault_path);
+        let _ = crate::secret::clear_vault_secret_process_cache();
+        restore_env("CHARIOX_HOME", previous_home);
+        restore_env("CHARIOX_CLAUDE_BIN", previous_claude_bin);
         let _ = std::fs::remove_dir_all(root);
     }
 
