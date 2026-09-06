@@ -102,6 +102,18 @@ deployment. The usual runtime image, memory bounds, source identity and cleanup
 requirements still apply. A successful initial click alone never passes the
 office mode.
 
+### Office validation status
+
+On 2026-09-06 the live official-provider run proved graphical editor input,
+exact saved file bytes, preserved editor focus and both TUI observations. The
+mail turn then exposed an expired submitting client attachment. The office
+runner now creates and releases an attachment per prompt; two focused
+regressions reproduce the old failure and pass with that fix.
+
+A full rerun was rejected before slice creation by memory admission while two
+other tests held the VM's reserved capacity. End-to-end office acceptance and
+Web office coverage remain unproven. Unit tests do not replace that run.
+
 ## Optional Web companion
 
 With `CHARIOX_ROOM_DRILL_FOCUS=web-companion`, additionally set
