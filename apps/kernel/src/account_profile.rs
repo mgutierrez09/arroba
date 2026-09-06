@@ -19,6 +19,19 @@ use crate::error::DaemonError;
 const REGISTRY_VERSION: u32 = 1;
 const SUPPORTED_PROVIDERS: [&str; 3] = ["codex", "claude", "opencode"];
 const MAX_MATERIALIZATION_BYTES: usize = 64 * 1024 * 1024;
+const OPENCODE_CONFIG_FILES: [&str; 6] = [
+    "config",
+    "config.json",
+    "opencode.json",
+    "opencode.jsonc",
+    "tui.json",
+    "tui.jsonc",
+];
+#[path = "account_profile_replica_refresh.rs"]
+mod replica_refresh;
+#[cfg(test)]
+#[path = "account_profile_materialization_tests.rs"]
+mod materialization_tests;
 pub(crate) const MAX_MANAGED_CONTEXT_MATERIALIZATION_BYTES: usize = 16 * 1024 * 1024;
 #[cfg(test)]
 thread_local! {
@@ -1977,7 +1990,28 @@ impl ProviderAccountProfileRegistry {
             ));
         }
 
-        let backup_root = (managed_root_exists && !adopt_interrupted_managed_publication)
+        let mut file_refresh = if provider == "opencode"
+            && managed_context.is_none()
+            && replace_existing_replica
+            && managed_root_exists
+        {
+            match replica_refresh::ReplicaFileRefresh::publish(
+                &managed_root,
+                &staging_root,
+                &decoded_files,
+            ) {
+                Ok(refresh) => Some(refresh),
+                Err(error) => {
+                    let _ = fs::remove_dir_all(&staging_root);
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        let backup_root = (managed_root_exists
+            && !adopt_interrupted_managed_publication
+            && file_refresh.is_none())
             .then(|| unique_sibling_path(&managed_root, "backup"));
         if let Some(backup_root) = &backup_root {
             if let Err(error) = fs::rename(&managed_root, backup_root) {
@@ -1985,7 +2019,9 @@ impl ProviderAccountProfileRegistry {
                 return Err(registry_io("materialize account profile")(error));
             }
         }
-        let publication_result = if adopt_interrupted_managed_publication {
+        let publication_result = if file_refresh.is_some() {
+            fs::remove_dir_all(&staging_root).map_err(registry_io("clean account refresh staging"))
+        } else if adopt_interrupted_managed_publication {
             fs::remove_dir_all(&staging_root)
                 .map_err(registry_io("recover managed account profile publication"))
                 .and_then(|_| sync_private_tree(&managed_root))
@@ -1996,6 +2032,10 @@ impl ProviderAccountProfileRegistry {
                 .and_then(|_| sync_directory(managed_parent))
         };
         if let Err(error) = publication_result {
+            if let Some(refresh) = &mut file_refresh {
+                refresh.rollback()?;
+                return Err(error);
+            }
             let failed_root = unique_sibling_path(&managed_root, "failed");
             let _ = fs::rename(&managed_root, &failed_root);
             if let Some(backup_root) = &backup_root {
@@ -2092,6 +2132,10 @@ impl ProviderAccountProfileRegistry {
             if managed_context.is_some() {
                 return Err(error);
             }
+            if let Some(refresh) = &mut file_refresh {
+                refresh.rollback()?;
+                return Err(error);
+            }
             let failed_root = unique_sibling_path(&managed_root, "failed");
             let _ = fs::rename(&managed_root, &failed_root);
             if let Some(backup_root) = &backup_root {
@@ -2100,6 +2144,9 @@ impl ProviderAccountProfileRegistry {
             let _ = fs::remove_dir_all(&failed_root);
             let _ = sync_directory(managed_parent);
             return Err(error);
+        }
+        if let Some(refresh) = &mut file_refresh {
+            refresh.commit();
         }
         if let Some(backup_root) = &backup_root {
             let _ = fs::remove_dir_all(backup_root);
@@ -2923,23 +2970,30 @@ fn materialization_files(
         ProviderAccountLocator::Opencode {
             xdg_data_home,
             xdg_config_home,
-            xdg_state_home,
             opencode_config_dir,
             ..
         } => {
-            collect_optional_tree(&xdg_data_home.join("opencode"), "data/opencode", &mut files)?;
-            collect_optional_tree(
-                &xdg_config_home.join("opencode"),
-                "config/opencode",
+            // Account transfer is not provider-session migration. In particular,
+            // never traverse databases, prompt history, locks, or node_modules.
+            collect_optional_profile_files(
+                &xdg_data_home.join("opencode"),
+                "data/opencode",
+                &["auth.json"],
                 &mut files,
             )?;
-            collect_optional_tree(
-                &xdg_state_home.join("opencode"),
-                "state/opencode",
+            collect_optional_profile_files(
+                &xdg_config_home.join("opencode"),
+                "config/opencode",
+                &OPENCODE_CONFIG_FILES,
                 &mut files,
             )?;
             if opencode_config_dir != &xdg_config_home.join("opencode") {
-                collect_optional_tree(opencode_config_dir, "opencode-config", &mut files)?;
+                collect_optional_profile_files(
+                    opencode_config_dir,
+                    "opencode-config",
+                    &OPENCODE_CONFIG_FILES,
+                    &mut files,
+                )?;
             }
         }
     }
@@ -3086,9 +3140,10 @@ fn require_materialization_file(
     ))
 }
 
-fn collect_optional_tree(
+fn collect_optional_profile_files(
     root: &Path,
     transfer_prefix: &str,
+    names: &[&str],
     files: &mut Vec<ProviderAccountMaterializationFile>,
 ) -> Result<(), DaemonError> {
     let metadata = match fs::symlink_metadata(root) {
@@ -3102,41 +3157,8 @@ fn collect_optional_tree(
             "provider account materialization root must be a regular directory",
         ));
     }
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        let mut entries = fs::read_dir(&directory)
-            .map_err(registry_io("export account profile"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(registry_io("export account profile"))?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
-            let path = entry.path();
-            let metadata =
-                fs::symlink_metadata(&path).map_err(registry_io("export account profile"))?;
-            if metadata.file_type().is_symlink() {
-                return Err(registry_error(
-                    "export account profile",
-                    "symlinks are not allowed in transferred provider profile data",
-                ));
-            }
-            if metadata.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if !metadata.is_file() {
-                continue;
-            }
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|error| registry_error("export account profile", error.to_string()))?;
-            let transfer_relative = Path::new(transfer_prefix).join(relative);
-            collect_optional_file(
-                root,
-                &relative.to_string_lossy(),
-                &transfer_relative.to_string_lossy(),
-                files,
-            )?;
-        }
+    for name in names {
+        collect_optional_file(root, name, &format!("{transfer_prefix}/{name}"), files)?;
     }
     Ok(())
 }

@@ -36,6 +36,32 @@ Materialization is denied before launch when the existing trust/ownership policy
 
 Model catalogs are cached by owner, selected profile, and execution location. Remote/slice selections must have a kernel-projected materialization record; clients never infer availability from labels.
 
+OpenCode account transfer exports `data/opencode/auth.json` and the portable
+configuration files `config`, `config.json`, `opencode.json`, `opencode.jsonc`,
+`tui.json`, and `tui.jsonc` from the profile's global and custom configuration
+directories. It does not traverse the data, state, or configuration trees.
+Session databases, prompt history, snapshots, caches, locks, installed
+`node_modules`, and capability packages are not account credentials and do not
+belong in this transfer. Provider-native configuration continues to refer to
+capabilities installed at the execution location; managed-slice capability
+transfer uses its separate existing kernel path. Missing optional files are
+allowed, but exported roots and files must be regular, non-symlink entries and
+the existing 64 MiB total limit still applies. Managed-machine context export
+remains the separate credential-only, 16 MiB path.
+
+Refreshing an existing regular OpenCode replica updates only those portable
+account files. It preserves worker-created history, databases, and directories
+held open by a running provider. Portable files omitted by the home authority
+are removed, so revoked credentials do not survive a refresh. If the registry
+commit fails, the previous portable files are restored. On Unix, refresh and
+rollback use held directory descriptors and no-follow reads so a concurrent
+symlink replacement cannot redirect credential writes. Each file publication
+is atomic; this is not an atomic multi-file provider-state snapshot.
+
+This account transfer is not a history backup or provider-session migration.
+Environment and slice saved-state acceptance must validate their own durable
+provider state independently.
+
 ## Usage semantics
 
 Usage meters identify their source, kind, unit, limits/balance where exposed, reset time, freshness, and availability. Missing numbers mean the provider did not expose them; they are not treated as zero. Codex subscription windows and credits use app-server methods. Claude uses provider-native rate-limit observations and an explicit official-CLI `/usage` refresh with tools disabled and session persistence disabled. The refresh accepts only structured results with all required model-activity fields present and zero; missing fields are not assumed to be zero. Chariox does not rewrite Claude's onboarding or trust settings for this probe. OpenCode billing remains best-effort and extensible per upstream provider.
