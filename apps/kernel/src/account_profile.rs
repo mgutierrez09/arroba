@@ -127,6 +127,9 @@ pub(crate) fn provider_auth_env_vars(provider: &str) -> &'static [&'static str] 
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_BASE_URL",
             "ANTHROPIC_CUSTOM_HEADERS",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "CLAUDE_CODE_OAUTH_SCOPES",
             "CLAUDE_CONFIG_DIR",
         ],
         Some("opencode") => &[
@@ -1285,11 +1288,7 @@ impl ProviderAccountProfileRegistry {
         let provider = normalize_provider(provider)?;
         let document = self.read_document()?;
         let stored = resolve_stored_profile(&document, owner_user_id, provider, profile_id)?;
-        let files = materialization_files(
-            &stored.locator,
-            stored.public.origin == ProviderAccountProfileOrigin::Default,
-            profile_id,
-        )?;
+        let files = materialization_files(&stored.locator, profile_id)?;
         Ok(ProviderAccountMaterialization {
             profile: ProviderAccountReplicaMetadata {
                 owner_user_id: stored.public.owner_user_id.clone(),
@@ -1315,7 +1314,7 @@ impl ProviderAccountProfileRegistry {
         let provider = normalize_provider(provider)?;
         let profile_id = validate_profile_id(profile_id)?;
         let locator = ProviderAccountLocator::home_relative(provider, source_home)?;
-        let files = materialization_files(&locator, false, profile_id)?;
+        let files = materialization_files(&locator, profile_id)?;
         if files.is_empty() {
             return Err(registry_error(
                 "materialize deployment account profile",
@@ -1373,14 +1372,6 @@ impl ProviderAccountProfileRegistry {
                     MAX_MANAGED_CONTEXT_MATERIALIZATION_BYTES,
                 )?;
                 discard_nonportable_claude_credentials(&mut files);
-                if !materialization_has_file(&files, ".credentials.json") {
-                    collect_scoped_claude_keychain_credentials(claude_config_dir, &mut files)?;
-                }
-                if stored.public.origin == ProviderAccountProfileOrigin::Default
-                    && !materialization_has_file(&files, ".credentials.json")
-                {
-                    collect_legacy_claude_keychain_credentials(&mut files)?;
-                }
                 require_managed_materialization_file(
                     &files,
                     ".credentials.json",
@@ -2596,7 +2587,6 @@ fn validate_profile_id(profile_id: &str) -> Result<&str, DaemonError> {
 
 fn materialization_files(
     locator: &ProviderAccountLocator,
-    include_default_claude_keychain: bool,
     profile_id: &str,
 ) -> Result<Vec<ProviderAccountMaterializationFile>, DaemonError> {
     let mut files = Vec::new();
@@ -2612,14 +2602,6 @@ fn materialization_files(
                 collect_optional_file(claude_config_dir, name, name, &mut files)?;
             }
             discard_nonportable_claude_credentials(&mut files);
-            if !materialization_has_file(&files, ".credentials.json") {
-                collect_scoped_claude_keychain_credentials(claude_config_dir, &mut files)?;
-            }
-            if include_default_claude_keychain
-                && !materialization_has_file(&files, ".credentials.json")
-            {
-                collect_legacy_claude_keychain_credentials(&mut files)?;
-            }
             require_materialization_file(&files, ".credentials.json", "claude", profile_id)?;
         }
         ProviderAccountLocator::Opencode {
@@ -2852,73 +2834,6 @@ fn claude_credentials_are_portable(contents: &[u8]) -> bool {
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|refresh_token| !refresh_token.trim().is_empty())
         })
-}
-
-#[cfg(target_os = "macos")]
-fn claude_keychain_service_name(claude_config_dir: &Path) -> String {
-    let digest = format!(
-        "{:x}",
-        Sha256::digest(claude_config_dir.as_os_str().as_encoded_bytes())
-    );
-    format!("Claude Code-credentials-{}", &digest[..8])
-}
-
-#[cfg(target_os = "macos")]
-fn collect_scoped_claude_keychain_credentials(
-    claude_config_dir: &Path,
-    files: &mut Vec<ProviderAccountMaterializationFile>,
-) -> Result<(), DaemonError> {
-    collect_claude_keychain_credentials(&claude_keychain_service_name(claude_config_dir), files)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn collect_scoped_claude_keychain_credentials(
-    _claude_config_dir: &Path,
-    _files: &mut [ProviderAccountMaterializationFile],
-) -> Result<(), DaemonError> {
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn collect_legacy_claude_keychain_credentials(
-    files: &mut Vec<ProviderAccountMaterializationFile>,
-) -> Result<(), DaemonError> {
-    collect_claude_keychain_credentials("Claude Code-credentials", files)
-}
-
-#[cfg(target_os = "macos")]
-fn collect_claude_keychain_credentials(
-    service: &str,
-    files: &mut Vec<ProviderAccountMaterializationFile>,
-) -> Result<(), DaemonError> {
-    let output = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", service, "-w"])
-        .output()
-        .map_err(registry_io("export Claude Keychain credentials"))?;
-    if !output.status.success() || output.stdout.is_empty() {
-        return Ok(());
-    }
-    if output.stdout.len() > MAX_MATERIALIZATION_BYTES {
-        return Err(registry_error(
-            "export Claude Keychain credentials",
-            "Claude Keychain credential exceeds the materialization safety limit",
-        ));
-    }
-    if !claude_credentials_are_portable(&output.stdout) {
-        return Ok(());
-    }
-    files.push(ProviderAccountMaterializationFile {
-        relative_path: ".credentials.json".to_string(),
-        contents_base64: base64::engine::general_purpose::STANDARD.encode(output.stdout),
-    });
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn collect_legacy_claude_keychain_credentials(
-    _files: &mut [ProviderAccountMaterializationFile],
-) -> Result<(), DaemonError> {
-    Ok(())
 }
 
 fn materialization_destination(
@@ -4414,15 +4329,6 @@ mod tests {
             let _ = fs::remove_dir_all(source_root);
             let _ = fs::remove_dir_all(target_root);
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn claude_keychain_service_is_scoped_to_the_config_directory() {
-        assert_eq!(
-            claude_keychain_service_name(Path::new("/tmp/chariox-claude-profile")),
-            "Claude Code-credentials-bc2236e0"
-        );
     }
 
     #[test]
