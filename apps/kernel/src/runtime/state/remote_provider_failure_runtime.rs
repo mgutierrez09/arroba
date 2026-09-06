@@ -8,10 +8,8 @@ impl KernelRuntimeState {
         session_id: &str,
         agent_id: &str,
         provider_run_id: &str,
-        adapter_key: &str,
-        message: &str,
         completions: &[crate::session::PromptCompletion],
-        profile_transition: crate::runtime::prompt_state::AgentProfileTransitionClaim,
+        failure: crate::app::RemoteProviderFailure,
     ) -> Result<(), DaemonError> {
         // Projection has settled the failed turn and reserved agent admission.
         // Release its workspace before worker I/O can finish that reservation
@@ -26,14 +24,16 @@ impl KernelRuntimeState {
             }
         }
         let substituted = if let Some(reason) =
-            crate::provider::classify_provider_substitutable_failure_text(adapter_key, message)
-        {
+            crate::provider::classify_provider_substitutable_failure_text(
+                &failure.adapter_key,
+                &failure.message,
+            ) {
             self.activate_substitute_after_provider_failure(
                 session_id,
                 agent_id,
                 provider_run_id,
                 &reason,
-                Some(profile_transition),
+                Some(failure.profile_transition),
             )
             .await
         } else {

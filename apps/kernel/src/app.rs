@@ -129,7 +129,9 @@ pub(crate) use provider_launch_policy::{
 pub(crate) use provider_liveness::ProviderRunExitSessionSummary;
 pub(crate) use provider_processes::{ProviderLaunchProcessRuntime, ProviderProcessReapSummary};
 pub(crate) use provider_run_read::ProviderRunReadService;
-pub(crate) use remote_lease::{PreparedLeasedProviderRun, RemoteLeaseRuntime};
+pub(crate) use remote_lease::{
+    PreparedLeasedProviderRun, RemoteLeaseRuntime, RemoteProviderFailure,
+};
 
 pub struct DaemonApp {
     config: DaemonConfig,

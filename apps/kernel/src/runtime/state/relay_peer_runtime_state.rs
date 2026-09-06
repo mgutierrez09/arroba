@@ -338,6 +338,8 @@ impl KernelRuntimeState {
         .await
     }
 
+    // Keep the relay request fields explicit, like the adjacent lease adapters.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn submit_relay_leased_prompt(
         &self,
         leased_agent_id: &str,
@@ -645,10 +647,8 @@ impl KernelRuntimeState {
                 &session_id,
                 &agent_id,
                 &provider_run_id,
-                &failure.adapter_key,
-                &failure.message,
                 &outcome.completions,
-                failure.profile_transition,
+                failure,
             )
             .await?;
         }
