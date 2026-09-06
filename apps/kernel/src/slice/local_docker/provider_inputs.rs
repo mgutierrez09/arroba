@@ -35,11 +35,6 @@ pub(crate) fn home_provider_credential_sources(
                 home.join(".claude/stats-cache.json"),
                 "claude-stats.json",
             ),
-            (
-                "CHARIOX_SLICE_CLAUDE_CREDENTIALS",
-                home.join(".claude/.credentials.json"),
-                "claude-credentials.json",
-            ),
         ]
     };
     match provider {
@@ -94,13 +89,12 @@ mod tests {
                 "CHARIOX_SLICE_CLAUDE_JSON",
                 "CHARIOX_SLICE_CLAUDE_SETTINGS",
                 "CHARIOX_SLICE_CLAUDE_STATS",
-                "CHARIOX_SLICE_CLAUDE_CREDENTIALS",
             ]
         );
         assert!(home_provider_credential_sources(home, Some("github")).is_empty());
         assert_eq!(
             environments(home_provider_credential_sources(home, Some("all"))).len(),
-            6
+            5
         );
     }
 

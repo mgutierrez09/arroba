@@ -289,6 +289,9 @@ impl CommandRouter {
         required_mcps: Vec<crate::transport::relay_peer::RequiredRemoteMcp>,
         required_skills: Option<Vec<crate::transport::relay_peer::RequiredRemoteSkill>>,
         remote_extension_manifest: crate::extension::RemoteExtensionManifest,
+        provider_launch_credential: Option<
+            crate::transport::relay_peer::RemoteProviderLaunchCredential,
+        >,
     ) -> Result<crate::provider::RuntimeProviderRun, DaemonError> {
         relay_peer_runtime::launch_relay_leased_native_provider_run(
             &self.runtime_state,
@@ -303,6 +306,7 @@ impl CommandRouter {
             required_mcps,
             required_skills,
             remote_extension_manifest,
+            provider_launch_credential,
         )
         .await
     }
@@ -352,6 +356,9 @@ impl CommandRouter {
         required_mcps: Vec<crate::transport::relay_peer::RequiredRemoteMcp>,
         required_skills: Option<Vec<crate::transport::relay_peer::RequiredRemoteSkill>>,
         remote_extension_manifest: crate::extension::RemoteExtensionManifest,
+        provider_launch_credential: Option<
+            crate::transport::relay_peer::RemoteProviderLaunchCredential,
+        >,
     ) -> Result<(String, crate::session::PromptSubmissionOutcome), DaemonError> {
         relay_peer_runtime::submit_relay_leased_prompt(
             &self.runtime_state,
@@ -364,6 +371,7 @@ impl CommandRouter {
             required_mcps,
             required_skills,
             remote_extension_manifest,
+            provider_launch_credential,
         )
         .await
     }

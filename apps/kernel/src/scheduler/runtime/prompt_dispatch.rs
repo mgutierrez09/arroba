@@ -6,10 +6,10 @@ use crate::app::DaemonApp;
 use crate::error::DaemonError;
 use crate::provider::LaunchProviderRequest;
 use crate::session::{PromptQueueItem, PromptSubmissionOutcome};
-use crate::transport::relay_client::{
-    send_peer_request_via_temporary_connection_with_timeout, LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
-};
 use crate::transport::relay_peer::{RelayPeerRequest, RelayPeerResponse};
+
+#[cfg(test)]
+mod credential_tests;
 
 pub(super) fn submit_claimed_workflow_prompt(
     app: &mut DaemonApp,
@@ -58,45 +58,46 @@ pub(super) fn dispatch_workflow_prompt(
             .remote_workflow_turn_context_for_prompt(session_id, target_agent_id, prompt)?;
         let (required_mcps, required_skills, remote_extension_manifest) =
             app.remote_prompt_capabilities_for_agent(&target_agent)?;
-        let response =
-            app.block_on_relay_future(send_peer_request_via_temporary_connection_with_timeout(
-                app.config(),
-                ClientTarget {
-                    daemon_id: Some(remote_execution.worker_kernel_id.clone()),
-                    daemon_alias: None,
-                },
-                RelayPeerRequest::SubmitLeasedPrompt {
-                    leased_agent_id: remote_execution.leased_agent_id,
-                    prompt: prompt.prompt().to_string(),
-                    hidden_system_context: prompt.hidden_system_context().to_string(),
-                    attachments: app.serialize_remote_prompt_attachments(prompt.attachments())?,
-                    workflow_context: Some(workflow_context),
-                    git_context: Some(crate::transport::relay_peer::RemoteGitTurnContext {
-                        home_session_id: session_id.to_string(),
-                        home_agent_id: target_agent_id.to_string(),
-                        home_prompt_id: prompt.id().to_string(),
-                        home_turn_id: prompt.id().to_string(),
-                        source_attachment_id: Some(prompt.source_attachment_id().to_string()),
-                        workspace_live_sync_mode: Some(workspace_live_sync_mode),
-                        prompt_origin: Some(prompt.prompt_origin()),
-                        external_provider: prompt.external_provider().map(str::to_string),
-                        external_provider_session_id: prompt
-                            .external_provider_session_id()
-                            .map(str::to_string),
-                        external_provider_turn_id: prompt
-                            .external_provider_turn_id()
-                            .map(str::to_string),
-                        prompt_summary: crate::prompt_transcript::render_prompt_transcript(
-                            prompt.prompt(),
-                            prompt.attachments(),
-                        ),
-                    }),
-                    required_mcps,
-                    required_skills,
-                    remote_extension_manifest,
-                },
-                LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
-            ));
+        let relay_config = app.config().clone();
+        let response = app.send_remote_prompt_peer_request_with_credential_retry(
+            &relay_config,
+            ClientTarget {
+                daemon_id: Some(remote_execution.worker_kernel_id.clone()),
+                daemon_alias: None,
+            },
+            RelayPeerRequest::SubmitLeasedPrompt {
+                leased_agent_id: remote_execution.leased_agent_id,
+                prompt: prompt.prompt().to_string(),
+                hidden_system_context: prompt.hidden_system_context().to_string(),
+                attachments: app.serialize_remote_prompt_attachments(prompt.attachments())?,
+                workflow_context: Some(workflow_context),
+                git_context: Some(crate::transport::relay_peer::RemoteGitTurnContext {
+                    home_session_id: session_id.to_string(),
+                    home_agent_id: target_agent_id.to_string(),
+                    home_prompt_id: prompt.id().to_string(),
+                    home_turn_id: prompt.id().to_string(),
+                    source_attachment_id: Some(prompt.source_attachment_id().to_string()),
+                    workspace_live_sync_mode: Some(workspace_live_sync_mode),
+                    prompt_origin: Some(prompt.prompt_origin()),
+                    external_provider: prompt.external_provider().map(str::to_string),
+                    external_provider_session_id: prompt
+                        .external_provider_session_id()
+                        .map(str::to_string),
+                    external_provider_turn_id: prompt
+                        .external_provider_turn_id()
+                        .map(str::to_string),
+                    prompt_summary: crate::prompt_transcript::render_prompt_transcript(
+                        prompt.prompt(),
+                        prompt.attachments(),
+                    ),
+                }),
+                required_mcps,
+                required_skills,
+                remote_extension_manifest,
+                provider_launch_credential: None,
+            },
+            &target_agent,
+        );
         return match response {
             Ok(RelayPeerResponse::LeasedPromptSubmitted {
                 provider_run_id, ..

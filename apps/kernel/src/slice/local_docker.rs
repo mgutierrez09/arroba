@@ -271,11 +271,6 @@ pub fn run_local_docker_slice_action(
                         root.join("stats-cache.json"),
                         "claude-stats.json",
                     ),
-                    (
-                        "CHARIOX_SLICE_CLAUDE_CREDENTIALS",
-                        root.join(".credentials.json"),
-                        "claude-credentials.json",
-                    ),
                 ] {
                     configure_provider_input(
                         &mut command,
@@ -682,19 +677,15 @@ pub fn inspect_local_docker_slice_provider_auth(
         .as_ref()
         .map(|base| format!("{base}/data/opencode/auth.json"))
         .unwrap_or_else(|| "/home/slice/.local/share/opencode/auth.json".to_string());
-    let claude_path = profile_base
-        .as_ref()
-        .map(|base| format!("{base}/claude/.credentials.json"))
-        .unwrap_or_else(|| "/home/slice/.claude/.credentials.json".to_string());
     let checks = match provider {
         "all" => vec![
             ("codex", codex_path.as_str()),
             ("opencode", opencode_path.as_str()),
-            ("claude", claude_path.as_str()),
         ],
         "codex" => vec![("codex", codex_path.as_str())],
         "opencode" => vec![("opencode", opencode_path.as_str())],
-        "claude" => vec![("claude", claude_path.as_str())],
+        // Claude setup tokens are launch-scoped vault values, not worker files.
+        "claude" => Vec::new(),
         "github" => Vec::new(),
         value if value.starts_with("opencode:") => {
             vec![("opencode", opencode_path.as_str())]

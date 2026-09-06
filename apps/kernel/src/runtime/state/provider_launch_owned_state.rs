@@ -274,6 +274,9 @@ impl KernelRuntimeOwnedState {
         &self,
         mut request: crate::provider::LaunchProviderRequest,
     ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
+        if !request.provider_credential_env.is_empty() {
+            return Ok(request);
+        }
         if crate::provider::canonical_provider_family(&request.provider)
             .is_some_and(|provider| matches!(provider, "codex" | "claude" | "opencode"))
         {
@@ -733,6 +736,49 @@ mod tests {
         assert_eq!(
             prepared.provider_credential_env.iter().collect::<Vec<_>>(),
             vec![("CLAUDE_CODE_OAUTH_TOKEN", "setup-token-secret")]
+        );
+        assert!(
+            !crate::secret::chariox_encrypted_vault_status(&vault_path)
+                .expect("vault status should resolve")
+                .unlocked
+        );
+
+        let mut remote_credential = Box::pin(runtime.resolve_remote_provider_launch_credential(
+            session.id(),
+            workflow_agent.id(),
+            "test remote Claude launch",
+        ));
+        tokio::select! {
+            result = &mut remote_credential => panic!("remote credential resolved before unlock: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+        }
+        let interaction = runtime
+            .owned
+            .session_store
+            .get_session(session.id())
+            .expect("session should remain available")
+            .active_interaction_for_agent(workflow_agent.id())
+            .expect("remote launch vault interaction should be visible")
+            .clone();
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                interaction.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("remote launch unlock should resolve");
+        let credential = remote_credential
+            .await
+            .expect("remote launch credential should resolve")
+            .expect("Claude launch should carry a credential");
+        assert_eq!(credential.provider, "claude");
+        assert_eq!(credential.account_profile, profile.profile_id);
+        assert!(!format!("{credential:?}").contains("setup-token-secret"));
+        assert_eq!(
+            credential.secret_input.into_zeroizing().as_str(),
+            "setup-token-secret"
         );
         assert!(
             !crate::secret::chariox_encrypted_vault_status(&vault_path)

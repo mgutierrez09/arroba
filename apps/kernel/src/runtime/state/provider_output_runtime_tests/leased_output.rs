@@ -103,6 +103,7 @@ async fn leased_claude_failure_reaches_home_projection_without_terminal_polling(
             Vec::new(),
             None,
             crate::extension::RemoteExtensionManifest::default(),
+            None,
         )
         .await
         .expect("leased prompt accepted");

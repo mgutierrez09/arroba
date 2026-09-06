@@ -6,7 +6,7 @@ import * as providerRequests from "./ipc-provider-requests.js"
 import { LOCAL_DAEMON_PROTOCOL_VERSION } from "./kernel-types.js"
 
 test("provider login request carries the selected enrollment method", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 308)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 309)
   const request = startProviderLoginRequest("codex", "work", "device_code") as {
     StartProviderLogin: Record<string, unknown>
   }

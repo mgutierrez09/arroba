@@ -353,7 +353,6 @@ test("managed slice broker accepts only Chariox resources and shared host paths"
   for (const path of [
     "/home/slice/.chariox/daemon/provider-accounts/owner-1/codex/codex-1/codex/auth.json",
     "/home/slice/.chariox/daemon/provider-accounts/owner-1/opencode/opencode-1/data/opencode/auth.json",
-    "/home/slice/.chariox/daemon/provider-accounts/owner-1/claude/claude-1/claude/.credentials.json",
   ]) {
     const accountCredential = validate({
       kind: "docker",
@@ -365,6 +364,7 @@ test("managed slice broker accepts only Chariox resources and shared host paths"
   for (const path of [
     "/home/slice/.chariox/daemon/provider-accounts/owner-1/codex/codex-1/../../../../../../etc/shadow",
     "/home/slice/.chariox/daemon/provider-accounts/owner-1/codex/codex-1/unexpected",
+    "/home/slice/.chariox/daemon/provider-accounts/owner-1/claude/claude-1/claude/.credentials.json",
   ]) {
     const accountCredentialEscape = validate({
       kind: "docker",

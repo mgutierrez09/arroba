@@ -2,10 +2,7 @@ use crate::agent::RemoteAgentBinding;
 use crate::app::{DaemonApp, KernelRemotePromptDispatch};
 use crate::error::DaemonError;
 use crate::session::{PromptCancellation, PromptCompletion, PromptQueueItem};
-use crate::transport::relay_client::{
-    send_peer_request_via_temporary_connection,
-    send_peer_request_via_temporary_connection_with_timeout,
-};
+use crate::transport::relay_client::send_peer_request_via_temporary_connection;
 use crate::transport::relay_peer::{RelayPeerRequest, RelayPeerResponse};
 use chariox_relay::protocol::ClientTarget;
 
@@ -208,8 +205,9 @@ impl<'a> KernelAgentService<'a> {
         let (required_mcps, required_skills, remote_extension_manifest) =
             self.app.remote_prompt_capabilities_for_agent(&agent)?;
         let relay_config = remote_dispatch_relay_config(self.app, &dispatch);
-        let result = match self.app.block_on_relay_future(
-            send_peer_request_via_temporary_connection_with_timeout(
+        let result = match self
+            .app
+            .send_remote_prompt_peer_request_with_credential_retry(
                 &relay_config,
                 ClientTarget {
                     daemon_id: Some(dispatch.worker_kernel_id.clone()),
@@ -225,10 +223,10 @@ impl<'a> KernelAgentService<'a> {
                     required_mcps,
                     required_skills,
                     remote_extension_manifest,
+                    provider_launch_credential: None,
                 },
-                crate::transport::relay_client::LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
-            ),
-        ) {
+                &agent,
+            ) {
             Ok(RelayPeerResponse::LeasedPromptSubmitted {
                 provider_run_id, ..
             }) => Ok(provider_run_id),
@@ -484,8 +482,9 @@ impl<'a> KernelAgentService<'a> {
             let (required_mcps, required_skills, remote_extension_manifest) =
                 self.app.remote_prompt_capabilities_for_agent(&agent)?;
             let home_prompt_id = self.app.sessions_mut().reserve_prompt_id();
-            let response = self.app.block_on_relay_future(
-                send_peer_request_via_temporary_connection_with_timeout(
+            let response = self
+                .app
+                .send_remote_prompt_peer_request_with_credential_retry(
                     &relay_config,
                     ClientTarget {
                         daemon_id: Some(worker_kernel_id.to_string()),
@@ -518,10 +517,10 @@ impl<'a> KernelAgentService<'a> {
                         required_mcps,
                         required_skills,
                         remote_extension_manifest,
+                        provider_launch_credential: None,
                     },
-                    crate::transport::relay_client::LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
-                ),
-            );
+                    &agent,
+                );
             let remote_provider_run_id = match response {
                 Ok(RelayPeerResponse::LeasedPromptSubmitted {
                     provider_run_id, ..

@@ -66,5 +66,5 @@ pub use waiting_room::*;
 pub use workflow::*;
 pub use workspace::*;
 
-/// Version 308 adds atomic provider-account credential enrollment.
-pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 308;
+/// Version 309 adds transient vaulted provider launch credentials for remote workers.
+pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 309;

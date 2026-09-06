@@ -73,7 +73,7 @@ mod remote_leases;
 
 #[test]
 fn relay_peer_workspace_live_sync_apply_shape_is_versioned() {
-    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 308);
+    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 309);
 
     let context = RemoteWorkspaceLiveSyncApplyContext {
         home_session_id: "session-1".to_string(),
@@ -152,7 +152,7 @@ fn relay_peer_workspace_live_sync_apply_shape_is_versioned() {
 
 #[test]
 fn relay_peer_remote_workspace_live_sync_mode_projection_shape_is_versioned() {
-    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 308);
+    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 309);
 
     let spawn = RelayPeerRequest::SpawnLeasedAgent {
         lease_id: "lease-1".to_string(),
@@ -191,6 +191,7 @@ fn relay_peer_remote_workspace_live_sync_mode_projection_shape_is_versioned() {
             version_hash: "skill-hash-1".to_string(),
         }]),
         remote_extension_manifest: crate::extension::RemoteExtensionManifest::default(),
+        provider_launch_credential: None,
     };
     let snapshot = serde_json::json!([spawn, submit]);
     assert_eq!(
@@ -430,7 +431,7 @@ fn relay_peer_queued_prompt_steer_shape_is_versioned() {
 
 #[test]
 fn relay_peer_workspace_live_sync_runtime_tool_shape_is_versioned() {
-    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 308);
+    assert_eq!(crate::local::LOCAL_DAEMON_PROTOCOL_VERSION, 309);
 
     let context = RemoteWorkspaceLiveSyncContext {
         home_kernel_id: "kernel-home".to_string(),

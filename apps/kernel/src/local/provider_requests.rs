@@ -251,6 +251,7 @@ fn remote_native_provider_run_response(
             required_mcps,
             required_skills: Some(required_skills),
             remote_extension_manifest,
+            provider_launch_credential: None,
         },
     ))?;
     match response {

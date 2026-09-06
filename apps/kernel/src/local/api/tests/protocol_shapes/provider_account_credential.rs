@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 
 #[test]
 fn local_daemon_protocol_provider_account_credential_shape_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 308);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 309);
 
     let request = LocalDaemonRequest::SetProviderAccountCredential(
         crate::local::SetProviderAccountCredentialRequest {

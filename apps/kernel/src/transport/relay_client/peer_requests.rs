@@ -607,6 +607,7 @@ pub(super) async fn handle_daemon_peer_request(
             required_mcps,
             required_skills,
             remote_extension_manifest,
+            provider_launch_credential,
         } => {
             let launched = router
                 .relay_launch_leased_native_provider_run(
@@ -621,6 +622,7 @@ pub(super) async fn handle_daemon_peer_request(
                     required_mcps,
                     required_skills,
                     remote_extension_manifest,
+                    provider_launch_credential,
                 )
                 .await;
             match launched {
@@ -697,6 +699,7 @@ pub(super) async fn handle_daemon_peer_request(
             required_mcps,
             required_skills,
             remote_extension_manifest,
+            provider_launch_credential,
         } => {
             let submitted = router
                 .relay_submit_leased_prompt(
@@ -709,6 +712,7 @@ pub(super) async fn handle_daemon_peer_request(
                     required_mcps,
                     required_skills,
                     remote_extension_manifest,
+                    provider_launch_credential,
                 )
                 .await;
             match submitted {
