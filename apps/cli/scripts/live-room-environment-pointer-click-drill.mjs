@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { createHash, createHmac } from "node:crypto"
+import { createHash } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import http from "node:http"
@@ -50,6 +50,7 @@ import {
   roomActionNoticePattern,
 } from "./lib/room-tui-notices.mjs"
 import { hasRoomReadyProjection } from "./lib/room-drill-ready-notices.mjs"
+import { roomDrillRelayToken } from "./lib/room-drill-relay-token.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
@@ -1990,30 +1991,15 @@ function redactDrillSecrets(value) {
 }
 
 function scopedRelayToken({ subject, subjectKind, actions, userId = null }) {
-  const issuedAtMs = Date.now()
-  const claims = {
+  return roomDrillRelayToken({
     issuer: relayScopedIssuer,
+    secret: relayScopedSecret,
+    machineId: `${runId}-machine`,
     subject,
-    subject_kind: subjectKind,
-    realm_id: "local-dev",
-    allowed_actions: actions,
-    allowed_targets: null,
-    issued_at_ms: issuedAtMs,
-    expires_at_ms: issuedAtMs + 15 * 60_000,
-    token_id: `${subject}-${issuedAtMs}`,
-    account_id: "local-dev-account",
-    organization_id: null,
-    user_id: userId,
-    device_id: null,
-    machine_id: subjectKind === "kernel" ? `${runId}-machine` : null,
-    client_id: subjectKind === "client" ? subject : null,
-    session_id: null,
-    public_key_thumbprint: null,
-    entitlements_version: "room-pointer-drill",
-  }
-  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url")
-  const signature = createHmac("sha256", relayScopedSecret).update(payload).digest("base64url")
-  return `chariox-scoped-v1.${payload}.${signature}`
+    subjectKind,
+    actions,
+    userId,
+  })
 }
 
 async function runCompanionIfConfigured({ environment, localNoticeIds, remoteNoticeIds, activityController }) {
