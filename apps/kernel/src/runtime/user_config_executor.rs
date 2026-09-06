@@ -86,12 +86,11 @@ pub(crate) async fn execute_set_provider_account_credential_request(
 ) -> Result<LocalDaemonResponse, DaemonError> {
     let owner_user_id =
         runtime_state.provider_account_authority_owner_user_id(&command_caller_user_id(command));
-    let provider = crate::provider::canonical_provider_family(&request.provider)
-        .ok_or_else(|| DaemonError::InvalidConfig {
-            field: "provider account credential",
-            message: "unsupported provider",
-        })?
-        .to_string();
+    let provider = crate::provider::validate_provider_account_credential_input(
+        &request.provider,
+        &request.value,
+    )?
+    .to_string();
     let profile = runtime_state.provider_account_profile_registry().get(
         &owner_user_id,
         &provider,

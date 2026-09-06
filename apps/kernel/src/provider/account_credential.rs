@@ -107,25 +107,8 @@ pub(crate) fn store_provider_account_credential(
     secret: &str,
     overwrite: bool,
 ) -> Result<StoredProviderAccountCredential, DaemonError> {
-    let provider = crate::provider::canonical_provider_family(provider).ok_or_else(|| {
-        DaemonError::InvalidConfig {
-            field: "provider account credential",
-            message: "unsupported provider",
-        }
-    })?;
-    if provider != "claude" {
-        return Err(DaemonError::InvalidConfig {
-            field: "provider account credential",
-            message: "vault-backed account credentials are currently supported only for Claude",
-        });
-    }
+    let provider = validate_provider_account_credential_input(provider, secret)?;
     let secret = secret.trim();
-    if secret.is_empty() {
-        return Err(DaemonError::InvalidConfig {
-            field: "provider account credential",
-            message: "Claude setup token must not be empty",
-        });
-    }
     let credential_id = provider_account_credential_id(owner_user_id, provider, profile_id);
     let registry = crate::credential::CharioxCredentialRegistry::user()?;
     let existing = registry.get(&credential_id)?;
@@ -165,6 +148,30 @@ pub(crate) fn store_provider_account_credential(
         credential_id,
         replaced,
     })
+}
+
+pub(crate) fn validate_provider_account_credential_input(
+    provider: &str,
+    secret: &str,
+) -> Result<&'static str, DaemonError> {
+    let provider =
+        crate::provider::canonical_provider_family(provider).ok_or(DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "unsupported provider",
+        })?;
+    if provider != "claude" {
+        return Err(DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "vault-backed account credentials are currently supported only for Claude",
+        });
+    }
+    if secret.trim().is_empty() {
+        return Err(DaemonError::InvalidConfig {
+            field: "provider account credential",
+            message: "Claude setup token must not be empty",
+        });
+    }
+    Ok(provider)
 }
 
 fn canonical_label(provider: &str) -> &'static str {
@@ -208,6 +215,21 @@ mod tests {
             cfg!(target_os = "linux")
         );
         assert!(message.contains("Chariox-vault setup token"));
+    }
+
+    #[test]
+    fn credential_input_validation_rejects_invalid_requests_before_storage() {
+        let unsupported = validate_provider_account_credential_input("codex", "token")
+            .expect_err("non-Claude credentials should be rejected");
+        assert!(unsupported.to_string().contains("only for Claude"));
+        let empty = validate_provider_account_credential_input("claude", "  ")
+            .expect_err("empty Claude credentials should be rejected");
+        assert!(empty.to_string().contains("must not be empty"));
+        assert_eq!(
+            validate_provider_account_credential_input("Claude", " token ")
+                .expect("valid Claude credential should pass"),
+            "claude"
+        );
     }
 
     #[test]
