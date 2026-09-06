@@ -60,6 +60,20 @@ fn claude_headless_dispatch_failure_invalidates_resume(error: &DaemonError) -> b
     )
 }
 
+fn current_starting_workflow_provider_run(
+    provider_store: &crate::provider::ProviderProcessServiceStore,
+    provider_run_id: &str,
+) -> Option<crate::provider::RuntimeProviderRun> {
+    let run = provider_store.get_run(provider_run_id).ok()?;
+    if run.state() != crate::provider::ProviderRunState::Starting {
+        return None;
+    }
+    let agent_id = run.agent_instance_id()?;
+    provider_store
+        .get_run_for_agent(run.session_id(), agent_id)
+        .filter(|current| current.id() == provider_run_id)
+}
+
 impl KernelRuntimeOwnedState {
     fn prompt_dispatch_matches_active_prompt(
         &self,
@@ -518,6 +532,170 @@ mod tests {
             .is_empty());
 
         std::env::remove_var("CHARIOX_TEST_CLAUDE_SETUP_TOKEN");
+        std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn retired_workflow_run_does_not_spawn_after_vault_unlock() {
+        let _env = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-retired-workflow-vault-unlock-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        std::env::set_var("CHARIOX_HOME", &root);
+        let vault_path = root.join("credentials.vault");
+        let mut config =
+            DaemonConfig::for_tests().with_session_history_root(root.join("session-history"));
+        config.user_config.credential_vault.backend =
+            crate::config::CredentialVaultBackend::CharioxEncrypted;
+        config.user_config.credential_vault.path = vault_path.display().to_string();
+        config.user_config.state.path = Some(root.join("state.db").display().to_string());
+        config.user_config.history.operational.path =
+            Some(root.join("operational.db").display().to_string());
+        config.user_config.artifacts.operational.root =
+            Some(root.join("artifacts").display().to_string());
+        config.user_config.artifacts.operational.index_path =
+            Some(root.join("artifacts.db").display().to_string());
+
+        let mut app = DaemonApp::bootstrap(config.clone()).expect("daemon should boot");
+        let (session, _default_agent) = KernelSessionService::new(&mut app)
+            .create_session(CreateSessionRequest::new(
+                root.to_string_lossy(),
+                root.to_string_lossy(),
+            ))
+            .expect("session should create");
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "claude",
+                "Retired workflow Claude",
+            )
+            .expect("managed Claude profile should create");
+        let workflow_agent = KernelSessionService::new(&mut app)
+            .spawn_agent(
+                CreateAgentRequest::new(session.id(), "claude")
+                    .with_model("claude-sonnet")
+                    .with_account_profile(profile.profile_id.clone()),
+            )
+            .expect("workflow Claude agent should create");
+        crate::secret::unlock_chariox_encrypted_vault(
+            &vault_path,
+            "correct horse battery staple",
+            crate::secret::VaultUnlockLease::KernelShutdown,
+        )
+        .expect("vault should initialize");
+        crate::provider::store_provider_account_credential(
+            &config,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "claude",
+            &profile.profile_id,
+            "setup-token-secret",
+            false,
+        )
+        .expect("provider credential should store");
+        crate::secret::lock_chariox_encrypted_vault(&vault_path).expect("vault should lock");
+        crate::secret::clear_vault_secret_process_cache().expect("secret cache should clear");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let (provider_run_id, retired_provider_run_id) = runtime
+            .owned
+            .workflow_ensure_provider_run(
+                session.id(),
+                workflow_agent.id(),
+                false,
+                false,
+                false,
+                false,
+                None,
+            )
+            .expect("workflow provider should be admitted while vault is locked");
+        assert!(retired_provider_run_id.is_none());
+        let credential_probe = crate::provider::ProviderCredentialDeliveryProbe::install(
+            &provider_run_id,
+            &[("CLAUDE_CODE_OAUTH_TOKEN", "setup-token-secret")],
+        );
+        let mut dispatches = WorkflowPromptDispatches::default();
+        dispatches
+            .starting_provider_runs
+            .push(provider_run_id.clone());
+        runtime.spawn_workflow_prompt_dispatches(dispatches);
+
+        let interaction = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(interaction) = runtime
+                    .owned
+                    .session_store
+                    .get_session(session.id())
+                    .expect("session should remain available")
+                    .active_interaction_for_agent(workflow_agent.id())
+                {
+                    break interaction.clone();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("workflow vault unlock interaction should appear");
+        let ended = runtime
+            .owned
+            .provider_store
+            .terminate_run_provider_only(session.id(), &provider_run_id)
+            .expect("pending workflow run should retire");
+        runtime
+            .owned
+            .provider_run_projection
+            .update(ended.into_run());
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                interaction.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("vault unlock interaction should resolve");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !runtime
+                    .detached_workflow_provider_launches
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains(&provider_run_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("retired workflow launch should settle after vault unlock");
+
+        assert_eq!(
+            runtime
+                .owned
+                .provider_store
+                .get_run(&provider_run_id)
+                .expect("retired run should remain represented")
+                .state(),
+            crate::provider::ProviderRunState::Ended
+        );
+        assert!(!credential_probe.observed_exactly("pty_spawn"));
+        assert!(!credential_probe.observed_exactly("runtime_binding"));
+        assert!(!runtime
+            .owned
+            .provider_process_tracking
+            .snapshot()
+            .run_processes
+            .contains_key(&provider_run_id));
+
+        let _ = crate::secret::lock_chariox_encrypted_vault(&vault_path);
+        let _ = crate::secret::clear_vault_secret_process_cache();
         std::env::remove_var("CHARIOX_HOME");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3239,18 +3417,34 @@ impl KernelRuntimeState {
             let mut provider_credential_env = state
                 .owned
                 .take_pending_provider_launch_credentials(&provider_run_id);
-            let run = match state.owned.provider_store.get_run(&provider_run_id) {
-                Ok(run) if run.state() == crate::provider::ProviderRunState::Starting => run,
-                _ => return,
+            let run = match current_starting_workflow_provider_run(
+                &state.owned.provider_store,
+                &provider_run_id,
+            ) {
+                Some(run) => run,
+                None => return,
             };
-            if provider_credential_env.is_empty() {
-                match state
-                    .resolve_provider_account_credentials_for_run_with_vault(
-                        &run,
-                        "launch workflow provider run",
-                    )
-                    .await
-                {
+            let resolved_provider_credentials = if provider_credential_env.is_empty() {
+                Some(
+                    state
+                        .resolve_provider_account_credentials_for_run_with_vault(
+                            &run,
+                            "launch workflow provider run",
+                        )
+                        .await,
+                )
+            } else {
+                None
+            };
+            let run = match current_starting_workflow_provider_run(
+                &state.owned.provider_store,
+                &provider_run_id,
+            ) {
+                Some(run) => run,
+                None => return,
+            };
+            if let Some(resolved_provider_credentials) = resolved_provider_credentials {
+                match resolved_provider_credentials {
                     Ok(credentials) => provider_credential_env = credentials,
                     Err(error) => {
                         let started = crate::app::StartedProviderLaunch {
