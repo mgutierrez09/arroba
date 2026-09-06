@@ -80,3 +80,16 @@ mistaken for valid authentication, and verify that actual storage loss is caught
 This is not the full kernel/Web/TUI/managed-host lifecycle drill. Passing it does
 not prove Google authentication survives restoration. That reported issue stays
 open until reproduced or verified using a real, user-authorized Google session.
+
+For the full kernel save/restore and named-backup drill, use
+`node apps/cli/scripts/live-docker-slice-browser-state-drill.mjs`. Set
+`M20_SLICE_IMAGE` to an already built, exact-source validation image to avoid
+rebuilding the Docker image or replacing the shared default tag. In that mode,
+the drill uses the provisioner's `never` build policy, so a missing or stale
+image fails instead of starting a compiler. Without this setting it retains
+automatic image builds. The host kernel and TypeScript client still build from
+the current checkout; use the same external Cargo target and compiler settings
+as the preceding host build to reuse its cache. This drill uses Selkies and
+checks persisted storage, installed files, immutable backups, corrupt-backup
+rejection and external-service reauthentication. It does not test real Google
+credentials or replace the Web/TUI interaction matrix.
