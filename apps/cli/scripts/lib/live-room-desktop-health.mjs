@@ -50,6 +50,7 @@ console.log(JSON.stringify({
   taskbarRunning: named("tint2").length === 1,
   desktopSessionBus: !!openbox && !!bus(openbox),
   editorSessionBus: !!editor && !!openbox && !!bus(editor) && bus(editor) === bus(openbox),
+  editorDefaultSettings: !!editor && !read("/proc/" + editor.pid + "/environ").split("\0").some(v => v.startsWith("GSETTINGS_BACKEND=")),
 }));
 })().catch(() => { console.error("desktop health probe failed"); process.exitCode = 1; });
 `
@@ -62,6 +63,9 @@ export async function verifyRoomDesktopHealth(command, { editor = false } = {}) 
   assert.equal(health.sandboxedRenderers, true, "Chromium renderer isolation: " + JSON.stringify(health.sandbox))
   assert.equal(health.taskbarRunning, true, "desktop applications taskbar is missing")
   assert.equal(health.desktopSessionBus, true, "desktop applications lack a session bus")
-  if (editor) assert.equal(health.editorSessionBus, true, "graphical editor did not inherit the desktop session bus")
+  if (editor) {
+    assert.equal(health.editorDefaultSettings, true, "graphical editor uses a test-only settings backend")
+    assert.equal(health.editorSessionBus, true, "graphical editor did not inherit the desktop session bus")
+  }
   return health
 }

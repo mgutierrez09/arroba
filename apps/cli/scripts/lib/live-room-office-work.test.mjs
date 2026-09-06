@@ -64,7 +64,7 @@ for (const boundary of ["office-installing", "office-mailing"]) {
         docker: async (args) => {
           let stdout = ""
           if (args.includes("node")) stdout = JSON.stringify({ browserRunning: true, insecureOriginException: false,
-            sandboxDisabled: false, sandboxedRenderers: true, taskbarRunning: true, desktopSessionBus: true, editorSessionBus: true })
+            sandboxDisabled: false, sandboxedRenderers: true, taskbarRunning: true, desktopSessionBus: true, editorSessionBus: true, editorDefaultSettings: true })
           else if (args.includes("/etc/xdg/openbox/menu.xml")) stdout = '<item label="Terminal emulator"><action name="Execute"><execute>x-terminal-emulator</execute>'
           else if (args.some((arg) => arg.includes("CHARIOX_SLICE_DISPLAY"))) stdout = ":99"
           else if (args.some((arg) => arg.includes("WM_CLASS"))) stdout = "Mousepad"

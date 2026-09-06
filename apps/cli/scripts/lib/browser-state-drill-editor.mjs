@@ -1,14 +1,16 @@
 import assert from "node:assert/strict"
+import { fileURLToPath } from "node:url"
+import { verifyRoomDesktopHealth } from "./live-room-desktop-health.mjs"
 
 // A real application, not an executable/file marker standing in for one.
 export function createBrowserStateEditorDrill({ containerName, runId, dockerText, dockerResult, sliceScreenWithStdin, screenshot, waitFor }) {
-  const document = `/home/slice/Documents/${runId}.txt`
+  const document = "/home/slice/Documents/chariox-browser-state-editor.txt"
+  const fixtureConfig = "/home/slice/.config/chariox-browser-state-editor"
   const contents = `Chariox graphical editor\n${runId}\nGrüße 世界\n`
-  const schema = "org.xfce.mousepad.preferences.view"
   const report = { package: "mousepad", version: "0.5.10-2", document, phases: [] }
   let display
   const userArgs = (args) => [
-    "exec", "-u", "slice", "-e", `DISPLAY=${display}`, "-e", "GSETTINGS_BACKEND=keyfile", containerName, ...args,
+    "exec", "-u", "slice", "-e", `DISPLAY=${display}`, containerName, ...args,
   ]
   const user = (args, options) => dockerText(userArgs(args), options)
   const key = (value) => sliceScreenWithStdin(["computer-key-stdin", "1"], value)
@@ -27,14 +29,27 @@ export function createBrowserStateEditorDrill({ containerName, runId, dockerText
   }
 
   async function open() {
-    await dockerText(["exec", "-d", "-u", "slice", "-e", `DISPLAY=${display}`,
-      "-e", "GSETTINGS_BACKEND=keyfile", containerName, "mousepad", "--disable-server", document])
+    // Launch through the desktop, inheriting its real session bus and settings
+    // backend. A docker-exec process with a forced backend bypasses that path.
+    await user(["rm", "-f", "/tmp/chariox-browser-state-preference", "/tmp/chariox-browser-state-accessibility"])
+    await key("super+d")
+    await sliceScreenWithStdin(["pointer-click", "40", "40", "right", "1"], "")
+    await key("Down")
+    await key("Return")
     const window = await waitFor(async () => {
       const ids = await windows()
       assert.ok(ids.length <= 1, "editor launch created duplicate windows")
       return ids[0] ?? false
     }, 15_000, "Mousepad window did not appear")
     await user(["xdotool", "windowactivate", "--sync", window])
+    assert.equal((await user(["cat", "/tmp/chariox-browser-state-preference"])).trim(), "true",
+      "the editor preference was not read through the normal desktop settings backend")
+    assert.match(await user(["cat", "/tmp/chariox-browser-state-accessibility"]), /^\('unix:/,
+      "desktop application could not resolve its accessibility bus")
+    assert.equal((await user(["cat", "/tmp/chariox-browser-state-launch.log"])).trim(), "",
+      "desktop editor launch emitted a settings or accessibility warning")
+    report.desktop = await verifyRoomDesktopHealth(
+      args => dockerText(["exec", "-u", "slice", containerName, ...args]), { editor: true })
     return window
   }
 
@@ -74,13 +89,19 @@ export function createBrowserStateEditorDrill({ containerName, runId, dockerText
       display = (await dockerText(["exec", containerName, "sh", "-c",
         'printf %s "${CHARIOX_SLICE_DISPLAY:-:99}"'])).trim()
       assert.match(display, /^:\d+(?:\.\d+)?$/)
+      await user(["mkdir", "-p", fixtureConfig, "/home/slice/.config/openbox"])
+      for (const [file, target] of [["launch.sh", `${fixtureConfig}/launch.sh`],
+        ["menu.xml", "/home/slice/.config/openbox/menu.xml"]]) {
+        await dockerText(["cp", fileURLToPath(new URL(`../fixtures/browser-state-editor/${file}`, import.meta.url)),
+          `${containerName}:${target}`])
+      }
+      await user(["openbox", "--reconfigure"])
       report.initialIdentity = await identities()
       assert.equal(report.initialIdentity.version, report.version)
     },
     async seed() {
       await user(["mkdir", "-p", "/home/slice/Documents"])
       await user(["touch", document])
-      await user(["gsettings", "set", schema, "show-line-numbers", "true"])
       const window = await open()
       await text(contents)
       await focused(window)
@@ -92,9 +113,9 @@ export function createBrowserStateEditorDrill({ containerName, runId, dockerText
     },
     async verify() {
       assert.deepEqual(await identities(), report.initialIdentity, "editor binary/launcher changed during restore")
-      assert.equal((await user(["gsettings", "get", schema, "show-line-numbers"])).trim(), "true",
-        "the real editor preference did not survive restore")
       assert.equal(await readDocument(), contents, "the editor document did not survive restore")
+      // Restoration must read the persisted setting, never seed it again.
+      await user(["touch", `${fixtureConfig}/verify`])
       const window = await open()
       await key("ctrl+a")
       await key("ctrl+c")
