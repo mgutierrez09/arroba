@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import http from "node:http"
+import { parseFixtureMail } from "./browser-computer-fixture-mail.mjs"
 
 const DEFAULT_ACCOUNT = "agent@chariox.test"
 const MAX_REQUEST_BODY_BYTES = 1_048_576
@@ -174,13 +175,19 @@ async function routeRequest({
       send(response, 403, "not authenticated", { "content-type": "text/plain; charset=utf-8" })
       return
     }
-    const form = new URLSearchParams(await readBody(request))
+    let form
+    try {
+      form = await parseFixtureMail(await readBodyBytes(request), request.headers["content-type"] ?? "")
+    } catch (error) {
+      send(response, error.code === "FIXTURE_BODY_TOO_LARGE" ? 413 : 400, "invalid fixture mail", {
+        "content-type": "text/plain; charset=utf-8",
+      })
+      return
+    }
     const message = {
       id: `message-${messages.length + 1}`,
       from: account,
-      to: form.get("to") ?? "",
-      subject: form.get("subject") ?? "",
-      body: form.get("body") ?? "",
+      ...form,
       sentAt: new Date().toISOString(),
     }
     messages.push(message)
@@ -392,19 +399,23 @@ function inboxPage(account, messages) {
 function composePage() {
   return html("Fixture compose", `
     <h1>Fixture compose</h1>
-    <form method="post" action="/mail/send">
+    <form method="post" action="/mail/send" enctype="multipart/form-data">
       <label>To <input id="to" name="to"></label>
       <label>Subject <input id="subject" name="subject"></label>
       <label>Body <textarea id="body" name="body"></textarea></label>
+      <label>Attachment <input id="attachment" type="file" name="attachment" multiple></label>
       <button id="send" type="submit">Send</button>
     </form>
   `)
 }
 
 function sentPage(message) {
+  const attachments = (message.attachments ?? []).map(file =>
+    `<li>${escapeHtml(file.name)} (${file.sizeBytes} bytes)</li>`).join("")
   return html("Fixture message sent", `
     <h1 id="sent-marker">CHARIOX_FIXTURE_MESSAGE_SENT</h1>
     <p id="sent-subject">${escapeHtml(message.subject)}</p>
+    <ul id="sent-attachments">${attachments}</ul>
     <a href="/mail/inbox">Inbox</a>
   `)
 }
@@ -476,14 +487,20 @@ function send(response, status, body, headers = {}) {
 }
 
 async function readBody(request) {
+  return (await readBodyBytes(request)).toString("utf8")
+}
+
+async function readBodyBytes(request) {
   const chunks = []
   let sizeBytes = 0
   for await (const chunk of request) {
     sizeBytes += chunk.length
-    if (sizeBytes > MAX_REQUEST_BODY_BYTES) throw new Error("fixture request body exceeds 1 MiB")
+    if (sizeBytes > MAX_REQUEST_BODY_BYTES) {
+      throw Object.assign(new Error("fixture request body exceeds 1 MiB"), { code: "FIXTURE_BODY_TOO_LARGE" })
+    }
     chunks.push(Buffer.from(chunk))
   }
-  return Buffer.concat(chunks).toString("utf8")
+  return Buffer.concat(chunks)
 }
 
 function parseCookies(header) {
