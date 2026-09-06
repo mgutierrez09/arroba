@@ -8,6 +8,9 @@ use crate::provider::LaunchProviderRequest;
 use crate::session::{PromptQueueItem, PromptSubmissionOutcome};
 use crate::transport::relay_peer::{RelayPeerRequest, RelayPeerResponse};
 
+#[cfg(test)]
+mod credential_tests;
+
 pub(super) fn submit_claimed_workflow_prompt(
     app: &mut DaemonApp,
     session_id: &str,
