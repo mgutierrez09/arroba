@@ -285,10 +285,65 @@ impl BrowserControllerProcessStore {
         timeout_ms: u64,
     ) -> Result<crate::transport::room_browser_controller::RoomBrowserControllerResult, String>
     {
-        let Some(ownership) = &self.ownership else {
-            return Ok(Response::Action { result: None });
-        };
         let fingerprint = action_fingerprint(target_id, document_id, node_ref, action, timeout_ms)?;
+        self.perform_cancellable_operation(
+            session_id,
+            execution_id,
+            fingerprint,
+            Response::Action { result: None },
+            |ownership| {
+                ownership
+                    .perform_browser_action(
+                        session_id,
+                        target_id,
+                        document_id,
+                        node_ref,
+                        action,
+                        timeout_ms,
+                    )
+                    .map(|result| Response::Action {
+                        result: Some(result),
+                    })
+            },
+        )
+    }
+
+    pub(crate) fn perform_cancellable_browser_upload(
+        &self,
+        session_id: &str,
+        execution_id: &str,
+        target_id: &str,
+        document_id: &str,
+        node_ref: &str,
+        files: &BrowserUploadFiles,
+    ) -> ExecutionOutcome {
+        let fingerprint = upload_fingerprint(target_id, document_id, node_ref, files)?;
+        self.perform_cancellable_operation(
+            session_id,
+            execution_id,
+            fingerprint,
+            Response::Upload { result: None },
+            |ownership| {
+                ownership
+                    .upload_browser_files(session_id, target_id, document_id, node_ref, files)
+                    .map(|result| Response::Upload {
+                        result: Some(result),
+                    })
+            },
+        )
+    }
+
+    fn perform_cancellable_operation(
+        &self,
+        session_id: &str,
+        execution_id: &str,
+        fingerprint: [u8; 32],
+        unavailable: Response,
+        operation: impl FnOnce(&mut StdioOwnership) -> ExecutionOutcome,
+    ) -> ExecutionOutcome {
+        let Some(ownership) = &self.ownership else {
+            return Ok(unavailable);
+        };
         let active = match self
             .executions
             .register(session_id, execution_id, fingerprint)?
@@ -301,22 +356,13 @@ impl BrowserControllerProcessStore {
             .lock()
             .map_err(|_| "browser controller supervisor lock poisoned")?;
         ownership.supervisor.backend.action_cancellation = Some(Arc::clone(&active.signal));
-        let result = ownership.perform_browser_action(
-            session_id,
-            target_id,
-            document_id,
-            node_ref,
-            action,
-            timeout_ms,
-        );
+        let result = operation(&mut ownership);
         ownership.supervisor.backend.action_cancellation = None;
         let outcome = if active.signal.stopped.load(Ordering::Acquire) {
             let controller_fenced = active.signal.fenced();
             Ok(Response::ActionCancelled { controller_fenced })
         } else {
-            result.map(|result| Response::Action {
-                result: Some(result),
-            })
+            result
         };
         active.finish(outcome)
     }
@@ -332,6 +378,28 @@ impl BrowserControllerProcessStore {
         timeout_ms: u64,
     ) -> Result<Response, String> {
         let fingerprint = action_fingerprint(target_id, document_id, node_ref, action, timeout_ms)?;
+        self.recover_cancellable_operation(session_id, execution_id, fingerprint)
+    }
+
+    pub(crate) fn recover_cancellable_browser_upload(
+        &self,
+        session_id: &str,
+        execution_id: &str,
+        target_id: &str,
+        document_id: &str,
+        node_ref: &str,
+        files: &BrowserUploadFiles,
+    ) -> ExecutionOutcome {
+        let fingerprint = upload_fingerprint(target_id, document_id, node_ref, files)?;
+        self.recover_cancellable_operation(session_id, execution_id, fingerprint)
+    }
+
+    fn recover_cancellable_operation(
+        &self,
+        session_id: &str,
+        execution_id: &str,
+        fingerprint: [u8; 32],
+    ) -> ExecutionOutcome {
         match self
             .executions
             .recover(session_id, execution_id, fingerprint)?
@@ -340,6 +408,17 @@ impl BrowserControllerProcessStore {
             RecoveryAdmission::Wait(record) => record.wait(),
         }
     }
+}
+
+fn upload_fingerprint(
+    target_id: &str,
+    document_id: &str,
+    node_ref: &str,
+    files: &BrowserUploadFiles,
+) -> Result<[u8; 32], String> {
+    let request = serde_json::to_vec(&("upload", target_id, document_id, node_ref, files))
+        .map_err(|error| format!("failed to fingerprint browser upload: {error}"))?;
+    Ok(Sha256::digest(request).into())
 }
 
 fn action_fingerprint(

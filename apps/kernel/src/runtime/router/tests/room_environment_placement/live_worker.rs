@@ -16,6 +16,8 @@ mod controller_mutations;
 mod controller_observations;
 mod controller_recovery;
 mod controller_response_loss;
+mod controller_upload_cancellation;
+mod controller_upload_recovery;
 mod controller_worker_mcp;
 mod display;
 mod lease_release;

@@ -30,6 +30,7 @@ impl KernelRuntimeState {
         let admitted_mutation_command = matches!(
             &command,
             Command::Action { .. }
+                | Command::Upload { .. }
                 | Command::Tab { .. }
                 | Command::History { .. }
                 | Command::Dialog { .. }
@@ -213,6 +214,19 @@ impl KernelRuntimeState {
 
 fn receipt_recovery_command(command: &Command) -> Option<Command> {
     match command {
+        Command::Upload {
+            execution_id,
+            target_id,
+            document_id,
+            node_ref,
+            files,
+        } => Some(Command::RecoverUpload {
+            execution_id: execution_id.clone(),
+            target_id: target_id.clone(),
+            document_id: document_id.clone(),
+            node_ref: node_ref.clone(),
+            files: files.clone(),
+        }),
         Command::Action {
             execution_id,
             target_id,
@@ -437,13 +451,33 @@ async fn execute_local(
             .cancel_browser_download(&session_id, &cancellation)
             .map(|result| Response::DownloadCancellation { result }),
         Command::Upload {
+            execution_id,
             target_id,
             document_id,
             node_ref,
             files,
-        } => processes
-            .upload_browser_files(&session_id, &target_id, &document_id, &node_ref, &files)
-            .map(|result| Response::Upload { result }),
+        } => processes.perform_cancellable_browser_upload(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &node_ref,
+            &files,
+        ),
+        Command::RecoverUpload {
+            execution_id,
+            target_id,
+            document_id,
+            node_ref,
+            files,
+        } => processes.recover_cancellable_browser_upload(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &node_ref,
+            &files,
+        ),
         Command::Permission {
             target_id,
             document_id,
@@ -522,6 +556,25 @@ pub(super) fn controller_route_error(message: &str) -> DaemonError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_recovery_preserves_identity_and_never_redispatches_upload() {
+        let command = Command::Upload {
+            execution_id: "00000000000000000000000000000001".into(),
+            target_id: "target-1".into(),
+            document_id: "doc-1".into(),
+            node_ref: "backend:1".into(),
+            files: crate::runtime::browser_controller_file_transfer::BrowserUploadFiles::new(vec![
+                "/workspace/report.txt".into(),
+            ])
+            .unwrap(),
+        };
+        let recovery = receipt_recovery_command(&command).unwrap();
+        let mut expected = serde_json::to_value(&command).unwrap();
+        expected["kind"] = "recover_upload".into();
+        assert_eq!(serde_json::to_value(&recovery).unwrap(), expected);
+        assert_eq!(receipt_recovery_command(&recovery), None);
+    }
 
     #[test]
     fn physical_computer_input_has_no_transport_replay_command() {

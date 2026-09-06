@@ -915,6 +915,25 @@ physical click count increases exactly once. A second fault removes the receipt
 before recovery and proves a clear failure, one physical click, and subsequent
 fresh-action availability.
 
+Protocol v310 and relay peer v44 extend the same execution registry to uploads.
+The authenticated agent upload path uses kernel mutation admission and records
+the agent, Tab, document revision, and terminal outcome. Human ownership blocks
+dispatch. Upload and RecoverUpload carry one home-generated execution ID; the
+worker fingerprints the target, document, node, and file list. A duplicate or
+lost-response recovery returns the original receipt without uploading again.
+Missing receipts and identity reuse with different arguments fail closed.
+Existing clients' minimum versions remain unchanged; workers must negotiate
+the new peer version rather than silently ignoring upload cancellation.
+
+Human takeover or Action cancellation reaches the controller through the same
+CancelAction/stdio browser.cancel path as locator input. Uploads check the
+AbortSignal after asynchronous preparation and immediately before sending files
+to Chromium, then release any resolved object before reporting cancellation.
+An acknowledgement alone does not prove physical completion or rollback. If
+files were already dispatched, the final physical result remains authoritative.
+A stalled controller is fenced by the existing bounded cancellation timeout
+before the home releases input ownership.
+
 Protocol v288 also removes the worker's advisory restart result. After
 a fence, the home is the only authority that starts and reconciles the
 controller.

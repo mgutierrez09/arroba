@@ -150,7 +150,15 @@ const chromium = {
       }
       case "Runtime.callFunctionOn": {
         if (!["worker-save", "worker-note", "worker-shadow", "worker-frame"].includes(params.objectId)) throw new Error("wrong worker object");
-        if (params.functionDeclaration.includes('this.localName === "input"')) return { result: { value: params.objectId === "worker-note" ? "file" : "invalid" } };
+        if (params.functionDeclaration.includes('this.localName === "input"')) {
+          if (existsSync(join(dirname(pidFile), "hold-upload"))) {
+            writeFileSync(join(dirname(pidFile), "upload-pending"), "file input inspection pending");
+            while (existsSync(join(dirname(pidFile), "hold-upload"))) {
+              await new Promise(resolve => setTimeout(resolve, 5));
+            }
+          }
+          return { result: { value: params.objectId === "worker-note" ? "file" : "invalid" } };
+        }
         // External page fault injection: keep the button disabled until the
         // test releases it. No Chariox state or controller behavior is mocked.
         if ((params.objectId === "worker-save" && existsSync(join(dirname(pidFile), "hold-click"))) ||
@@ -245,7 +253,7 @@ const chromium = {
         persist();
         emit({ method: "Browser.downloadProgress", params: { guid: params.guid, state: "canceled", receivedBytes: 4, totalBytes: 100 } });
         return {};
-      case "DOM.setFileInputFiles": state.upload = { backendNodeId: params.objectId === "worker-note" ? 104 : params.backendNodeId, fileCount: params.files.length }; persist(); return {};
+      case "DOM.setFileInputFiles": state.uploadCount = (state.uploadCount ?? 0) + 1; state.upload = { backendNodeId: params.objectId === "worker-note" ? 104 : params.backendNodeId, fileCount: params.files.length }; persist(); return {};
       case "Browser.setPermission":
         state.permission = params;
         persist();
@@ -289,10 +297,16 @@ const chromium = {
     }
   },
 };
-await new BrowserControllerStdioServer({
-  browser: new BrowserCdpClient({
+const browser = new BrowserCdpClient({
     connectionFactory: async () => chromium,
     downloadDirectory: join(dirname(pidFile), "downloads"),
     uploadRoots: [dirname(pidFile)],
-  }),
-}).run();
+});
+const uploadFiles = browser.uploadFiles.bind(browser);
+browser.uploadFiles = async (request, options = {}) => {
+  const observedAbort = () => writeFileSync(join(dirname(pidFile), "upload-cancel-observed"), "cancel observed");
+  options.signal?.addEventListener("abort", observedAbort, { once: true });
+  try { return await uploadFiles(request, options); }
+  finally { options.signal?.removeEventListener("abort", observedAbort); }
+};
+await new BrowserControllerStdioServer({ browser }).run();

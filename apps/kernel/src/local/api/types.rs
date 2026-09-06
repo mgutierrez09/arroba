@@ -66,5 +66,5 @@ pub use waiting_room::*;
 pub use workflow::*;
 pub use workspace::*;
 
-/// Version 309 adds transient vaulted provider launch credentials for remote workers.
-pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 309;
+/// Version 310 adds cancellable uploads and upload execution receipt recovery.
+pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 310;
