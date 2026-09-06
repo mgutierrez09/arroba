@@ -729,19 +729,17 @@ ocr() {
   if [[ ! -f "$image" ]]; then
     screenshot "$image" >/dev/null
   fi
-  tesseract "$image" stdout -l eng 2>/dev/null
+  python3 "$ROOT/slice-text-finder.py" --image "$image"
 }
 
 find_text() {
   require_screen_available
   local query="$1"
   local image="${2:-/tmp/chariox-slice-screenshot.png}"
-  local tsv="/tmp/chariox-slice-ocr.tsv"
   if [[ ! -f "$image" ]]; then
     screenshot "$image" >/dev/null
   fi
-  tesseract "$image" stdout -l eng tsv >"$tsv" 2>/dev/null
-  python3 "$ROOT/slice-text-finder.py" "$query" "$tsv"
+  python3 "$ROOT/slice-text-finder.py" --image "$image" "$query"
 }
 
 open_url() {
