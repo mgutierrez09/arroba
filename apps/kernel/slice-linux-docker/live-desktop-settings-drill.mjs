@@ -2,6 +2,8 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { mkdtemp, rm } from "node:fs/promises"
+import { homedir } from "node:os"
 import { promisify } from "node:util"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
@@ -13,6 +15,7 @@ const repo = path.resolve(source, "../../..")
 const image = process.env.CHARIOX_DESKTOP_SETTINGS_IMAGE
 assert.ok(image, "set CHARIOX_DESKTOP_SETTINGS_IMAGE to an existing slice image")
 const id = `chariox-desktop-settings-${randomUUID().slice(0, 8)}`
+let scratch
 const interruption = createDrillInterruption()
 const sleep = (ms) => interruption.sleep(ms)
 const docker = async (...args) => {
@@ -48,7 +51,7 @@ async function stopAndCheck() {
     })
   })
 }
-await interruption.run(async () => {
+async function create() {
   await docker("run", "-d", "--init", "--name", id,
     "--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "1024",
     "--security-opt", `seccomp=${path.join(source, "chromium-seccomp.json")}`,
@@ -66,6 +69,13 @@ await interruption.run(async () => {
     "cp /src/apps/kernel/slice-linux-docker/fixtures/desktop-settings/org.chariox.desktop-drill.gschema.xml /tmp/chariox-desktop-schemas/",
     "glib-compile-schemas /tmp/chariox-desktop-schemas",
   ].join("\n"))
+  assert.equal(await user("env", "GSETTINGS_SCHEMA_DIR=/tmp/chariox-desktop-schemas",
+    "gsettings", "get", "org.chariox.desktop-drill", "enabled"), "false",
+  "fresh container already contains the saved setting")
+}
+await interruption.run(async () => {
+  scratch = await mkdtemp(path.join(homedir(), ".chariox/dev/browser-computer-use/desktop-settings-"))
+  await create()
   await screen("start")
   // Exercise a real application launch from Openbox. No injected bus address
   // or GSETTINGS_BACKEND override may make this probe pass.
@@ -76,11 +86,33 @@ await interruption.run(async () => {
   await screen("start")
   await launchProbe()
   await stopAndCheck()
+  const originalContainer = await docker("inspect", "--format", "{{.Id}}", id)
+  await docker("exec", "-u", "root", id, "tar", "--zstd", "-C", "/home/slice", "-cf", "/tmp/desktop-home.tar.zst", ".")
+  const archive = path.join(scratch, "home.tar.zst")
+  await docker("cp", `${id}:/tmp/desktop-home.tar.zst`, archive)
+  await docker("rm", "-f", id)
+  assert.equal(await docker("ps", "-aq", "--filter", `name=^${id}$`), "")
+  await create()
+  assert.notEqual(await docker("inspect", "--format", "{{.Id}}", id), originalContainer)
+  await docker("cp", archive, `${id}:/tmp/desktop-home.tar.zst`)
+  await docker("exec", "-u", "root", id, "tar", "--zstd", "-C", "/home/slice", "-xf", "/tmp/desktop-home.tar.zst")
+  await user("touch", "/tmp/chariox-desktop-read-only")
+  await screen("start")
+  await launchProbe()
+  await stopAndCheck()
+  console.log("SLICE_DESKTOP_SETTINGS_ARCHIVE_RESTORE_PASS")
   console.log("SLICE_DESKTOP_SETTINGS_PASS")
 }, async () => {
-  try { await docker("rm", "-f", id) } catch (error) {
-    if (!/No such container/.test(error.stderr ?? "")) throw error
+  const failures = []
+  try {
+    try { await docker("rm", "-f", id) } catch (error) {
+      if (!/No such container/.test(error.stderr ?? "")) throw error
+    }
+    assert.equal(await docker("ps", "-aq", "--filter", `name=^${id}$`), "", "owned desktop test container leaked")
+  } catch (error) { failures.push(error) }
+  if (scratch) {
+    try { await rm(scratch, { recursive: true, force: true }) } catch (error) { failures.push(error) }
   }
-  assert.equal(await docker("ps", "-aq", "--filter", `name=^${id}$`), "", "owned desktop test container leaked")
+  if (failures.length) throw new AggregateError(failures, "desktop settings cleanup failed")
   console.log(JSON.stringify({ cleanup: "passed", container: id }))
 }, (error) => { console.error(error); process.exitCode = 1 })
