@@ -446,6 +446,15 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str, status: &Value) {
         "upload paths must not return through runtime MCP"
     );
 
+    super::controller_upload_cancellation::check(
+        fixture,
+        token,
+        &upload_field,
+        &upload_path,
+        &upload_target,
+    )
+    .await;
+
     let permission = runtime
         .dispatch_authenticated_runtime_tool_call(
             token,

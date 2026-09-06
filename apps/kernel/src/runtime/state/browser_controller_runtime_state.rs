@@ -762,6 +762,7 @@ impl KernelRuntimeState {
     pub(crate) async fn upload_browser_environment_files(
         &self,
         session_id: &str,
+        execution_id: &str,
         element_ref: &str,
         paths: Vec<std::path::PathBuf>,
     ) -> Result<
@@ -794,21 +795,28 @@ impl KernelRuntimeState {
         let target_id = binding.runtime_target_id.clone();
         let document_id = binding.document_id.clone();
         let controller_node_ref = element.controller_node_ref.clone();
-        let RoomBrowserControllerResult::Upload { result } = self
+        let response = self
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::Upload {
+                    execution_id: execution_id.to_string(),
                     target_id,
                     document_id,
                     node_ref: controller_node_ref,
                     files,
                 },
             )
-            .await?
-        else {
-            return Err(controller_route_error(
-                "unexpected controller upload response",
-            ));
+            .await?;
+        let result = match response {
+            RoomBrowserControllerResult::Upload { result } => result,
+            RoomBrowserControllerResult::ActionCancelled { controller_fenced } => {
+                return Err(DaemonError::BrowserControllerActionCancelled { controller_fenced });
+            }
+            _ => {
+                return Err(controller_route_error(
+                    "unexpected controller upload response",
+                ))
+            }
         };
         let result = result.ok_or_else(|| DaemonError::LocalTransport {
             operation: "browser_controller.upload",

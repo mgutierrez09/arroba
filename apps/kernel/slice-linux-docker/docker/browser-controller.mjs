@@ -83,7 +83,7 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.upload") {
       return successResponse(
         request.id,
-        await browser.uploadFiles(request.params),
+        await browser.uploadFiles(request.params, { signal }),
       );
     }
     if (request.method === "browser.permission") {
@@ -184,7 +184,7 @@ export class BrowserControllerStdioServer {
         this.write(errorResponse(request.id, "controller_busy", "controller queue is full or request id is already pending"));
         continue;
       }
-      const action = request.method === "browser.action" ? new AbortController() : null;
+      const action = ["browser.action", "browser.upload"].includes(request.method) ? new AbortController() : null;
       if (action) actions.set(request.id, action);
       queued += 1;
       pending = pending.then(async () => {

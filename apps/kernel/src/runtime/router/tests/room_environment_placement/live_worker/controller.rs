@@ -323,6 +323,7 @@ async fn check_slice_controller(fixture: &mut LiveWorker) {
                 ).unwrap(),
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::Upload {
+                execution_id: "00000000000000000000000000000002".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 node_ref: "backend:104".into(),

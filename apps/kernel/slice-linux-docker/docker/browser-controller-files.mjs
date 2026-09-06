@@ -1,5 +1,6 @@
 import { mkdir, realpath, stat, statfs } from "node:fs/promises";
 import path from "node:path";
+import { assertNotCancelled } from "./browser-controller-actions.mjs";
 
 const MAX_UPLOAD_FILES = 20;
 const MAX_UPLOAD_PATH_BYTES = 4_096;
@@ -158,7 +159,9 @@ export async function uploadBrowserFiles({
   uploadRoots,
   fileSystem = defaultFileSystem,
   assertContext = async () => {},
+  signal,
 }) {
+  assertNotCancelled(signal);
   await assertCurrentDocument(connection, sessionId, targetId, documentId);
   const backendNodeId = parseBackendNodeReference(nodeRef);
   if (!Array.isArray(filePaths) || filePaths.length === 0 || filePaths.length > MAX_UPLOAD_FILES) {
@@ -208,6 +211,7 @@ export async function uploadBrowserFiles({
 
   await assertContext();
   await assertCurrentDocument(connection, sessionId, targetId, documentId);
+  assertNotCancelled(signal);
   let objectId;
   try {
     const resolved = await connection.send("DOM.resolveNode", { backendNodeId }, sessionId);
@@ -230,6 +234,7 @@ export async function uploadBrowserFiles({
     // Recheck both the owning document and its parents before exposing files.
     await assertContext();
     await assertCurrentDocument(connection, sessionId, targetId, documentId);
+    assertNotCancelled(signal);
     await connection.send(
       "DOM.setFileInputFiles",
       { objectId, files },

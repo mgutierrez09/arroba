@@ -91,7 +91,7 @@ export async function performBrowserAction({
   }
 }
 
-function assertNotCancelled(signal) {
+export function assertNotCancelled(signal) {
   if (signal?.aborted) {
     throw new BrowserActionError("browser_action_cancelled", "browser action was cancelled");
   }

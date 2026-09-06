@@ -15,14 +15,15 @@ impl KernelRuntimeState {
         let element = self
             .resolve_room_environment_element_reference(session_id, element_ref)
             .map_err(|error| controller_route_error(&format!("{}: {error:?}", error.code())))?;
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.execute_browser_mutation_as_agent(
             session_id,
             agent_id,
             &element.tab_id,
             element.document_revision,
             "upload",
-            None,
-            self.upload_browser_environment_files(session_id, element_ref, paths),
+            Some(&execution_id),
+            self.upload_browser_environment_files(session_id, &execution_id, element_ref, paths),
         )
         .await
     }

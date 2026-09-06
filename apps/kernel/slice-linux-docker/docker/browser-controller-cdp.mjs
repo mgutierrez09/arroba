@@ -4,6 +4,7 @@ import {
 import { BrowserFrameSessions, BrowserFrameTargets, captureBrowserFrames, registerBrowserFrameTargets, withBrowserActionFrame } from "./browser-controller-frames.mjs";
 import {
   BrowserActionError,
+  assertNotCancelled,
   performBrowserAction,
 } from "./browser-controller-actions.mjs";
 import {
@@ -556,7 +557,8 @@ export class BrowserCdpClient {
     }
   }
 
-  async uploadFiles(rawRequest) {
+  async uploadFiles(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const { connection, sessionId } = await this.resolvePageTarget(targetId);
@@ -572,6 +574,7 @@ export class BrowserCdpClient {
           filePaths: rawRequest?.file_paths,
           uploadRoots: this.uploadRoots,
           fileSystem: this.fileSystem,
+          signal,
         }, uploadBrowserFiles),
       };
     } catch (error) {

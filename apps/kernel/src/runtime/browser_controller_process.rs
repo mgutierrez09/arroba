@@ -31,6 +31,8 @@ use super::browser_controller_tab::{BrowserControllerTabResult, BrowserTabAction
 use crate::session::CanonicalViewport;
 
 mod cancellation;
+#[cfg(test)]
+mod upload_cancellation_tests;
 
 const DEFAULT_CONTROLLER_COMMAND_TIMEOUT_MS: u64 = 10_000;
 const CONTROLLER_SCRIPT_ENV: &str = "CHARIOX_BROWSER_CONTROLLER_SCRIPT";
@@ -318,7 +320,7 @@ impl BrowserControllerProcessStdioBackend {
         } else {
             self.timeout
         };
-        let cancellation = (method == "browser.action")
+        let cancellation = matches!(method, "browser.action" | "browser.upload")
             .then(|| self.action_cancellation.clone())
             .flatten();
         if cancellation
@@ -1409,25 +1411,6 @@ impl BrowserControllerProcessStore {
             .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
         ownership
             .cancel_browser_download(session_id, cancellation)
-            .map(Some)
-    }
-
-    pub(crate) fn upload_browser_files(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-        node_ref: &str,
-        files: &BrowserUploadFiles,
-    ) -> Result<Option<BrowserControllerUploadResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .upload_browser_files(session_id, target_id, document_id, node_ref, files)
             .map(Some)
     }
 

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn slice_creation_preserves_explicit_display_backend_on_the_wire() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 309);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 310);
     let request: LocalDaemonRequest = serde_json::from_value(serde_json::json!({
         "CreateSlice": {
             "name": "headed", "display_mode": "headed", "display_backend": "selkies"
@@ -37,7 +37,7 @@ fn legacy_slice_requests_keep_novnc_and_unknown_backends_fail_closed() {
 
 #[test]
 fn local_daemon_protocol_selkies_endpoint_shape_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 309);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 310);
     let response = LocalDaemonResponse::SliceDisplayEndpoint {
         endpoint: crate::slice::SliceDisplayEndpoint {
             slice_id: "slice-1".to_string(),
@@ -74,7 +74,7 @@ fn encrypted_display_fragment_contract_is_versioned() {
     use crate::transport::relay_crypto;
     use crate::transport::secure_display::{DisplayMessageKind, DisplayPeer, SecureDisplayChannel};
 
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 309);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 310);
     let kernel_key = relay_crypto::generate_private_key_base64();
     let viewer_key = relay_crypto::generate_private_key_base64();
     let viewer_public = relay_crypto::public_key_from_private_key_base64(&viewer_key).unwrap();
@@ -103,7 +103,7 @@ fn encrypted_display_fragment_contract_is_versioned() {
 
 #[test]
 fn room_selkies_viewer_admission_contract_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 309);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 310);
     let request: LocalDaemonRequest = serde_json::from_value(serde_json::json!({
         "GetSliceDisplayEndpoint": {
             "slice_ref": "slice-1",
@@ -166,7 +166,7 @@ fn room_selkies_worker_admission_contract_is_versioned() {
         RelayPeerRequest, RelayPeerResponse, RELAY_PEER_PROTOCOL_VERSION,
     };
 
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 43);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 44);
     let endpoint = crate::slice::SliceDisplayEndpoint {
         slice_id: "slice-1".to_string(),
         kind: crate::slice::SliceDisplayEndpointKind::Selkies,

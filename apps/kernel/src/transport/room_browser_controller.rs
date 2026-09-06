@@ -200,6 +200,14 @@ pub(crate) enum RoomBrowserControllerCommand {
         cancellation: crate::runtime::browser_controller_file_transfer::BrowserDownloadCancellation,
     },
     Upload {
+        execution_id: String,
+        target_id: String,
+        document_id: String,
+        node_ref: String,
+        files: crate::runtime::browser_controller_file_transfer::BrowserUploadFiles,
+    },
+    RecoverUpload {
+        execution_id: String,
         target_id: String,
         document_id: String,
         node_ref: String,
