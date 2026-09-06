@@ -275,7 +275,6 @@ start_desktop() {
 
   nohup chromium \
     --user-data-dir="$CHROME_PROFILE" \
-    --no-sandbox \
     --password-store=basic \
     --no-first-run \
     --no-default-browser-check \
@@ -728,7 +727,7 @@ open_url() {
     focus_chromium
     return 0
   fi
-  chromium --user-data-dir="$CHROME_PROFILE" --no-sandbox --password-store=basic --new-window "$1" >/dev/null 2>&1 &
+  chromium --user-data-dir="$CHROME_PROFILE" --password-store=basic --new-window "$1" >/dev/null 2>&1 &
   sleep 1
   focus_chromium
 }

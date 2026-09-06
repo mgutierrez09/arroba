@@ -653,6 +653,11 @@ ensure_container() {
         --security-opt apparmor="$SLICE_APPARMOR_PROFILE"
         --security-opt systempaths=unconfined
       )
+    else
+      # Chromium still installs its own renderer namespace and seccomp sandbox.
+      # Preserve Docker's default restrictions except the namespace syscalls
+      # needed by that sandbox. No extra container capabilities are required.
+      docker_create_args+=(--security-opt "seccomp=$SCRIPT_DIR/chromium-seccomp.json")
     fi
     if [[ "$SLICE_DEVELOPMENT_MOUNT_COUNT" -gt 0 ]]; then
       docker_create_args+=(-e "CHARIOX_MANAGED_WORKSPACE_ROOT_COUNT=$SLICE_DEVELOPMENT_MOUNT_COUNT")
@@ -1208,7 +1213,7 @@ print_status() {
     probe chromium chromium --version || true
     probe tesseract tesseract --version | head -n 1 || true
     echo '--- browser smoke'
-    if probe chromium-headless chromium --headless=new --no-sandbox --disable-gpu --dump-dom 'data:text/html,slice-browser-ok' >/tmp/chromium-smoke.out 2>/tmp/chromium-smoke.err; then
+    if probe chromium-headless chromium --headless=new --disable-gpu --dump-dom 'data:text/html,slice-browser-ok' >/tmp/chromium-smoke.out 2>/tmp/chromium-smoke.err; then
       grep -q 'slice-browser-ok' /tmp/chromium-smoke.out && echo chromium=headless-ok
     else
       cat /tmp/chromium-smoke.err 2>/dev/null || true
