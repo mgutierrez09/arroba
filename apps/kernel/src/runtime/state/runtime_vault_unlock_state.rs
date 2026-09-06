@@ -41,6 +41,104 @@ impl Drop for VaultUnlockGuard {
 }
 
 impl KernelRuntimeState {
+    pub(super) async fn prepare_provider_launch_request_with_vault(
+        &self,
+        request: crate::provider::LaunchProviderRequest,
+        operation: &'static str,
+    ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
+        let _vault_unlock = self
+            .ensure_provider_account_vault_unlocked_for_launch(&request, operation)
+            .await?;
+        let config = self.owned.config_projection.snapshot();
+        self.owned
+            .prepare_provider_launch_request(request, config.runtime_mcp_url())
+    }
+
+    async fn ensure_provider_account_vault_unlocked_for_launch(
+        &self,
+        request: &crate::provider::LaunchProviderRequest,
+        operation: &'static str,
+    ) -> Result<VaultUnlockGuard, DaemonError> {
+        let config = self.owned.config_projection.snapshot();
+        if config.user_config.credential_vault.backend
+            != crate::config::CredentialVaultBackend::CharioxEncrypted
+            || crate::provider::canonical_provider_family(&request.provider) != Some("claude")
+        {
+            return Ok(VaultUnlockGuard::not_required());
+        }
+        let session = self.owned.session_store.get_session(&request.session_id)?;
+        let agent = request
+            .agent_id
+            .as_deref()
+            .and_then(|agent_id| self.owned.agent_store.get_agent(agent_id).ok())
+            .or_else(|| {
+                session
+                    .focused_agent_id()
+                    .and_then(|agent_id| self.owned.agent_store.get_agent(agent_id).ok())
+            });
+        let runtime_owner_user_id = agent
+            .as_ref()
+            .map(|agent| agent.owner_user_id())
+            .unwrap_or_else(|| session.owner_user_id());
+        let account_owner_user_id =
+            crate::account_profile::provider_account_authority_owner_user_id(
+                &config,
+                runtime_owner_user_id,
+            );
+        let profile = self.owned.provider_account_profiles.get(
+            &account_owner_user_id,
+            &request.provider,
+            &request.account_profile,
+        )?;
+        if !crate::provider::provider_account_credential_uses_vault(
+            &account_owner_user_id,
+            &request.provider,
+            &profile.profile_id,
+        )? {
+            return Ok(VaultUnlockGuard::not_required());
+        }
+        let agent_id = agent
+            .as_ref()
+            .map(|agent| agent.id())
+            .or(request.agent_id.as_deref())
+            .unwrap_or("provider");
+        self.ensure_vault_unlocked_for_agent(session.id(), agent_id, operation)
+            .await
+    }
+
+    pub(super) async fn resolve_provider_account_credentials_for_run_with_vault(
+        &self,
+        run: &crate::provider::RuntimeProviderRun,
+        operation: &'static str,
+    ) -> Result<crate::provider::ProviderCredentialEnvironment, DaemonError> {
+        let mut request = crate::provider::LaunchProviderRequest::new(
+            run.session_id(),
+            run.adapter_key(),
+            run.provider(),
+            run.account_profile(),
+            run.model(),
+        )
+        .with_owner_user_id(run.owner_user_id().to_string());
+        if let Some(agent_id) = run.agent_instance_id() {
+            request = request.with_agent_id(agent_id.to_string());
+        }
+        let _vault_unlock = self
+            .ensure_provider_account_vault_unlocked_for_launch(&request, operation)
+            .await?;
+        let config = self.owned.config_projection.snapshot();
+        let account_owner_user_id =
+            crate::account_profile::provider_account_authority_owner_user_id(
+                &config,
+                run.owner_user_id(),
+            );
+        crate::provider::resolve_provider_account_credentials(
+            &config,
+            &account_owner_user_id,
+            run.provider(),
+            run.account_profile(),
+        )
+    }
+
     pub(crate) async fn ensure_vault_unlocked_for_command_context(
         &self,
         command: &crate::runtime::command::KernelCommand,

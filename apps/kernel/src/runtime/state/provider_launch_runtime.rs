@@ -14,8 +14,12 @@ impl KernelRuntimeState {
         let started = {
             let owned = &self.owned;
             let config = owned.config_projection.snapshot();
-            let launch_request =
-                owned.prepare_provider_launch_request(launch_request, config.runtime_mcp_url())?;
+            let launch_request = self
+                .prepare_provider_launch_request_with_vault(
+                    launch_request,
+                    "launch remote lease provider run",
+                )
+                .await?;
             crate::logging::info_with_fields(
                 "daemon.app",
                 "launching remote lease provider run",
@@ -245,8 +249,9 @@ impl KernelRuntimeState {
                 });
             }
             let config = owned.config_projection.snapshot();
-            let launch_request =
-                owned.prepare_provider_launch_request(launch_request, config.runtime_mcp_url())?;
+            let launch_request = self
+                .prepare_provider_launch_request_with_vault(launch_request, "launch provider run")
+                .await?;
             if let Some(run) = owned.reusable_native_tui_run_for_launch(&launch_request)? {
                 return Ok(ProviderLaunchStartOutcome::Reused(run));
             }

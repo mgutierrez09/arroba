@@ -1,17 +1,15 @@
 use super::*;
 
 impl KernelRuntimeState {
-    pub(super) fn activate_agent_mcp_grants_if_idle(
+    pub(super) async fn activate_agent_mcp_grants_if_idle(
         &self,
         session_id: &str,
         agent_id: &str,
         requested_mcp_name: &str,
-    ) -> Result<bool, DaemonError> {
+    ) -> Result<ProviderReloadOutcome, DaemonError> {
         let reason = format!("MCP `{requested_mcp_name}`");
-        Ok(matches!(
-            self.reload_agent_provider_if_idle(session_id, agent_id, &reason)?,
-            ProviderReloadOutcome::Reloaded
-        ))
+        self.reload_agent_provider_if_idle(session_id, agent_id, &reason)
+            .await
     }
 
     pub(super) fn remember_pending_mcp_continuation(
@@ -32,9 +30,25 @@ impl KernelRuntimeState {
                 previous_prompt: previous_prompt.to_string(),
             },
         );
+        self.schedule_pending_mcp_continuation_when_idle(
+            session_id.to_string(),
+            agent_id.to_string(),
+        );
+    }
+
+    fn requeue_pending_mcp_continuation(&self, continuation: PendingMcpContinuation) {
+        let session_id = continuation.session_id.clone();
+        let agent_id = continuation.agent_id.clone();
+        self.owned
+            .pending_mcp_continuations
+            .write()
+            .entry(agent_id.clone())
+            .or_insert(continuation);
+        self.schedule_pending_mcp_continuation_when_idle(session_id, agent_id);
+    }
+
+    fn schedule_pending_mcp_continuation_when_idle(&self, session_id: String, agent_id: String) {
         let state = self.clone();
-        let session_id = session_id.to_string();
-        let agent_id = agent_id.to_string();
         tokio::spawn(async move {
             for _ in 0..240 {
                 let is_idle = state
@@ -106,17 +120,28 @@ impl KernelRuntimeState {
                     Some(run.id().to_string())
                 }
             });
-        self.activate_agent_mcp_grants_if_idle(
-            &continuation.session_id,
-            &continuation.agent_id,
-            &continuation.mcp_name,
-        )?;
-        self.wait_for_agent_provider_relaunch(
-            &continuation.session_id,
-            &continuation.agent_id,
-            previous_provider_run_id.as_deref(),
-        )
-        .await?;
+        match self
+            .activate_agent_mcp_grants_if_idle(
+                &continuation.session_id,
+                &continuation.agent_id,
+                &continuation.mcp_name,
+            )
+            .await?
+        {
+            ProviderReloadOutcome::Deferred => {
+                self.requeue_pending_mcp_continuation(continuation);
+                return Ok(());
+            }
+            ProviderReloadOutcome::Reloaded => {
+                self.wait_for_agent_provider_relaunch(
+                    &continuation.session_id,
+                    &continuation.agent_id,
+                    previous_provider_run_id.as_deref(),
+                )
+                .await?;
+            }
+            ProviderReloadOutcome::Unaffected => {}
+        }
 
         let (hidden_system_context, _manifest) =
             crate::prompt_assembly::PromptAssemblyService::from_env()?

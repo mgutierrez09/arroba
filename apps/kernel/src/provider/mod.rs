@@ -35,6 +35,7 @@ mod workspace_write_fence;
 #[cfg(test)]
 pub(crate) use account_credential::provider_account_credential_id;
 pub(crate) use account_credential::{
+    provider_account_credential_uses_vault, resolve_provider_account_credentials,
     resolve_provider_account_credentials_for_launch, store_provider_account_credential,
     validate_provider_account_credential_input,
 };

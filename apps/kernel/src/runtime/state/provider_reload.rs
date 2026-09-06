@@ -139,7 +139,10 @@ impl KernelRuntimeState {
         agent_id: &str,
         reason: &str,
     ) -> Result<ProviderReloadOutcome, DaemonError> {
-        match self.reload_agent_provider_if_idle(session_id, agent_id, reason)? {
+        match self
+            .reload_agent_provider_if_idle(session_id, agent_id, reason)
+            .await?
+        {
             ProviderReloadOutcome::Deferred => {
                 self.remember_pending_provider_reload(session_id, agent_id, reason);
                 Ok(ProviderReloadOutcome::Deferred)
@@ -148,7 +151,7 @@ impl KernelRuntimeState {
         }
     }
 
-    pub(super) fn reload_agent_provider_if_idle(
+    pub(super) async fn reload_agent_provider_if_idle(
         &self,
         session_id: &str,
         agent_id: &str,
@@ -194,8 +197,38 @@ impl KernelRuntimeState {
                     owned.session_store.get_session(session_id).ok().as_ref(),
                 ),
             );
-            let launch_request =
-                owned.prepare_provider_launch_request(launch_request, config.runtime_mcp_url())?;
+            let launch_request = self
+                .prepare_provider_launch_request_with_vault(launch_request, "reload provider run")
+                .await?;
+            let has_active_prompt = owned
+                .prompt_state_owner
+                .active_prompt_for_agent(&owned.session_store.get_session(session_id)?, agent_id)
+                .is_some();
+            let current_run = owned.provider_store.get_run_for_agent(session_id, agent_id);
+            if current_run.is_none() {
+                return Ok(ProviderReloadOutcome::Unaffected);
+            }
+            if !provider_reload_snapshot_is_still_current(
+                run.id(),
+                current_run.as_ref(),
+                has_active_prompt,
+            ) {
+                if !has_active_prompt {
+                    return Ok(ProviderReloadOutcome::Deferred);
+                }
+                owned.record_notice(
+                    session_id,
+                    Some(run.id()),
+                    owned
+                        .attachment_store
+                        .list_session_attachment_ids(session_id),
+                    format!(
+                        "Provider reload for {reason} is pending until agent `{agent_id}` is idle."
+                    ),
+                );
+                return Ok(ProviderReloadOutcome::Deferred);
+            }
+            let run = current_run.expect("current provider run was checked above");
             if ProviderLaunchFingerprint::from_run(&run)
                 == ProviderLaunchFingerprint::from_request(&launch_request)
             {
@@ -236,6 +269,14 @@ impl KernelRuntimeState {
         );
         Ok(ProviderReloadOutcome::Reloaded)
     }
+}
+
+fn provider_reload_snapshot_is_still_current(
+    expected_run_id: &str,
+    current_run: Option<&crate::provider::RuntimeProviderRun>,
+    has_active_prompt: bool,
+) -> bool {
+    !has_active_prompt && current_run.is_some_and(|run| run.id() == expected_run_id)
 }
 
 fn policy_reload_launch_request(
@@ -285,7 +326,10 @@ mod tests {
         AgentEndpointMode, LaunchProviderRequest, ProviderLaunchResult, ProviderResumeState,
     };
 
-    use super::{active_agent_provider_run_ids_for_session, policy_reload_launch_request};
+    use super::{
+        active_agent_provider_run_ids_for_session, policy_reload_launch_request,
+        provider_reload_snapshot_is_still_current,
+    };
 
     #[test]
     fn provider_reload_uses_only_durable_resume_state() {
@@ -338,6 +382,33 @@ mod tests {
                 .into_iter()
                 .collect()
         );
+    }
+
+    #[test]
+    fn provider_reload_revalidates_idle_run_identity_after_async_preparation() {
+        let expected = provider_run("expected", "session-1", Some("agent-1"));
+        let replacement = provider_run("replacement", "session-1", Some("agent-1"));
+
+        assert!(provider_reload_snapshot_is_still_current(
+            expected.id(),
+            Some(&expected),
+            false,
+        ));
+        assert!(!provider_reload_snapshot_is_still_current(
+            expected.id(),
+            Some(&expected),
+            true,
+        ));
+        assert!(!provider_reload_snapshot_is_still_current(
+            expected.id(),
+            Some(&replacement),
+            false,
+        ));
+        assert!(!provider_reload_snapshot_is_still_current(
+            expected.id(),
+            None,
+            false,
+        ));
     }
 
     fn provider_run(

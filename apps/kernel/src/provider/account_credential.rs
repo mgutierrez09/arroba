@@ -99,6 +99,23 @@ fn unattended_claude_credential_error_message() -> &'static str {
     }
 }
 
+pub(crate) fn provider_account_credential_uses_vault(
+    owner_user_id: &str,
+    provider: &str,
+    profile_id: &str,
+) -> Result<bool, DaemonError> {
+    let credential_id = provider_account_credential_id(owner_user_id, provider, profile_id);
+    Ok(crate::credential::load_user_credentials()?
+        .iter()
+        .find(|credential| credential.id == credential_id)
+        .is_some_and(|credential| {
+            matches!(
+                credential.source,
+                crate::config::UserCredentialSourceConfig::Vault { .. }
+            )
+        }))
+}
+
 pub(crate) fn store_provider_account_credential(
     config: &DaemonConfig,
     owner_user_id: &str,
@@ -230,6 +247,43 @@ mod tests {
                 .expect("valid Claude credential should pass"),
             "claude"
         );
+    }
+
+    #[test]
+    fn vault_requirement_is_derived_from_the_registered_credential_source() {
+        let _guard = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-provider-account-vault-requirement-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::env::set_var("CHARIOX_HOME", &root);
+
+        let credential_id = provider_account_credential_id("local", "claude", "work");
+        assert!(
+            !provider_account_credential_uses_vault("local", "claude", "work")
+                .expect("missing credential should not require vault access")
+        );
+        crate::credential::CharioxCredentialRegistry::user()
+            .expect("credential registry should resolve")
+            .upsert(crate::config::UserCredentialConfig {
+                id: credential_id.clone(),
+                description: None,
+                source: crate::config::UserCredentialSourceConfig::Vault { key: credential_id },
+                allowed_hosts: Vec::new(),
+                allowed_uses: vec![crate::config::UserCredentialUse::Provider],
+                injection: crate::config::UserCredentialInjectionConfig::Provider,
+                metadata: None,
+            })
+            .expect("provider credential should register");
+        assert!(
+            provider_account_credential_uses_vault("local", "claude", "work")
+                .expect("vault-backed credential should require vault access")
+        );
+
+        std::env::remove_var("CHARIOX_HOME");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
