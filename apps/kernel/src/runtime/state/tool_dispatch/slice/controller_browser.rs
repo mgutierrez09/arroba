@@ -455,10 +455,17 @@ impl KernelRuntimeState {
         )
         .await?;
         let result = self
-            .upload_browser_environment_files(session_id, &args.field_id, args.files)
+            .upload_browser_environment_files_as_agent(
+                session_id,
+                agent_id,
+                &args.field_id,
+                args.files,
+            )
             .await?;
         Ok(controller_browser_upload_tool_result(
-            slice_id, agent_id, result,
+            slice_id,
+            agent_id,
+            result.value,
         ))
     }
 
