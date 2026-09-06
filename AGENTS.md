@@ -68,11 +68,13 @@ Do not merge protocol shape changes without the version bump and test update.
 
 Native provider permission prompts are surfaced to the user out-of-band through Chariox runtime interactions. Do not infer that no approval prompt appeared just because a shell/tool result lacks `approval requested` or `approved` metadata. The result visible to the agent normally contains only the provider tool execution outcome, such as stdout/stderr, exit code, and status after the user has already answered the prompt.
 
-## Claude credential transfer for Linux runners
+## Claude credentials for unattended execution
 
-Claude Code on macOS stores a live login in a profile-scoped Keychain service named `Claude Code-credentials-<hash>`, where `<hash>` is the first eight hexadecimal characters of SHA-256 over `CLAUDE_CONFIG_DIR`. Older default profiles may use `Claude Code-credentials`. Linux runners and containers expect the credential at `~/.claude/.credentials.json`.
+Chariox must never read, write, delete, or alter macOS Keychain items. Claude Code may use Keychain for its own foreground `/login` flow, but that provider-owned state is not transferable and must never become a hidden dependency of a managed, remote, slice, workflow, or other unattended launch.
 
-Chariox must export the exact profile-scoped Keychain item automatically when materializing a linked or managed Claude account. It may use the legacy unscoped item only for the default profile. Reject empty or non-refreshable credentials before provisioning instead of copying them. For a manual runner drill outside the managed-context path, export the matching scoped item to a temporary local file, copy it into the runner credential profile home as `.claude/.credentials.json`, set mode `600`, verify with `HOME=<profile-home> claude auth status`, and delete the temporary local file. Never print the credential payload or commit it.
+Use the provider-supported `claude setup-token` flow for unattended Claude profiles. Store the resulting token in the Chariox encrypted vault, keep only a vault credential reference in provider-account metadata, and inject the resolved value as `CLAUDE_CODE_OAUTH_TOKEN` only into the official Claude CLI child process. Never persist it in provider profile files, serialize it into ordinary account materialization, print it, or include it in logs, traces, terminal history, screenshots, commands, or evidence. Remove it from the child environment after launch and zeroize transient copies.
+
+Token enrollment is an explicit, user-attended Chariox interaction. Normal execution must never open an OS credential dialog. If an unattended profile lacks a usable vaulted token or the vault is locked, fail before provider spawn with a Chariox-owned blocked state or unlock interaction. Do not fall back to Keychain. Linux `.credentials.json` may be accepted only as provider-owned state already present on that Linux machine; do not create it by exporting macOS credentials.
 
 ## Coding style
 

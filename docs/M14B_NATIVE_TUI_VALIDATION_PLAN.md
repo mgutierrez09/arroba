@@ -83,7 +83,7 @@ native-origin and Chariox-origin directions: permission prompts surface in the
 remote-rendered Claude native TUI and approval is sent through kernel-owned PTY
 input to the worker provider run.
 
-2026-05-15 actual Hetzner validation update: Codex and OpenCode pass against a
+2026-05-15 historical Hetzner validation update: Codex and OpenCode pass against a
 real Hetzner worker for prompt/turns, provider permissions, and prompt
 attachments in both native-origin and Chariox-origin directions. The drill uses
 SSH local forwarding for the relay and an SSH provider endpoint bridge for
@@ -95,7 +95,9 @@ the local `Claude Code-credentials` Keychain payload into the worker
 `~/.claude/.credentials.json` makes `claude auth status` green on the worker.
 After that transfer, Claude Code passes the actual Hetzner prompt/turn,
 permission, and image prompt-attachment drill through the remote-rendered PTY
-path.
+path. The Keychain export used by this historical drill is retired. Current
+validation must use a provider-supported `claude setup-token` credential from
+the Chariox encrypted vault and must not access macOS Keychain.
 
 2026-05-15 home-managed slice validation update: Codex, OpenCode, and Claude
 Code pass the local Docker home-managed slice drill for prompt/turns, provider
@@ -104,9 +106,10 @@ observer attach to the home kernel session; the home kernel places provider
 execution on the slice worker through `slice_ref` and reuses the existing
 leased-runtime projection path. Codex/OpenCode run in server-in-kernel mode with
 worker-owned provider endpoints. Claude uses the remote-rendered PTY path.
-Local Docker slice auth import now also copies Claude Code credentials from
-`~/.claude/.credentials.json` or the macOS `Claude Code-credentials` Keychain
-payload and marks `/workspace` trusted in the slice.
+Local Docker slice auth import historically copied Claude Code credentials.
+Current validation must inject a vaulted `CLAUDE_CODE_OAUTH_TOKEN` into the
+official Claude CLI process and mark `/workspace` trusted in the slice. It must
+not read or write macOS Keychain.
 
 2026-05-16 MCP/skills update: Native TUI MCP/skill drills now validate
 agent-scoped grants for Codex and OpenCode in local, same-host standard
