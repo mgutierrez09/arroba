@@ -15,6 +15,7 @@ const exec = promisify(execFile);
 const source = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(source, "../../..");
 const image = process.env.CHARIOX_BROWSER_PROFILE_IMAGE;
+const legacy = process.env.CHARIOX_BROWSER_PROFILE_LEGACY_SEED === "1";
 assert.ok(image, "set CHARIOX_BROWSER_PROFILE_IMAGE to an existing slice-compatible image");
 const id = `chariox-browser-profile-${randomUUID().slice(0, 8)}`;
 const volume = `${id}-home`;
@@ -27,7 +28,7 @@ const docker = async (...args) => {
 const limits = ["--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "128", "--ulimit", "core=0"];
 try {
   await docker("image", "inspect", image);
-  await create();
+  await create(legacy);
   console.log(await docker("exec", id, "node", "/src/apps/kernel/slice-linux-docker/slice-browser-profile.drill.mjs", "seed"));
   await docker("exec", "--user", "0", id, "tar", "--zstd", "-C", "/home/slice", "-cf", "/tmp/home.tar.zst", ".");
   await docker("cp", `${id}:/tmp/home.tar.zst`, archive);
@@ -52,14 +53,15 @@ try {
   if (failures.length) throw new AggregateError(failures, "browser profile drill cleanup failed");
 }
 
-async function create() {
+async function create(legacySeed = false) {
   await docker("volume", "create", volume);
   await docker("run", "--rm", "--name", `${id}-init`, ...limits, "--user", "0",
     "--mount", `type=volume,src=${volume},dst=/home/slice`, image, "chown", "1000:1000", "/home/slice");
   await docker("run", "-d", "--init", "--name", id, ...limits, "--user", "1000:1000",
-    "--security-opt", `seccomp=${path.join(source, "chromium-seccomp.json")}`,
+    ...(legacySeed ? [] : ["--security-opt", `seccomp=${path.join(source, "chromium-seccomp.json")}`]),
     "--mount", `type=bind,src=${repo},dst=/src,readonly`,
     "--mount", `type=volume,src=${volume},dst=/home/slice`,
     "-e", "HOME=/home/slice", "-e", "CHARIOX_DISPOSABLE_BROWSER_DRILL=1",
+    ...(legacySeed ? ["-e", "CHARIOX_TEST_LEGACY_BROWSER=1"] : []),
     image, "sleep", "infinity");
 }

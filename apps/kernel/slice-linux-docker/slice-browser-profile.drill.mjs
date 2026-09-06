@@ -3,7 +3,7 @@
 // and home volume between seed and restore, keeping only an archived home.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -20,25 +20,39 @@ const runtime = await mkdtemp(path.join(tmpdir(), "chariox-profile-drill-"));
 await mkdir(path.join(runtime, "logs"));
 await copyFile(path.join(source, "docker/browser-cdp.mjs"), path.join(runtime, "browser-cdp.mjs"));
 const env = { ...process.env, CHARIOX_SLICE_ROOT: runtime, CHARIOX_SLICE_VIEWER_BACKEND: "novnc" };
+const legacy = phase === "seed" && process.env.CHARIOX_TEST_LEGACY_BROWSER === "1";
+if (legacy) {
+  // Reproduce the old launch configuration only in this disposable fixture.
+  const bin = path.join(runtime, "bin");
+  await mkdir(bin);
+  await writeFile(path.join(bin, "chromium"), '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox "$@"\n', { mode: 0o700 });
+  env.PATH = `${bin}:${process.env.PATH}`;
+}
 const screen = async (...args) => exec("bash", [path.join(source, "docker/slice-screen.sh"), ...args], {
   env, timeout: 30_000, maxBuffer: 128 * 1024,
 });
 const origin = "http://127.0.0.1:4321";
+let sessionValid = true;
 const server = createServer((request, response) => {
   if (request.url === "/login") {
     response.writeHead(200, { "content-type": "text/html", "set-cookie": [
       "session_auth=fixture-session; Path=/; HttpOnly; SameSite=Lax",
       "persistent_auth=fixture-persistent; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400",
     ] });
-    response.end('<script>localStorage.setItem("profile-marker", "saved");location.replace("/")</script>');
+    response.end(`<script>(${seedBrowserStorage.toString()})().then(() => location.replace('/'))</script>`);
+    return;
+  }
+  if (request.url === "/worker.js") {
+    response.writeHead(200, { "content-type": "application/javascript", "cache-control": "no-store" });
+    response.end("self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));");
     return;
   }
   if (request.url === "/auth") {
     const cookies = new Set((request.headers.cookie ?? "").split(/;\s*/));
     response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     response.end(JSON.stringify({
-      session: cookies.has("session_auth=fixture-session"),
-      persistent: cookies.has("persistent_auth=fixture-persistent"),
+      session: sessionValid && cookies.has("session_auth=fixture-session"),
+      persistent: sessionValid && cookies.has("persistent_auth=fixture-persistent"),
     }));
     return;
   }
@@ -53,6 +67,52 @@ const client = new BrowserCdpClient();
 try {
   await screen("start");
   const connection = await client.ensureConnection();
+  await assertSandbox(connection);
+  const session = await openFixture(connection, phase === "seed" ? "/login" : "/");
+  await assertStorage(connection, session, phase);
+  // Fail only the CDP navigation helper, forcing the production URL-open
+  // fallback into this same authenticated browser instead of a fresh profile.
+  const cdp = path.join(runtime, "browser-cdp.mjs");
+  await rename(cdp, `${cdp}.disabled`);
+  try { await screen("open-url", `${origin}/fallback`); }
+  finally { await rename(`${cdp}.disabled`, cdp); }
+  const fallback = await waitFor(async () => {
+    const { targetInfos } = await connection.send("Target.getTargets");
+    return targetInfos.find((target) => target.url === `${origin}/fallback`);
+  });
+  const fallbackSession = await client.ensureTargetSession(connection, fallback.targetId);
+  await assertStorage(connection, fallbackSession, `${phase}-fallback`);
+  await client.close();
+  await screen("stop");
+  await screen("start");
+  const restarted = await client.ensureConnection();
+  await assertSandbox(restarted);
+  const restartedSession = await openFixture(restarted, "/");
+  await assertStorage(restarted, restartedSession, `${phase}-restart`);
+  if (phase === "restore") {
+    // Distinguish an external service revocation from lost browser data.
+    sessionValid = false;
+    const { cookies } = await restarted.send("Storage.getCookies");
+    assert.ok(["session_auth", "persistent_auth"].every((name) => cookies.some((cookie) => cookie.name === name)), "revocation control must keep both stored cookies");
+    await assertStorage(restarted, restartedSession, "server-revoked", false);
+    // Red-capable control: the same state assertion must reject genuine loss.
+    await restarted.send("Storage.clearDataForOrigin", {
+      origin, storageTypes: "local_storage,indexeddb,cache_storage,service_workers",
+    }, restartedSession);
+    await assert.rejects(() => assertStorage(restarted, restartedSession, "cleared-storage-control", false), /authenticated browser state must survive lifecycle changes/);
+    console.log("PROFILE_LOSS_NEGATIVE_CONTROL_PASS");
+  }
+  await client.close();
+  await screen("stop");
+  console.log(`SLICE_BROWSER_PROFILE_${phase.toUpperCase()}_PASS`);
+} finally {
+  await client.close().catch(() => {});
+  await screen("stop").catch(() => {});
+  await new Promise((resolve) => server.close(resolve));
+  await rm(runtime, { recursive: true, force: true });
+}
+
+async function assertSandbox(connection) {
   // A real headed internal page checks Chromium's own reported sandbox layers.
   const sandbox = await connection.send("Target.createTarget", { url: "chrome://sandbox" });
   const sandboxSession = await client.ensureTargetSession(connection, sandbox.targetId);
@@ -67,46 +127,72 @@ try {
     seccomp: /Seccomp-BPF sandbox\s+Yes/.test(sandboxText),
   };
   console.log(JSON.stringify({ phase, isolation }));
-  if (process.env.CHARIOX_TEST_REQUIRE_SANDBOX !== "0") {
-    assert.deepEqual(isolation, { namespace: true, seccomp: true }, `renderer sandbox must remain enabled: ${sandboxText}`);
-  }
+  assert.deepEqual(isolation, { namespace: !legacy, seccomp: !legacy }, `unexpected renderer sandbox state: ${sandboxText}`);
   await connection.send("Target.closeTarget", { targetId: sandbox.targetId });
+}
+
+async function openFixture(connection, suffix) {
   const { targetInfos } = await connection.send("Target.getTargets");
   const page = targetInfos.find((target) => target.type === "page" && target.url.startsWith(origin))
     ?? targetInfos.find((target) => target.type === "page");
   assert.ok(page, "desktop startup must open or restore a page");
   const session = await client.ensureTargetSession(connection, page.targetId);
-  await connection.send("Page.navigate", { url: `${origin}${phase === "seed" ? "/login" : "/"}` }, session);
+  await connection.send("Page.navigate", { url: `${origin}${suffix}` }, session);
   await waitFor(async () => evaluate(connection, session, `location.href === ${JSON.stringify(origin + "/")} && document.readyState === 'complete'`));
-  const state = await evaluate(connection, session, `(async () => ({
-    ...await (await fetch('/auth')).json(),
-    localStorage: localStorage.getItem('profile-marker') === 'saved'
-  }))()`);
+  return session;
+}
+
+async function assertStorage(connection, session, step, authenticated = true) {
+  const state = await evaluate(connection, session, `(${readBrowserStorage.toString()})()`);
   // Report booleans only; this pattern must remain safe if extended to real auth.
-  console.log(JSON.stringify({ phase, state }));
-  assert.deepEqual(state, { session: true, persistent: true, localStorage: true }, "authenticated browser state must survive home archive restoration");
-  // Fail only the CDP navigation helper, forcing the production URL-open
-  // fallback into this same authenticated browser instead of a fresh profile.
-  const cdp = path.join(runtime, "browser-cdp.mjs");
-  await rename(cdp, `${cdp}.disabled`);
-  try { await screen("open-url", `${origin}/fallback`); }
-  finally { await rename(`${cdp}.disabled`, cdp); }
-  const fallback = await waitFor(async () => {
-    const { targetInfos } = await connection.send("Target.getTargets");
-    return targetInfos.find((target) => target.url === `${origin}/fallback`);
+  console.log(JSON.stringify({ step, state }));
+  assert.deepEqual(state, {
+    session: authenticated, persistent: authenticated, localStorage: true,
+    indexedDb: true, cacheStorage: true, serviceWorker: true,
+  }, "authenticated browser state must survive lifecycle changes");
+}
+
+async function seedBrowserStorage() {
+  localStorage.setItem("profile-marker", "saved");
+  await new Promise((resolve, reject) => {
+    const request = indexedDB.open("chariox-profile-drill", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("markers");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction("markers", "readwrite");
+      tx.objectStore("markers").put("saved", "profile");
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
   });
-  const fallbackSession = await client.ensureTargetSession(connection, fallback.targetId);
-  const fallbackAuth = await evaluate(connection, fallbackSession, "fetch('/auth').then(response => response.json())");
-  assert.deepEqual(fallbackAuth, { session: true, persistent: true }, "URL-open fallback must retain both authenticated cookies");
-  console.log(JSON.stringify({ phase, fallbackAuth }));
-  await client.close();
-  await screen("stop");
-  console.log(`SLICE_BROWSER_PROFILE_${phase.toUpperCase()}_PASS`);
-} finally {
-  await client.close().catch(() => {});
-  await screen("stop").catch(() => {});
-  await new Promise((resolve) => server.close(resolve));
-  await rm(runtime, { recursive: true, force: true });
+  const cache = await caches.open("chariox-profile-drill");
+  await cache.put("/cache-marker", new Response("saved"));
+  await navigator.serviceWorker.register("/worker.js");
+  await navigator.serviceWorker.ready;
+}
+
+async function readBrowserStorage() {
+  const indexedDb = await new Promise((resolve, reject) => {
+    const request = indexedDB.open("chariox-profile-drill");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("markers")) { db.close(); resolve(false); return; }
+      const value = db.transaction("markers").objectStore("markers").get("profile");
+      value.onsuccess = () => { db.close(); resolve(value.result === "saved"); };
+      value.onerror = () => { db.close(); reject(value.error); };
+    };
+  });
+  const cached = await caches.match("/cache-marker");
+  const worker = await navigator.serviceWorker.getRegistration();
+  return {
+    ...await (await fetch("/auth")).json(),
+    localStorage: localStorage.getItem("profile-marker") === "saved",
+    indexedDb,
+    cacheStorage: Boolean(cached && await cached.text() === "saved"),
+    serviceWorker: worker?.active?.state === "activated",
+  };
 }
 
 async function evaluate(connection, session, expression) {

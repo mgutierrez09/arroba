@@ -46,12 +46,26 @@ validate or select the product's streaming backend.
 
 The drill verifies namespace/PID/network isolation and Seccomp-BPF through the
 real `chrome://sandbox` page; persistent and session HttpOnly cookies; local
-storage; and forced CDP navigation failure through the actual URL fallback.
+storage, IndexedDB, Cache Storage and service-worker registration; forced CDP
+navigation failure through the actual URL fallback; and browser restart.
 It stops the actual desktop helper, archives the home, removes the entire
 container and home volume, restores into a new volume and container, and checks
 again. It cleans only its uniquely named containers, volume and temp archive.
 It runs one browser with 768 MiB and one CPU. Output contains auth booleans, not
 cookie payloads.
+
+Set `CHARIOX_BROWSER_PROFILE_LEGACY_SEED=1` to create the initial profile under
+Docker's default seccomp with the historical unsandboxed browser configuration,
+then restore the same archive into a new sandboxed container. Only the disposable
+seed fixture gets the legacy launch wrapper. Both browser restarts and the
+URL-open fallback are checked before and after that transition. This verifies
+profile compatibility, not automatic in-place migration of container settings.
+
+The restored fixture then revokes its server-side session without touching the
+browser cookies. Auth must fail while all other storage remains present. A final
+deliberate clear of fixture storage must trip the normal persistence assertion.
+These controls prevent intact local data or a successful page load from being
+mistaken for valid authentication, and verify that actual storage loss is caught.
 
 This is not the full kernel/Web/TUI/managed-host lifecycle drill. Passing it does
 not prove Google authentication survives restoration. That reported issue stays
