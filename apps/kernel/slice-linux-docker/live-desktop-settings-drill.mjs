@@ -56,6 +56,11 @@ async function launchProbe(phase, readOnly = false) {
   assert.equal(await user("cat", "/tmp/chariox-desktop-settings-error"), "", "settings save emitted a warning")
   const window = await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "Mousepad"))
   assert.match(window, /^\d+$/, "expected exactly one graphical editor window")
+  assert.match(await user("cat", "/tmp/chariox-desktop-accessibility-result"), /^\('unix:/,
+    "a desktop-launched application must resolve its accessibility bus")
+  assert.doesNotMatch(await user("cat", "/tmp/chariox-desktop-editor-log"),
+    /AT-SPI.*Error|org\.a11y\.Bus.*(?:not provided|ServiceUnknown)/i,
+    "a desktop-launched editor must reach the accessibility bus without warnings")
   await user("env", "DISPLAY=:99", "xdotool", "windowactivate", "--sync", window)
   await user("env", "DISPLAY=:99", "xdotool", "set_window", "--name", "Chariox editor", window)
   await user("env", "DISPLAY=:99", "xdotool", "windowminimize", "--sync", window)
@@ -110,15 +115,24 @@ async function launchProbe(phase, readOnly = false) {
   }
   await waitFor(async () => (await dockerRaw("exec", id, "cat", document)) === contents)
   let captureAttempts = 0
-  await waitFor(async () => {
-    captureAttempts++
-    await screen("screenshot", "/tmp/desktop-editor.png")
-    return (await screen("ocr", "/tmp/desktop-editor.png")).includes("Chariox desktop settings")
-  })
+  let lastOcr = ""
+  try {
+    await waitFor(async () => {
+      captureAttempts++
+      await screen("screenshot", "/tmp/desktop-editor.png")
+      lastOcr = await screen("ocr", "/tmp/desktop-editor.png")
+      return lastOcr.includes("Chariox desktop settings")
+    })
+  } catch (error) {
+    // This desktop contains only the synthetic document, never a user profile.
+    console.error(JSON.stringify({ phase, captureAttempts, fixtureOcr: lastOcr.slice(0, 2000) }))
+    throw error
+  } finally {
+    await docker("cp", `${id}:/tmp/desktop-editor.png`, path.join(evidence, `${phase}.png`))
+  }
   console.log(JSON.stringify({ phase, renderedDocument: true, captureAttempts }))
   assert.equal(await user("env", "DISPLAY=:99", "xdotool", "getactivewindow"), window,
     "screenshot forced focus away from the graphical editor")
-  await docker("cp", `${id}:/tmp/desktop-editor.png`, path.join(evidence, `${phase}.png`))
   assert.doesNotMatch(await user("cat", "/tmp/chariox-desktop-editor-log"), /dconf.*(?:WARNING|failed)|failed to commit changes/i)
   await key("ctrl+q")
   await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "Mousepad")
@@ -130,7 +144,7 @@ async function checkStopped() {
     const rows = (await user("ps", "-eo", "stat=,comm=")).split("\n")
     remaining = rows.filter((line) => {
       const [state, command] = line.trim().split(/\s+/)
-      return !state.startsWith("Z") && /^(?:Xvfb|chromium|x11vnc|websockify|openbox|tint2|dbus-daemon|dbus-run-sessio[n]?|dconf-service)$/.test(command)
+      return !state.startsWith("Z") && /^(?:Xvfb|chromium|x11vnc|websockify|openbox|tint2|dbus-daemon|dbus-run-sessio[n]?|dconf-service|at-spi-bus-launc[h]?|at-spi2-registr[y]?)$/.test(command)
     })
     return remaining.length === 0
   }).catch(() => assert.fail(`desktop processes remain after shutdown: ${remaining.join(", ")}`))

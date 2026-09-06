@@ -17,9 +17,18 @@ New slice images install tint2. Support refresh installs it when absent from an
 older saved image, before replacing the launcher. A failed dependency install
 fails provisioning instead of reporting a healthy desktop without a taskbar.
 
+Desktop applications inherit a D-Bus session from Openbox. Images also include
+the AT-SPI accessibility bus service, so GTK applications can use accessibility
+without a missing-service warning. Support refresh installs missing desktop
+services in older saved images; it does not disable accessibility or silence
+application diagnostics.
+
 Run `live-desktop-settings-drill.mjs` with `CHARIOX_DESKTOP_SETTINGS_IMAGE` set
 to an existing slice image. It clicks the taskbar to restore minimized Chromium
 and Mousepad, then checks editor contents and settings after desktop restart
 and a saved-home restore into a replacement container. Its screenshots and
 cleanup report remain outside the repository. This focused drill does not
 replace production-image or full kernel-managed saved-state validation.
+It also resolves the real accessibility bus from a desktop-launched process,
+rejects AT-SPI errors in the editor log, and checks that accessibility processes
+stop with the desktop.

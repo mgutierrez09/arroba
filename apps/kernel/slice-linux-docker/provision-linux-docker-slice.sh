@@ -299,17 +299,19 @@ configure_slice_state_directory() {
 }
 
 refresh_slice_support_files() {
-  # Saved images retain their original packages. Install the new desktop
-  # dependency before overlaying a launcher that requires it.
+  # Saved images retain their original packages. Prepare the desktop services
+  # before overlaying the current launcher.
   run_with_timeout 180 docker exec -u root "$SLICE_NAME" bash -lc '
     set -euo pipefail
-    if ! command -v tint2 >/dev/null 2>&1; then
+    if ! command -v tint2 >/dev/null 2>&1 || ! command -v dbus-run-session >/dev/null 2>&1 \
+      || [[ ! -r /usr/share/dbus-1/services/org.a11y.Bus.service ]]; then
       export DEBIAN_FRONTEND=noninteractive
       apt-get -qq update
-      apt-get -y -qq --no-install-recommends install tint2
+      apt-get -y -qq --no-install-recommends install dbus tint2 at-spi2-core
       apt-get clean
+      find /var/lib/apt/lists -mindepth 1 -delete
     fi
-  ' || fail "could not prepare the desktop taskbar in the existing slice image"
+  ' || fail "could not prepare desktop services in the existing slice image"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/start-runtime.sh" "$SLICE_NAME:/opt/chariox-slice/start-runtime.sh" \
     || log "runtime script overlay refresh unavailable; continuing"
   run_with_timeout 30 docker cp "$REPO_ROOT/apps/kernel/slice-linux-docker/docker/start-providers.sh" "$SLICE_NAME:/opt/chariox-slice/start-providers.sh" \
