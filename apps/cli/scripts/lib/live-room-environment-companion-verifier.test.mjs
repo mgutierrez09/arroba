@@ -6,6 +6,19 @@ import test from "node:test"
 
 import { runRoomEnvironmentCompanion } from "./live-room-environment-companion-verifier.mjs"
 
+for (const hours of [8, 24]) {
+test(`Room companion accepts a ${hours}-hour soak budget before preparation`, async () => {
+  const prepared = new Error("prepared")
+  await assert.rejects(runRoomEnvironmentCompanion({
+    env: {
+      CHARIOX_ROOM_DRILL_COORDINATION_DIR: path.join(os.tmpdir(), "unused-chariox-soak-probe"),
+      CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS: String((hours * 3600 + 600) * 1000),
+    },
+    prepare: () => { throw prepared },
+  }), error => error === prepared)
+})
+}
+
 for (const scenario of [null, "computer", "browser", "form", "nested-frame", "shadow-root", "replace-field"]) {
 const recovery = scenario === "replace-field"
 const form = ["form", "nested-frame", "shadow-root", "replace-field"].includes(scenario)

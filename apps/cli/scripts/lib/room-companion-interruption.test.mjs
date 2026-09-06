@@ -59,7 +59,7 @@ test(`real waiting companion cleans up on ${signal} without waiting for its dead
     const guard = createDrillInterruption();
     let announced = false;
     await guard.run(() => runRoomEnvironmentCompanion({
-      env: { CHARIOX_ROOM_DRILL_COORDINATION_DIR: ${JSON.stringify(root)}, CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS: "30000" },
+      env: { CHARIOX_ROOM_DRILL_COORDINATION_DIR: ${JSON.stringify(root)}, CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS: "29400000" },
       ready: { sessionId: "session-1", environmentId: "environment-1" },
       sleep: ms => { if (!announced) { announced = true; process.send("waiting"); } return guard.sleep(ms); },
     }), async () => {
