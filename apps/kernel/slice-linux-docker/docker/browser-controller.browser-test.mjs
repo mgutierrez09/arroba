@@ -699,6 +699,55 @@ test(`${layout} uploads reject replaced file inputs`, async () => {
 });
 }
 
+for (const navigation of ["top", "isolated-child", "isolated-parent"]) {
+test(`uploads recheck ${navigation} after the renderer inspects the input`, { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "chariox-controller-upload-"));
+  try {
+    const file = path.join(directory, "report.txt");
+    await writeFile(file, "shared room upload");
+    await withCrossOriginFixture(async (url) => {
+      await withController(async ({ page, request, browser }) => {
+        const startUrl = navigation === "top" ? `${url}field` : url;
+        await page.goto(startUrl);
+        const input = (navigation === "top" ? page : page.frameLocator("iframe")).getByLabel("Upload");
+        await input.waitFor();
+        const target = (await request("browser.reconcile", { viewport })).result.tabs[0];
+        const nodeRef = await uploadReference(request, target);
+        const connection = await browser.ensureConnection();
+        const send = connection.send.bind(connection);
+        let navigated = false;
+        let fileMutations = 0;
+        connection.send = async (method, params, ...rest) => {
+          if (method === "DOM.setFileInputFiles") fileMutations += 1;
+          const result = await send(method, params, ...rest);
+          if (!navigated && method === "Runtime.callFunctionOn" && result?.result?.value === "file") {
+            navigated = true;
+            if (navigation === "isolated-child") await page.frames()[1].goto(`${page.frames()[1].url()}?new=1`);
+            else await page.goto(`${startUrl}?new=1`);
+            await input.waitFor();
+          }
+          return result;
+        };
+        const rejected = await request("browser.upload", { ...target, node_ref: nodeRef, file_paths: [file] });
+        assert.equal(navigated, true);
+        assert.equal(rejected.ok, false);
+        assert.equal(fileMutations, 0, "never send file paths after the owning document changes");
+        assert.equal(rejected.error.code, "stale_document_reference");
+        assert.equal(await input.evaluate((node) => node.files.length), 0);
+        const current = (await request("browser.reconcile", { viewport })).result.tabs[0];
+        const freshRef = await uploadReference(request, current);
+        const recovered = await request("browser.upload", { ...current, node_ref: freshRef, file_paths: [file] });
+        assert.equal(recovered.ok, true, JSON.stringify(recovered.error));
+        assert.equal(fileMutations, 1);
+        assert.equal(await input.evaluate((node) => node.files[0].name), "report.txt");
+      }, { uploadRoots: [directory] });
+    }, { fieldMarkup: '<label>Upload<input type="file"></label>' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+}
+
 async function uploadReference(request, target) {
   const snapshot = await request("browser.snapshot", target);
   assert.equal(snapshot.ok, true, JSON.stringify(snapshot.error));
@@ -977,7 +1026,7 @@ async function withController(run, clientOptions = {}) {
     page.setDefaultTimeout(10_000);
     let nextId = 0;
     const request = (method, params) => handleBrowserControllerRequest({ id: ++nextId, method, params }, { browser });
-    await run({ page, request, context });
+    await run({ page, request, context, browser });
   } finally {
     try {
       await browser?.close();

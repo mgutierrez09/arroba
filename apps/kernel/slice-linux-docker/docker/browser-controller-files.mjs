@@ -226,6 +226,10 @@ export async function uploadBrowserFiles({
       if (inspected?.result?.value === "invalid") throw invalidUpload("browser upload requires a file input");
       throw staleFileInput();
     }
+    // Resolving and inspecting the node cross asynchronous renderer calls.
+    // Recheck both the owning document and its parents before exposing files.
+    await assertContext();
+    await assertCurrentDocument(connection, sessionId, targetId, documentId);
     await connection.send(
       "DOM.setFileInputFiles",
       { objectId, files },
