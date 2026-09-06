@@ -57,6 +57,25 @@ async function launchProbe(phase, readOnly = false) {
   const window = await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "Mousepad"))
   assert.match(window, /^\d+$/, "expected exactly one graphical editor window")
   await user("env", "DISPLAY=:99", "xdotool", "windowactivate", "--sync", window)
+  await user("env", "DISPLAY=:99", "xdotool", "set_window", "--name", "Chariox editor", window)
+  await user("env", "DISPLAY=:99", "xdotool", "windowminimize", "--sync", window)
+  const taskbar = await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--name", "^Chariox applications$"))
+  const geometry = Object.fromEntries((await user("env", "DISPLAY=:99", "xdotool", "getwindowgeometry", "--shell", taskbar))
+    .split("\n").map(line => line.split("=")))
+  await screen("screenshot", "/tmp/minimized-editor.png")
+  await docker("cp", `${id}:/tmp/minimized-editor.png`, path.join(evidence, `${phase}-minimized.png`))
+  // This fixture launches exactly two apps, Chromium then Mousepad. tint2rc
+  // keeps launch order and caps each task at 240px, with 6px panel padding.
+  const taskWidth = Math.min(240, (Number(geometry.WIDTH) - 12) / 2)
+  await screen("pointer-click", String(Math.round(Number(geometry.X) + 6 + taskWidth / 2)),
+    String(Math.round(Number(geometry.Y) + Number(geometry.HEIGHT) / 2)), "left", "1")
+  const chromium = await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "^chromium$"))
+  await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "getactivewindow")) === chromium)
+  await user("env", "DISPLAY=:99", "xdotool", "windowminimize", "--sync", chromium)
+  await screen("pointer-click", String(Math.round(Number(geometry.X) + 6 + taskWidth * 1.5)),
+    String(Math.round(Number(geometry.Y) + Number(geometry.HEIGHT) / 2)), "left", "1")
+  await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "getactivewindow")) === window)
+  console.log(JSON.stringify({ phase, restoredFromTaskbar: ["Chromium", "Mousepad"] }))
   if (readOnly) {
     await key("ctrl+a")
     await key("ctrl+c")
@@ -89,7 +108,7 @@ async function checkStopped() {
     const rows = (await user("ps", "-eo", "stat=,comm=")).split("\n")
     remaining = rows.filter((line) => {
       const [state, command] = line.trim().split(/\s+/)
-      return !state.startsWith("Z") && /^(?:Xvfb|chromium|x11vnc|websockify|openbox|dbus-daemon|dbus-run-sessio[n]?|dconf-service)$/.test(command)
+      return !state.startsWith("Z") && /^(?:Xvfb|chromium|x11vnc|websockify|openbox|tint2|dbus-daemon|dbus-run-sessio[n]?|dconf-service)$/.test(command)
     })
     return remaining.length === 0
   }).catch(() => assert.fail(`desktop processes remain after shutdown: ${remaining.join(", ")}`))
@@ -104,11 +123,12 @@ async function create() {
     "--security-opt", `seccomp=${path.join(source, "chromium-seccomp.json")}`,
     "--mount", `type=bind,src=${repo},dst=/src,readonly`,
     "--mount", `type=bind,src=${path.join(source, "docker/slice-screen.sh")},dst=/opt/chariox-slice/slice-screen.sh,readonly`,
+    "--mount", `type=bind,src=${path.join(source, "docker/tint2rc")},dst=/opt/chariox-slice/tint2rc,readonly`,
     "-e", "HOME=/home/slice", "-e", "CHARIOX_SLICE_VIEWER_BACKEND=novnc",
     image, "sleep", "infinity")
   console.log(JSON.stringify({ phase: "started", container: id }))
   await docker("exec", "-u", "root", id, "sh", "-c",
-    "apt-get -qq update && apt-get -y -qq --no-install-recommends install libglib2.0-bin mousepad=0.5.10-2 && apt-get clean")
+    "apt-get -qq update && apt-get -y -qq --no-install-recommends install libglib2.0-bin mousepad=0.5.10-2 tint2 && apt-get clean")
   await user("sh", "-c", [
     "set -eu",
     "mkdir -p /home/slice/.config/openbox",
