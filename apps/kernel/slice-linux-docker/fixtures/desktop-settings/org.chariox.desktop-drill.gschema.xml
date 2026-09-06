@@ -1,0 +1,5 @@
+<schemalist>
+  <schema id="org.chariox.desktop-drill" path="/org/chariox/desktop-drill/">
+    <key name="enabled" type="b"><default>false</default></key>
+  </schema>
+</schemalist>
