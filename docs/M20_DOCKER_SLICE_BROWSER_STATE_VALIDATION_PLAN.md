@@ -237,6 +237,14 @@ Fixture:
 - The fixture exposes a browser UI with login, inbox, compose, sent mail, and logout.
 - The fixture sets realistic secure session cookies and uses localStorage or IndexedDB for client-side UI state.
 - The fixture stores sent messages server-side and exposes a test-only verification endpoint outside the agent's browser.
+- The compose form accepts multipart attachments. The authenticated messages
+  endpoint reports each filename, content type, exact byte length, and SHA-256
+  of the received bytes. The office-work drill must compare these with its
+  expected document, not accept a byte count or an agent's success claim.
+  Attachment bodies are not retained in the message record. The complete
+  request remains capped at 1 MiB and each message at 20 attachments; malformed
+  submissions create no message. URL-encoded mail without attachments remains
+  supported for existing callers.
 - The fixture password is placed in Chariox vault and must be injected into the browser by runtime MCP secret insertion. The agent must not receive the password in its context.
 - Optionally back the fixture with Mailpit for captured SMTP delivery evidence. Mailpit provides an SMTP server, web interface, and API suitable for email testing.
 
@@ -281,6 +289,15 @@ Pass criteria:
 - Service-side invalidation remains distinguishable from local browser-state
   loss, and reauthentication returns the restored slice to normal use.
 - Screenshots and fixture verification prove the behavior without user intervention.
+
+Run the fixture's HTTP regressions with
+`pnpm --dir apps/cli test:browser-computer-fixture`. An explicit installed-Chrome
+form check is available through
+`PLAYWRIGHT_MODULE=/absolute/path/to/installed/playwright/index.mjs pnpm --dir apps/cli test:browser-computer-fixture-browser`.
+It downloads no dependencies and closes its browser and fixture. Its screenshot
+and result live under `~/.codex/evidence/browser-computer-use/mail-attachments/`.
+These tests prove fixture behavior, not provider-driven document editing or
+Room kernel/Web/TUI acceptance.
 
 Failure interpretation:
 
