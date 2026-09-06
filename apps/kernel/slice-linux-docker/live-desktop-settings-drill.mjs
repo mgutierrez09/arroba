@@ -115,15 +115,24 @@ async function launchProbe(phase, readOnly = false) {
   }
   await waitFor(async () => (await dockerRaw("exec", id, "cat", document)) === contents)
   let captureAttempts = 0
-  await waitFor(async () => {
-    captureAttempts++
-    await screen("screenshot", "/tmp/desktop-editor.png")
-    return (await screen("ocr", "/tmp/desktop-editor.png")).includes("Chariox desktop settings")
-  })
+  let lastOcr = ""
+  try {
+    await waitFor(async () => {
+      captureAttempts++
+      await screen("screenshot", "/tmp/desktop-editor.png")
+      lastOcr = await screen("ocr", "/tmp/desktop-editor.png")
+      return lastOcr.includes("Chariox desktop settings")
+    })
+  } catch (error) {
+    // This desktop contains only the synthetic document, never a user profile.
+    console.error(JSON.stringify({ phase, captureAttempts, fixtureOcr: lastOcr.slice(0, 2000) }))
+    throw error
+  } finally {
+    await docker("cp", `${id}:/tmp/desktop-editor.png`, path.join(evidence, `${phase}.png`))
+  }
   console.log(JSON.stringify({ phase, renderedDocument: true, captureAttempts }))
   assert.equal(await user("env", "DISPLAY=:99", "xdotool", "getactivewindow"), window,
     "screenshot forced focus away from the graphical editor")
-  await docker("cp", `${id}:/tmp/desktop-editor.png`, path.join(evidence, `${phase}.png`))
   assert.doesNotMatch(await user("cat", "/tmp/chariox-desktop-editor-log"), /dconf.*(?:WARNING|failed)|failed to commit changes/i)
   await key("ctrl+q")
   await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "Mousepad")
