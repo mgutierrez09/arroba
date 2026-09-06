@@ -10,6 +10,9 @@ import { verifyRoomDesktopHealth } from "./live-room-desktop-health.mjs"
 export async function runRoomOfficeWork(input) {
   const { client, requests, sessionId, agentId, options, officeRuntime } = input
   const { containerName, docker, sliceScreen, runCommandWithStdin } = officeRuntime
+  const tuiObserved = input.deferTuiVerification !== true
+  assert.ok(tuiObserved ? typeof input.waitForTuis === "function" : typeof input.observeDesktop === "function",
+    "office work requires direct TUI verification or a Web observer with deferred final TUI verification")
   const document = `/workspace/Documents/office-${randomUUID()}.txt`
   const contents = "Chariox office document\nPrepared through the graphical editor.\nGrüße from the Room.\n"
   const subject = `Office document ${randomUUID()}`
@@ -112,9 +115,10 @@ export async function runRoomOfficeWork(input) {
     const typed = editActions.find((a) => a.kind === "keyboard_text" && a.state === "completed"
       && a.arguments?.utf8_byte_count === Buffer.byteLength(contents))
     assert.ok(typed)
-    await input.waitForTuis(new RegExp(`^Room action #${typed.sequence}: real-${options.provider} · computer keyboard_text · completed$`))
-    report.edit = { exactDocument: true, focusPreserved: true, localTuiObserved: true, remoteTuiObserved: true,
+    if (tuiObserved) await input.waitForTuis(new RegExp(`^Room action #${typed.sequence}: real-${options.provider} · computer keyboard_text · completed$`))
+    report.edit = { exactDocument: true, focusPreserved: true, localTuiObserved: tuiObserved, remoteTuiObserved: tuiObserved,
       typedActionId: typed.action_id, typedSequence: typed.sequence }
+    if (input.observeDesktop) report.web = { editor: await input.observeDesktop("editor") }
     await phase("office-mailing")
     report.mailTurn = await prompt([
       "Continue in the same Room. The graphical editor document is saved. Use only Chariox runtime MCP Browser tools for this turn.",
@@ -144,15 +148,18 @@ export async function runRoomOfficeWork(input) {
     const submits = mailActions.filter((a) => a.kind === "submit" && a.state === "completed" && a.sequence > upload.sequence)
     assert.equal(submits.length, 1, "office mail needs one attributed form submission after upload")
     for (const action of [activation, upload, submits[0]]) {
-      await input.waitForTuis(new RegExp(`^Room action #${action.sequence}: real-${options.provider} · browser ${action.kind} · completed$`))
+      if (tuiObserved) await input.waitForTuis(new RegExp(`^Room action #${action.sequence}: real-${options.provider} · browser ${action.kind} · completed$`))
     }
     assert.match(await activeClass(), /Chromium/i,
       "office mail must leave its browser visible, not minimized behind the editor")
     await input.screenshot("office-mail-sent")
     report.mail = { received, activationActionId: activation.action_id, visibleBrowser: true,
       uploadActionId: upload.action_id, submitActionId: submits[0].action_id,
-      localTuiObserved: true, remoteTuiObserved: true, submissions: 1 }
-    report.skipped = ["Web viewer projection", "real external email service", "provider save/resume", "other providers and office scenarios"]
+      localTuiObserved: tuiObserved, remoteTuiObserved: tuiObserved, submissions: 1 }
+    if (input.observeDesktop) report.web.mail = await input.observeDesktop("mail")
+    report.skipped = [...(input.observeDesktop ? [] : ["Web viewer projection"]),
+      ...(!tuiObserved ? ["TUI verification deferred to OSS companion"] : []),
+      "real external email service", "provider save/resume", "other providers and office scenarios"]
     await phase("office-passed")
     return report
   } catch (error) {

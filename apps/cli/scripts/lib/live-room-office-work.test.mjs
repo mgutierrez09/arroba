@@ -4,7 +4,7 @@ import { runRoomOfficeWork } from "./live-room-office-work.mjs"
 
 // Model terminal attachment expiry at the two real idle boundaries without
 // Docker, a provider, credentials, or a slow wall-clock sleep.
-for (const boundary of ["office-installing", "office-mailing"]) {
+for (const boundary of ["office-installing", "office-mailing", "web-office-mailing"]) {
   test(`office prompts survive attachment expiry during ${boundary}`, async () => {
     const live = new Set()
     let next = 0
@@ -24,8 +24,18 @@ for (const boundary of ["office-installing", "office-mailing"]) {
         // not arbitrary files under the user's home directory.
         assert.ok(office.document.startsWith("/workspace/"), "office document must stay in the authorized upload workspace")
         if (phase === boundary) live.clear()
+        if (boundary === "web-office-mailing" && phase === "office-mailing") {
+          assert.equal(office.edit.localTuiObserved, false)
+          assert.equal(office.edit.remoteTuiObserved, false)
+          assert.equal(office.web.editor.matched, true)
+        }
       },
-      screenshot: async () => {}, waitForTuis: async () => {},
+      screenshot: async () => {},
+      ...(boundary === "web-office-mailing" ? {
+        deferTuiVerification: true,
+        observeDesktop: async () => ({ matched: true }),
+        waitForTuis: async () => { throw new Error("Web caller must not claim to observe TUIs") },
+      } : { waitForTuis: async () => {} }),
       withTimeout: async (promise) => promise,
       waitFor: async (check) => {
         const result = await check()

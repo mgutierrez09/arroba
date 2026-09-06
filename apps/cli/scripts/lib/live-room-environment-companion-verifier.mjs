@@ -5,6 +5,8 @@ import { assertRoomBrowserRecoveryActions } from "./live-room-browser-recovery.m
 import { roomDrillCompanionTimeoutMs } from "./room-drill-companion-budget.mjs"
 import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
 import { createRoomDrillTuiEvidence } from "./room-drill-tui-evidence.mjs"
+import { verifyRoomCompanionTuis } from "./room-companion-tui-evidence.mjs"
+import { verifyRoomOfficeCompanion } from "./live-room-office-companion.mjs"
 import { setTimeout as sleep } from "node:timers/promises"
 
 import {
@@ -52,6 +54,9 @@ export async function runRoomEnvironmentCompanion(input) {
     assert.ok(typeof companion.provider.agentId === "string" && companion.provider.agentId.length > 0)
     assert.equal(companion.provider.actorId, `agent:${companion.provider.agentId}`)
     assert.ok(typeof companion.provider.screenshot === "string" && path.isAbsolute(companion.provider.screenshot))
+  }
+  if (input.ready.realProvider?.computerTask === "office") {
+    return verifyRoomOfficeCompanion(input, companion, tuiEvidence)
   }
   if (input.ready.keyboardText) {
     assert.ok(companion.keyboard, "Web companion omitted required keyboard evidence")
@@ -167,27 +172,13 @@ export async function runRoomEnvironmentCompanion(input) {
       .sort((a, b) => a.sequence - b.sequence).map((action) => action.action_id),
     [companion.gestures.dragActionId, companion.gestures.scrollActionId], "Web gestures emitted extra actions")
   }
-  await input.activityController.synchronize()
-  const observedActions = []
-  for (const action of actions) {
-    const receipt = { actionId: action.action_id, sequence: action.sequence }
-    await Promise.all(["local", "remote"].map(async side => {
-      receipt[side] = tuiEvidence?.find(side, action)
-      if (!receipt[side]) {
-        await (side === "local"
-          ? input.waitForLocalActionNotice(input.localNoticeIds, action)
-          : input.waitForRemoteActionNotice(input.remoteNoticeIds, action))
-        receipt[side] = { source: "final-snapshot", observedAt: new Date().toISOString() }
-      }
-    }))
-    observedActions.push(receipt)
-  }
+  const observed = await verifyRoomCompanionTuis(input, actions, tuiEvidence)
   const after = unwrap(
     await input.observerClient.send(input.requests.getRoomEnvironmentStateRequest(input.ready.sessionId)),
     "RoomEnvironmentState",
   ).environment
   assert.equal(after.input_ownership.some((owner) => owner.target?.kind === "desktop"), false)
-  return { ...companion, tuiEvidence: { ...tuiEvidence?.summary(), actions: observedActions } }
+  return { ...companion, tuiEvidence: observed }
 }
 
 function validateCompanionResult(companion) {

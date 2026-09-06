@@ -2045,6 +2045,7 @@ async function runCompanionIfConfigured({ environment, localNoticeIds, remoteNot
       environmentId: environment.environment_id,
       runtimeGeneration: environment.runtime_generation,
       viewportRevision: environment.viewport.revision,
+      viewport: environment.viewport,
       evidenceRoot,
     },
     client,
