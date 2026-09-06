@@ -5,6 +5,16 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
+test("office work explicitly selects the standalone Computer provider drill", () => {
+  const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
+    CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_COMPUTER_TASK: "office" }
+  assert.equal(roomRealProviderOptions(env).computerTask, "office")
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser" }), /Computer task/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_COMPUTER_TASK: "unknown" }), /Computer task/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
+    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /standalone/)
+})
+
 test("a completed Room action cannot pass while its provider turn remains open", async () => {
   const run = fixture({ actions: [{ actor_id: "agent:agent-2", kind: "pointer_click", state: "completed", mode: "computer",
     action_id: "action-1", sequence: 1, arguments: { x: 640, y: 400, button: "left", click_count: 1 },

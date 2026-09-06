@@ -18,6 +18,7 @@ import { startRoomSliceWithForwarding } from "./lib/room-colima-forwarding.mjs"
 import { roomRealProviderOptions, runRoomRealProvider } from "./lib/live-room-real-provider.mjs"
 import { roomProviderBrowserFixture } from "./lib/room-provider-browser-fixture.mjs"
 import { createDrillInterruption } from "./lib/drill-interruption.mjs"
+import { makeAvailablePorts, portIsAvailable } from "./lib/drill-runtime-helpers.mjs"
 import {
   assertRetainedClipboardEvidenceIsRedacted,
   assertRetainedTextIsRedacted,
@@ -135,8 +136,15 @@ const sensitiveValues = [
   ...clipboardValues,
 ]
 const generatedSecretLength = 24
-const kernelPort = 51000 + Math.floor(Math.random() * 1000)
-const relayPort = 53000 + Math.floor(Math.random() * 1000)
+const { kernelPort, relayPort } = await makeAvailablePorts({
+  candidateFactory: () => {
+    const kernelPort = 20000 + Math.floor(Math.random() * 4000)
+    return { kernelPort, relayPort: kernelPort + 20 }
+  },
+  localAvailability: async ({ kernelPort, relayPort }) => (await Promise.all(
+    [kernelPort, kernelPort + 1, kernelPort + 2, kernelPort + 3, relayPort].map(portIsAvailable),
+  )).every(Boolean),
+})
 const relayScopedIssuer = `${runId}-issuer`
 const relayScopedSecret = `${runId}-scoped-secret`
 const homeDaemonId = `${runId}-home`
@@ -516,6 +524,7 @@ async function run() {
     const provider = await runRoomRealProvider({
       client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace,
       options: realProviderOptions, waitFor, withTimeout, screenshot,
+      officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
       checkpoint: (value) => writeFile(path.join(evidenceRoot, "real-provider.json"), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }),
       waitForPhysicalEffect: (marker) => waitForBrowserText(marker, 20_000, "provider click did not reach the shared browser"),
       waitForTuis: (pattern) => Promise.all([waitForLocalNotice(pattern), waitForRemoteNotice(pattern)]),
@@ -2916,14 +2925,6 @@ async function closeFixtureServer() {
   fixture.server.closeAllConnections?.()
   fixture.server.closeIdleConnections?.()
   await new Promise((resolve) => fixture.server.close(resolve))
-}
-
-async function portIsAvailable(port) {
-  return await new Promise((resolve) => {
-    const server = net.createServer()
-    server.once("error", () => resolve(false))
-    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)))
-  })
 }
 
 async function terminateChild(child) {
