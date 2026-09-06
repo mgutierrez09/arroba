@@ -19,9 +19,9 @@ test(`Room companion accepts a ${hours}-hour soak budget before preparation`, as
 })
 }
 
-for (const scenario of [null, "computer", "browser", "form", "nested-frame", "shadow-root", "replace-field", "history-rollover"]) {
+for (const scenario of [null, "computer", "browser", "form", "nested-frame", "shadow-root", "replace-field", "history-rollover", "tui-rollover"]) {
 const recovery = scenario === "replace-field"
-const form = ["form", "nested-frame", "shadow-root", "replace-field", "history-rollover"].includes(scenario)
+const form = ["form", "nested-frame", "shadow-root", "replace-field", "history-rollover", "tui-rollover"].includes(scenario)
 const browserMutation = recovery ? "replace-field" : undefined
 const browserLayout = ["nested-frame", "shadow-root"].includes(scenario) ? scenario : undefined
 const providerMode = form ? "browser" : scenario
@@ -29,6 +29,7 @@ const includeProvider = providerMode !== null
 test(`Room companion verifier uses stable TUI baselines, provider scenario=${scenario}`, async () => {
   let prepared = false
   let preparedAtReady = false
+  let tuiRolled = false
   const root = await mkdtemp(path.join(os.tmpdir(), "chariox-room-companion-verifier-"))
   const localNoticeIds = [1]
   const remoteNoticeIds = [2]
@@ -36,6 +37,7 @@ test(`Room companion verifier uses stable TUI baselines, provider scenario=${sce
     sequence: 7,
     action_id: "action-web",
     actor_id: "user:local",
+    mode: "computer",
     kind: "pointer_click",
     state: "completed",
   }
@@ -64,6 +66,8 @@ test(`Room companion verifier uses stable TUI baselines, provider scenario=${sce
       }
     }
     preparedAtReady = prepared
+    if (scenario === "tui-rollover") await new Promise(resolve => setTimeout(resolve, 40))
+    tuiRolled = true
     await writeFile(path.join(root, "result.json"), JSON.stringify({
       schema: "chariox.room_environment.companion_result.v1",
       status: "passed",
@@ -131,12 +135,18 @@ test(`Room companion verifier uses stable TUI baselines, provider scenario=${sce
       activityController: { synchronize: async () => true },
       localNoticeIds,
       remoteNoticeIds,
+      ...(scenario === "tui-rollover" ? { readTuiNotices: async () => ({
+        local: tuiRolled ? [] : [{ id: 3, text: "Room action #6: real-codex · browser submit · completed" }],
+        remote: tuiRolled ? [] : [{ id: 4, text: "Room action #6: real-codex · browser submit · completed" }],
+      }) } : {}),
       waitForPhysicalEffect: async (value) => { physical.push(value) },
       waitForLocalActionNotice: async (baseline, target) => {
+        assert.ok(scenario !== "tui-rollover" || target.sequence !== 6, "old local TUI notice expired")
         assert.equal(baseline, localNoticeIds)
         noticed.local.push(target?.sequence)
       },
       waitForRemoteActionNotice: async (baseline, target) => {
+        assert.ok(scenario !== "tui-rollover" || target.sequence !== 6, "old remote TUI notice expired")
         assert.equal(baseline, remoteNoticeIds)
         noticed.remote.push(target?.sequence)
       },
@@ -146,8 +156,15 @@ test(`Room companion verifier uses stable TUI baselines, provider scenario=${sce
     assert.equal(verified.status, "passed")
     assert.deepEqual(physical, ["POINTER_CLICK_COUNT=2", ...(form ? ["BROWSER_FORM_ACCEPTED"] : providerMode === "browser" ? ["BROWSER_CLICK_ACCEPTED"] : []), ...(recovery ? ["BROWSER_STALE_RECOVERY_ACCEPTED"] : []), "WEB_KEYBOARD_TEXT_OK", "WEB_KEYBOARD_REPLACEMENT_OK",
       "WEB_DRAG_SELECTION_OK WINDOW_GEOMETRY_STABLE", "WEB_SCROLL_BOTH_AXES_OK"])
-    const expectedNotices = [...(recovery ? [3, 4] : []), ...(form ? [5] : []), ...(includeProvider ? [6] : []), 7, 8, 9, 10, 11, 12]
+    const expectedNotices = [...(recovery ? [3, 4] : []), ...(form ? [5] : []), ...(includeProvider && scenario !== "tui-rollover" ? [6] : []), 7, 8, 9, 10, 11, 12]
     assert.deepEqual(noticed, { local: expectedNotices, remote: expectedNotices })
+    if (scenario === "tui-rollover") {
+      const proof = verified.tuiEvidence.actions.find(item => item.actionId === "action-provider")
+      assert.equal(proof.local.text, "Room action #6: real-codex · browser submit · completed")
+      assert.equal(proof.remote.text, proof.local.text)
+      assert.equal(proof.local.id, 3)
+      assert.equal(proof.remote.id, 4)
+    }
     assert.equal(preparedAtReady, true, "physical fixture must be reset before Web receives its handoff")
     assert.equal(verified.client, "production-local-web-view")
     assert.equal(verified.screenshot, path.join(root, "web-room-tui-shared.png"))

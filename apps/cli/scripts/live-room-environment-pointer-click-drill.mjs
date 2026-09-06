@@ -2053,6 +2053,10 @@ async function runCompanionIfConfigured({ environment, localNoticeIds, remoteNot
     activityController,
     localNoticeIds,
     remoteNoticeIds,
+    readTuiNotices: async () => {
+      const [local, remote] = await Promise.all([localAutomation.send("snapshot"), remoteAutomation.send("snapshot")])
+      return { local: automationNoticeEntries(local), remote: automationNoticeEntries(remote) }
+    },
     waitForPhysicalEffect: (physicalEffect) => waitForBrowserText(
       physicalEffect,
       20_000,
