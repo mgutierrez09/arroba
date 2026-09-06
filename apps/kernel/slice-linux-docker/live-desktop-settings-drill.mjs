@@ -131,6 +131,14 @@ async function launchProbe(phase, readOnly = false) {
     await docker("cp", `${id}:/tmp/desktop-editor.png`, path.join(evidence, `${phase}.png`))
   }
   console.log(JSON.stringify({ phase, renderedDocument: true, captureAttempts }))
+  const found = (await screen("find-text", "Chariox desktop settings", "/tmp/desktop-editor.png"))
+    .split("\n").map(line => JSON.parse(line))
+  const editorBounds = Object.fromEntries((await user("env", "DISPLAY=:99", "xdotool", "getwindowgeometry", "--shell", window))
+    .split("\n").map(line => line.split("=")))
+  assert.equal(found.length, 1, "one document label must not become duplicate OCR targets")
+  assert.ok(found[0].center_x >= Number(editorBounds.X) && found[0].center_x < Number(editorBounds.X) + Number(editorBounds.WIDTH)
+    && found[0].center_y >= Number(editorBounds.Y) && found[0].center_y < Number(editorBounds.Y) + Number(editorBounds.HEIGHT),
+  "text lookup must retain the original desktop coordinates inside the editor")
   assert.equal(await user("env", "DISPLAY=:99", "xdotool", "getactivewindow"), window,
     "screenshot forced focus away from the graphical editor")
   assert.doesNotMatch(await user("cat", "/tmp/chariox-desktop-editor-log"), /dconf.*(?:WARNING|failed)|failed to commit changes/i)
@@ -160,6 +168,7 @@ async function create() {
     "--mount", `type=bind,src=${repo},dst=/src,readonly`,
     "--mount", `type=bind,src=${path.join(source, "docker/slice-screen.sh")},dst=/opt/chariox-slice/slice-screen.sh,readonly`,
     "--mount", `type=bind,src=${path.join(source, "docker/tint2rc")},dst=/opt/chariox-slice/tint2rc,readonly`,
+    "--mount", `type=bind,src=${path.join(source, "docker/slice-text-finder.py")},dst=/opt/chariox-slice/slice-text-finder.py,readonly`,
     "-e", "HOME=/home/slice", "-e", "CHARIOX_SLICE_VIEWER_BACKEND=novnc",
     image, "sleep", "infinity")
   console.log(JSON.stringify({ phase: "started", container: id }))
