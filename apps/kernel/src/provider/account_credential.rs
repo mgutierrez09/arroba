@@ -77,12 +77,20 @@ pub(crate) fn resolve_provider_account_credentials_for_launch(
     }
     Err(DaemonError::InvalidConfig {
         field: "provider account credential",
-        message: "unattended Claude launch requires a Chariox-vault setup token or a portable provider-native credential; use `provider setup-token claude <account-profile>` or launch the native Claude TUI to sign in interactively",
+        message: unattended_claude_credential_error_message(),
     })
 }
 
 fn portable_claude_credentials_authorize_unattended_launch() -> bool {
     std::env::consts::OS == "linux"
+}
+
+fn unattended_claude_credential_error_message() -> &'static str {
+    if portable_claude_credentials_authorize_unattended_launch() {
+        "unattended Claude launch requires a Chariox-vault setup token or a portable provider-native credential; use `provider setup-token claude <account-profile>` or launch the native Claude TUI to sign in interactively"
+    } else {
+        "unattended Claude launch requires a Chariox-vault setup token on this platform; use `provider setup-token claude <account-profile>` or launch the native Claude TUI to sign in interactively"
+    }
 }
 
 fn canonical_label(provider: &str) -> &'static str {
@@ -120,6 +128,12 @@ mod tests {
             portable_claude_credentials_authorize_unattended_launch(),
             cfg!(target_os = "linux")
         );
+        let message = unattended_claude_credential_error_message();
+        assert_eq!(
+            message.contains("portable provider-native credential"),
+            cfg!(target_os = "linux")
+        );
+        assert!(message.contains("Chariox-vault setup token"));
     }
 
     #[test]
