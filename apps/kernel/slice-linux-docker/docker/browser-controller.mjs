@@ -39,7 +39,7 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.tab") {
       return successResponse(
         request.id,
-        await browser.manageTab(request.params),
+        await browser.manageTab(request.params, { signal }),
       );
     }
     if (request.method === "browser.action") {
@@ -51,13 +51,13 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.navigate") {
       return successResponse(
         request.id,
-        await browser.navigate(request.params),
+        await browser.navigate(request.params, { signal }),
       );
     }
     if (request.method === "browser.history") {
       return successResponse(
         request.id,
-        await browser.manageHistory(request.params),
+        await browser.manageHistory(request.params, { signal }),
       );
     }
     if (request.method === "browser.wait") {
@@ -69,7 +69,7 @@ export async function handleBrowserControllerRequest(
     if (request.method === "browser.dialog") {
       return successResponse(
         request.id,
-        await browser.handleDialog(request.params),
+        await browser.handleDialog(request.params, { signal }),
       );
     }
     if (request.method === "browser.downloads.configure") {
@@ -185,7 +185,7 @@ export class BrowserControllerStdioServer {
         this.write(errorResponse(request.id, "controller_busy", "controller queue is full or request id is already pending"));
         continue;
       }
-      const action = ["browser.action", "browser.upload", "browser.downloads.configure", "browser.permission"].includes(request.method) ? new AbortController() : null;
+      const action = ["browser.action", "browser.upload", "browser.downloads.configure", "browser.permission", "browser.tab", "browser.navigate", "browser.history", "browser.dialog"].includes(request.method) ? new AbortController() : null;
       if (action) actions.set(request.id, action);
       queued += 1;
       pending = pending.then(async () => {
