@@ -3,6 +3,7 @@ import process from "node:process"
 import { render } from "@opentui/solid"
 
 import { CharioxCliApp } from "./cli-app-root.js"
+import { redactCliStartupArgs } from "./cli-process-logging.js"
 import { bootstrapCliRuntime } from "./cli-runtime-bootstrap.js"
 import {
   OPEN_CONSOLE_ON_ERROR,
@@ -45,7 +46,7 @@ async function main() {
 
   transcriptParserRegistration.ensureRegistered()
   processLoggers.initialize("cli")
-  getLogger("cli.main")?.info("starting cli process", { argv })
+  getLogger("cli.main")?.info("starting cli process", { argv: redactCliStartupArgs(argv) })
   const runtimeBootstrap = await bootstrapCliRuntime({
     argv,
     cwd: process.cwd(),

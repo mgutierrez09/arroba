@@ -195,6 +195,7 @@ export type ProviderAccountUsageMeterState = "healthy" | "warning" | "exhausted"
 export type ProviderAccountUsageMeter = {
   meter_id: string
   label: string
+  service_id?: string | null
   kind: ProviderAccountUsageMeterKind
   scope: ProviderAccountUsageMeterScope
   used_percent?: number | null
@@ -228,6 +229,15 @@ export const PROVIDER_CREDENTIAL_KIND_CONTRACT_VERSION = 1
  * as not reported, see `credential_kind_not_reported_reason`).
  */
 export type ProviderCredentialKind = "subscription" | "api_key" | "prepaid" | "mixed"
+export type ProviderAccountServiceCredentialType = "api_key" | "oauth" | "unknown"
+
+export type ProviderAccountService = {
+  service_id: string
+  label: string
+  auth_state: "unknown" | "not_configured" | "authenticated" | "expired" | "error"
+  credential_type: ProviderAccountServiceCredentialType
+  billing_kind?: ProviderCredentialKind | null
+}
 
 export type ProviderAccountProfile = {
   owner_user_id: string
@@ -243,6 +253,7 @@ export type ProviderAccountProfile = {
   plan?: string | null
   detected_provider_version?: string | null
   last_validated_at_ms?: number | null
+  services?: ProviderAccountService[]
   usage: ProviderAccountUsageSnapshot
   materializations?: ProviderAccountMaterializationStatus[]
 }

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import type { ProviderAccountProfile } from "@chariox/kernel-client"
+import type {
+  ProviderAccountProfile,
+  ProviderAccountUsageMeter,
+} from "@chariox/kernel-client"
 import {
   defaultProviderAccountProfileId,
   providerAccountFamily,
@@ -54,6 +57,47 @@ test("provider account display uses only the public alias", () => {
   assert.equal(providerAccountDisplayLabel(profile), "codex-1")
 })
 
+test("TUI marks hard exhaustion without hiding Claude and Codex accounts backed by credits", () => {
+  const resetsAtMs = Date.now() + 60_000
+  const allowance = usageMeter("allowance", "rolling_limit", "exhausted", resetsAtMs)
+  const credits = usageMeter("credits", "credit_balance", "exhausted")
+
+  assert.equal(
+    providerAccountDisplayLabel(accountWithUsage("opencode", [allowance])),
+    "Account",
+    "unscoped exhaustion must not mark every OpenCode service exhausted",
+  )
+  assert.equal(
+    providerAccountDisplayLabel(accountWithUsage("opencode", [
+      { ...allowance, service_id: "opencode-go" },
+    ]), "opencode-go/test-model"),
+    "Account · OpenCode Go (exhausted)",
+  )
+  for (const provider of ["claude", "claude-headless", "claude-p", "codex"]) {
+    assert.equal(
+      providerAccountDisplayLabel(accountWithUsage(provider, [allowance])),
+      "Account",
+      `${provider} allowance exhaustion alone must remain selectable in the TUI`,
+    )
+    assert.equal(
+      providerAccountDisplayLabel(accountWithUsage(provider, [allowance, credits])),
+      "Account (exhausted)",
+      `${provider} must be marked exhausted when allowance and credits are exhausted`,
+    )
+    assert.equal(
+      providerAccountDisplayLabel(accountWithUsage(provider, [allowance, credits, {
+        ...credits,
+        meter_id: "extra-spend",
+        kind: "spend_limit",
+        state: "healthy",
+        observed_at_ms: Date.now() - 86_400_001,
+      }])),
+      "Account",
+      `${provider} must not discard a stale credit meter to claim total exhaustion`,
+    )
+  }
+})
+
 test("provider account selection accepts public aliases while preserving internal id support", () => {
   const primary = account("codex", "internal-primary", true)
   primary.label = "codex-1"
@@ -101,5 +145,40 @@ function account(
       availability: "unavailable",
       source: "test",
     },
+  }
+}
+
+function accountWithUsage(
+  provider: string,
+  meters: ProviderAccountUsageMeter[],
+): ProviderAccountProfile {
+  const profile = account(provider, `${provider}-account`, true)
+  profile.label = "Account"
+  profile.usage = {
+    profile_id: profile.profile_id,
+    provider,
+    availability: "available",
+    meters,
+    observed_at_ms: Date.now(),
+    source: "test",
+  }
+  return profile
+}
+
+function usageMeter(
+  meterId: string,
+  kind: ProviderAccountUsageMeter["kind"],
+  state: ProviderAccountUsageMeter["state"],
+  resetsAtMs?: number,
+): ProviderAccountUsageMeter {
+  return {
+    meter_id: meterId,
+    label: meterId,
+    kind,
+    scope: "account",
+    state,
+    source: "test",
+    observed_at_ms: Date.now(),
+    ...(resetsAtMs === undefined ? {} : { resets_at_ms: resetsAtMs }),
   }
 }

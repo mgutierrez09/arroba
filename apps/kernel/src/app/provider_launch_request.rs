@@ -1,14 +1,71 @@
 use std::path::PathBuf;
 
+use crate::account_profile::{
+    ProviderAccountProfile, ProviderAccountProfileRegistry, ProviderAccountUsageAvailability,
+};
 use crate::app::DaemonApp;
 use crate::error::DaemonError;
 use crate::provider::{LaunchProviderRequest, RuntimeMcpBinding};
 
 use super::provider_launch_policy::{
     apply_metaagent_launch_policy, default_provider_env_remove, generate_runtime_mcp_auth_token,
-    granted_mcp_servers_for_agent_launch, resolve_mcp_credentials_for_launch,
-    sanitize_resume_state_for_launch,
+    granted_mcp_servers_for_agent_launch, registered_workflow_runtime_worktree_root,
+    resolve_mcp_credentials_for_launch, sanitize_resume_state_for_launch,
 };
+
+const PROVIDER_USAGE_REFRESH_RETRY_AFTER_MS: u64 = 5 * 60 * 1_000;
+
+fn provider_usage_refresh_due_for_launch(
+    usage: &crate::account_profile::ProviderAccountUsageSnapshot,
+    now_ms: u64,
+) -> bool {
+    let usage = usage.clone().reconciled_freshness(now_ms);
+    match usage.availability {
+        ProviderAccountUsageAvailability::Stale => true,
+        ProviderAccountUsageAvailability::Unavailable | ProviderAccountUsageAvailability::Error => {
+            usage.observed_at_ms.is_none_or(|observed_at_ms| {
+                now_ms.saturating_sub(observed_at_ms) >= PROVIDER_USAGE_REFRESH_RETRY_AFTER_MS
+            })
+        }
+        ProviderAccountUsageAvailability::Available | ProviderAccountUsageAvailability::Partial => {
+            false
+        }
+    }
+}
+
+fn refresh_provider_usage_before_launch(
+    registry: &ProviderAccountProfileRegistry,
+    owner_user_id: &str,
+    provider: &str,
+    account_profile: &str,
+    now_ms: u64,
+    refresh: impl FnOnce() -> Result<ProviderAccountProfile, DaemonError>,
+) -> Result<(), DaemonError> {
+    let profile = registry.get(owner_user_id, provider, account_profile)?;
+    if provider_usage_refresh_due_for_launch(&profile.usage, now_ms) {
+        if let Some(_refresh_lease) = registry.acquire_usage_refresh_attempt(
+            owner_user_id,
+            provider,
+            &profile.profile_id,
+            now_ms,
+            PROVIDER_USAGE_REFRESH_RETRY_AFTER_MS,
+        )? {
+            // Reporting is optional for providers and plans that expose no stable usage API.
+            // Keep unknown capacity honest rather than blocking work when refresh itself fails.
+            if refresh().is_err() {
+                crate::logging::warn_with_fields(
+                    "daemon.provider",
+                    "provider usage refresh before launch was unavailable",
+                    serde_json::json!({
+                        "provider": provider,
+                        "account_profile": account_profile,
+                    }),
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 impl DaemonApp {
     pub(crate) fn prepare_app_provider_launch_request(
@@ -52,11 +109,36 @@ impl DaemonApp {
                     &self.config,
                     &request.owner_user_id,
                 );
-            let profile = self.provider_account_profiles.get(
-                &account_owner_user_id,
-                &request.provider,
-                &request.account_profile,
-            )?;
+            let profile = if request.client_interface.is_chariox() {
+                refresh_provider_usage_before_launch(
+                    &self.provider_account_profiles,
+                    &account_owner_user_id,
+                    &request.provider,
+                    &request.account_profile,
+                    crate::session::unix_epoch_ms(),
+                    || {
+                        crate::local::provider_requests::refresh_provider_account_profile_response(
+                            &self.provider_account_profiles,
+                            &account_owner_user_id,
+                            &request.provider,
+                            &request.account_profile,
+                        )
+                    },
+                )?;
+                self.provider_account_profiles.require_authenticated(
+                    &account_owner_user_id,
+                    &request.provider,
+                    &request.account_profile,
+                    Some(&request.model),
+                    operation,
+                )?
+            } else {
+                self.provider_account_profiles.get(
+                    &account_owner_user_id,
+                    &request.provider,
+                    &request.account_profile,
+                )?
+            };
             let provider_account_env = self.provider_account_profiles.resolve_environment(
                 &account_owner_user_id,
                 &request.provider,
@@ -99,6 +181,15 @@ impl DaemonApp {
                 .filter(|workspace| !workspace.trim().is_empty())
                 .map(PathBuf::from)
                 .collect::<Vec<_>>();
+            if let Some(root) = registered_workflow_runtime_worktree_root(
+                &session,
+                request.agent_id.as_deref(),
+                request.working_directory.as_deref(),
+            ) {
+                if !roots.iter().any(|existing| existing == &root) {
+                    roots.push(root);
+                }
+            }
             for root in std::mem::take(&mut request.workspace_live_sync_roots) {
                 if !roots.iter().any(|existing| existing == &root) {
                     roots.push(root);
@@ -153,13 +244,334 @@ impl DaemonApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account_profile::{
+        ProviderAccountAuthState, ProviderAccountUsageMeter, ProviderAccountUsageMeterKind,
+        ProviderAccountUsageMeterScope, ProviderAccountUsageMeterState,
+        ProviderAccountUsageSnapshot,
+    };
     use crate::agent::CreateAgentRequest;
     use crate::provider::LaunchProviderRequest;
     use crate::provider::{AgentExecutionMode, AgentPermissionLevel};
     use crate::session::CreateSessionRequest;
 
     #[test]
+    fn launch_refreshes_unobserved_usage_before_applying_the_capacity_gate() {
+        let root = std::env::temp_dir().join(format!(
+            "chariox-provider-launch-usage-refresh-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let registry = ProviderAccountProfileRegistry::open(root.join("profiles.json"))
+            .expect("profile registry should open");
+        let profiles = registry
+            .migrate_effective_defaults("owner-a", &root.join("home"))
+            .expect("default profiles should migrate");
+        let profile = profiles
+            .into_iter()
+            .find(|profile| profile.provider == "opencode")
+            .expect("OpenCode default should exist");
+        registry
+            .update_observation(
+                "owner-a",
+                "opencode",
+                &profile.profile_id,
+                ProviderAccountAuthState::Authenticated,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("profile should be authenticated");
+        let now_ms = crate::session::unix_epoch_ms();
+        let mut refresh_count = 0;
+
+        refresh_provider_usage_before_launch(
+            &registry,
+            "owner-a",
+            "opencode",
+            &profile.profile_id,
+            now_ms,
+            || {
+                refresh_count += 1;
+                registry.update_usage(
+                    "owner-a",
+                    "opencode",
+                    &profile.profile_id,
+                    ProviderAccountUsageSnapshot {
+                        profile_id: profile.profile_id.clone(),
+                        provider: "opencode".to_string(),
+                        availability: ProviderAccountUsageAvailability::Available,
+                        meters: vec![ProviderAccountUsageMeter {
+                            meter_id: "go/monthly".to_string(),
+                            label: "OpenCode Go monthly".to_string(),
+                            service_id: Some("opencode-go".to_string()),
+                            kind: ProviderAccountUsageMeterKind::RollingLimit,
+                            scope: ProviderAccountUsageMeterScope::Plan,
+                            used_percent: Some(100.0),
+                            used: None,
+                            remaining: None,
+                            total: None,
+                            unit: None,
+                            window_duration_minutes: None,
+                            resets_at_ms: Some(now_ms + 60_000),
+                            state: ProviderAccountUsageMeterState::Exhausted,
+                            source: "test.go_usage".to_string(),
+                            observed_at_ms: now_ms,
+                        }],
+                        observed_at_ms: Some(now_ms),
+                        source: "test.go_usage".to_string(),
+                        management_url: None,
+                    },
+                )
+            },
+        )
+        .expect("launch refresh should complete");
+
+        assert_eq!(refresh_count, 1);
+        let blocked = registry
+            .require_authenticated(
+                "owner-a",
+                "opencode",
+                &profile.profile_id,
+                Some("opencode-go/deepseek-v4"),
+                "test.launch",
+            )
+            .expect_err("fresh exhausted Go usage should block the launch");
+        assert!(blocked.to_string().contains("usage is exhausted"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_launch_waits_for_in_flight_usage_refresh_before_capacity_gate() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let root = std::env::temp_dir().join(format!(
+            "chariox-provider-launch-concurrent-usage-refresh-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let registry = ProviderAccountProfileRegistry::open(root.join("profiles.json"))
+            .expect("profile registry should open");
+        let profile = registry
+            .migrate_effective_defaults("owner-a", &root.join("home"))
+            .expect("default profiles should migrate")
+            .into_iter()
+            .find(|profile| profile.provider == "opencode")
+            .expect("OpenCode default should exist");
+        registry
+            .update_observation(
+                "owner-a",
+                "opencode",
+                &profile.profile_id,
+                ProviderAccountAuthState::Authenticated,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("profile should be authenticated");
+
+        let now_ms = crate::session::unix_epoch_ms();
+        let profile_id = profile.profile_id.clone();
+        let first_registry = registry.clone();
+        let first_profile_id = profile_id.clone();
+        let (refresh_started_tx, refresh_started_rx) = mpsc::channel();
+        let (release_refresh_tx, release_refresh_rx) = mpsc::channel();
+        let first = std::thread::spawn(move || {
+            refresh_provider_usage_before_launch(
+                &first_registry,
+                "owner-a",
+                "opencode",
+                &first_profile_id,
+                now_ms,
+                || {
+                    refresh_started_tx
+                        .send(())
+                        .expect("test should observe the in-flight refresh");
+                    release_refresh_rx
+                        .recv()
+                        .expect("test should release the in-flight refresh");
+                    first_registry.update_usage(
+                        "owner-a",
+                        "opencode",
+                        &first_profile_id,
+                        ProviderAccountUsageSnapshot {
+                            profile_id: first_profile_id.clone(),
+                            provider: "opencode".to_string(),
+                            availability: ProviderAccountUsageAvailability::Available,
+                            meters: vec![ProviderAccountUsageMeter {
+                                meter_id: "go/monthly".to_string(),
+                                label: "OpenCode Go monthly".to_string(),
+                                service_id: Some("opencode-go".to_string()),
+                                kind: ProviderAccountUsageMeterKind::RollingLimit,
+                                scope: ProviderAccountUsageMeterScope::Plan,
+                                used_percent: Some(100.0),
+                                used: None,
+                                remaining: None,
+                                total: None,
+                                unit: None,
+                                window_duration_minutes: None,
+                                resets_at_ms: Some(now_ms + 60_000),
+                                state: ProviderAccountUsageMeterState::Exhausted,
+                                source: "test.go_usage".to_string(),
+                                observed_at_ms: now_ms,
+                            }],
+                            observed_at_ms: Some(now_ms),
+                            source: "test.go_usage".to_string(),
+                            management_url: None,
+                        },
+                    )
+                },
+            )
+            .expect("first launch refresh should complete");
+        });
+        refresh_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first launch should enter its refresh");
+
+        let second_registry = registry.clone();
+        let second_profile_id = profile_id.clone();
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let (second_finished_tx, second_finished_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            second_started_tx
+                .send(())
+                .expect("test should observe the second launch");
+            refresh_provider_usage_before_launch(
+                &second_registry,
+                "owner-a",
+                "opencode",
+                &second_profile_id,
+                now_ms + 1,
+                || panic!("the concurrent launch must share the in-flight refresh"),
+            )
+            .expect("second launch refresh coordination should complete");
+            let blocked = second_registry
+                .require_authenticated(
+                    "owner-a",
+                    "opencode",
+                    &second_profile_id,
+                    Some("opencode-go/deepseek-v4"),
+                    "test.concurrent_launch",
+                )
+                .is_err();
+            second_finished_tx
+                .send(blocked)
+                .expect("test should observe the second launch outcome");
+        });
+        second_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second launch should start");
+
+        if let Ok(blocked) = second_finished_rx.recv_timeout(Duration::from_millis(250)) {
+            release_refresh_tx
+                .send(())
+                .expect("first refresh should be released for cleanup");
+            first.join().expect("first launch should join");
+            second.join().expect("second launch should join");
+            panic!(
+                "second launch crossed the capacity gate before the in-flight refresh completed; blocked={blocked}"
+            );
+        }
+
+        release_refresh_tx
+            .send(())
+            .expect("first refresh should be released");
+        assert!(
+            second_finished_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("second launch should finish after the refresh"),
+            "second launch should apply the exhausted result from the shared refresh"
+        );
+        first.join().expect("first launch should join");
+        second.join().expect("second launch should join");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn launch_does_not_retry_a_recent_unavailable_usage_observation() {
+        let now_ms = crate::session::unix_epoch_ms();
+        let usage = ProviderAccountUsageSnapshot {
+            profile_id: "profile-1".to_string(),
+            provider: "opencode".to_string(),
+            availability: ProviderAccountUsageAvailability::Unavailable,
+            meters: Vec::new(),
+            observed_at_ms: Some(now_ms),
+            source: "provider_not_observed".to_string(),
+            management_url: None,
+        };
+
+        assert!(!provider_usage_refresh_due_for_launch(&usage, now_ms));
+        assert!(provider_usage_refresh_due_for_launch(
+            &usage,
+            now_ms + PROVIDER_USAGE_REFRESH_RETRY_AFTER_MS
+        ));
+    }
+
+    #[test]
+    fn launch_rate_limits_failed_usage_refreshes_per_account() {
+        let root = std::env::temp_dir().join(format!(
+            "chariox-provider-launch-usage-refresh-rate-limit-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let registry = ProviderAccountProfileRegistry::open(root.join("profiles.json"))
+            .expect("profile registry should open");
+        let profile = registry
+            .migrate_effective_defaults("owner-a", &root.join("home"))
+            .expect("default profiles should migrate")
+            .into_iter()
+            .find(|profile| profile.provider == "opencode")
+            .expect("OpenCode default should exist");
+        registry
+            .update_observation(
+                "owner-a",
+                "opencode",
+                &profile.profile_id,
+                ProviderAccountAuthState::Authenticated,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("profile should be authenticated");
+        let now_ms = crate::session::unix_epoch_ms();
+        let mut refresh_count = 0;
+        let mut refresh = || {
+            refresh_count += 1;
+            Err(DaemonError::LocalTransport {
+                operation: "test.usage_refresh",
+                message: "temporarily unavailable".to_string(),
+            })
+        };
+
+        refresh_provider_usage_before_launch(
+            &registry,
+            "owner-a",
+            "opencode",
+            &profile.profile_id,
+            now_ms,
+            &mut refresh,
+        )
+        .expect("first failed refresh should not block launch preparation");
+        refresh_provider_usage_before_launch(
+            &registry,
+            "owner-a",
+            "opencode",
+            &profile.profile_id,
+            now_ms + 1_000,
+            &mut refresh,
+        )
+        .expect("rate-limited refresh should not block launch preparation");
+
+        assert_eq!(refresh_count, 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn app_launch_preparation_scopes_workspace_live_sync_roots_to_selected_repo_and_local_links() {
+        let _env = crate::env_lock::lock();
         let base = std::env::temp_dir().join(format!(
             "chariox-app-live-sync-root-scope-{}-{}",
             std::process::id(),

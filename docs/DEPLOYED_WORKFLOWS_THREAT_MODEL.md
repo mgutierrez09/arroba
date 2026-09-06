@@ -273,7 +273,7 @@ those boundaries.
   before forwarding bounded entries.
 - The publication image installs exact versioned official provider packages and
   verifies each CLI version at image build. The current pins are Codex 0.144.0,
-  OpenCode 1.18.23, and Claude Code 2.1.207. Runners launch the resolved immutable
+  OpenCode 1.18.23, and Claude Code 2.1.212. Runners launch the resolved immutable
   image ID, and the v3 contract carries stable provider bundle references.
 - The runner validates limits before Docker. Current defaults are 2 GiB memory
   with swap disabled, 2 CPUs, 256 PIDs, and 4,096 open files, plus bounded

@@ -5,6 +5,29 @@
 
 use super::*;
 
+impl owned::OwnedRemoteAgentProfileUpdate {
+    pub(super) fn validate_worker_acknowledgement(
+        &self,
+        home_agent_id: &str,
+        leased_agent: &crate::execution_lease::LeasedAgent,
+    ) -> Result<(), DaemonError> {
+        if leased_agent.id != self.leased_agent_id
+            || leased_agent.lease_id != self.execution_lease_id
+            || leased_agent.home_agent_id != home_agent_id
+            || leased_agent.provider != self.provider
+            || leased_agent.account_profile != self.account_profile
+            || leased_agent.model != self.model
+            || leased_agent.effort != self.effort
+        {
+            return Err(DaemonError::LocalTransport {
+                operation: "update remote leased agent profile",
+                message: "the worker acknowledgement does not match the requested agent, lease, or provider profile; the home profile was not changed".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
 impl KernelRuntimeOwnedState {
     pub(super) fn update_agent_profile(
         &self,
@@ -141,6 +164,7 @@ impl KernelRuntimeOwnedState {
                 .remote_execution()
                 .map(|binding| owned::OwnedRemoteAgentProfileUpdate {
                     worker_kernel_id: binding.worker_kernel_id.clone(),
+                    execution_lease_id: binding.execution_lease_id.clone(),
                     leased_agent_id: binding.leased_agent_id.clone(),
                     relay_url: binding.relay_url.clone(),
                     relay_token: binding.relay_token.clone(),
@@ -239,6 +263,24 @@ impl KernelRuntimeOwnedState {
                 ),
             });
         }
+        if crate::provider::canonical_provider_family(&provider).is_some() {
+            let account_owner_user_id =
+                crate::account_profile::provider_account_authority_owner_user_id(
+                    &self.config_projection.snapshot(),
+                    agent.owner_user_id(),
+                );
+            let confirmed = self.provider_account_profiles.get(
+                &account_owner_user_id,
+                &provider,
+                &account_profile,
+            )?;
+            if confirmed.profile_id != account_profile {
+                return Err(DaemonError::LocalTransport {
+                    operation: "commit remote agent profile",
+                    message: "selected account identity changed while the worker confirmed the profile; select the account again".into(),
+                });
+            }
+        }
         let resume_state = agent
             .provider_resume_state()
             .without_provider_session_id(agent.provider())
@@ -283,7 +325,7 @@ impl KernelRuntimeOwnedState {
         agent_id: &str,
         caller_user_id: &str,
         action: crate::local::AgentSubstituteAction,
-    ) -> Result<crate::agent::AgentInstance, DaemonError> {
+    ) -> Result<(crate::agent::AgentInstance, Option<String>), DaemonError> {
         let agent = self.agent_store.get_agent(agent_id)?;
         if agent.session_id() != session_id {
             return Err(DaemonError::AgentNotInSession {
@@ -292,7 +334,8 @@ impl KernelRuntimeOwnedState {
             });
         }
         self.ensure_agent_owner(agent_id, caller_user_id, "update agent substitutes")?;
-        match action {
+        let retired_run = self.prepare_agent_substitute_transition(&agent, &action)?;
+        let updated = match action {
             crate::local::AgentSubstituteAction::Add {
                 provider,
                 model,
@@ -401,6 +444,12 @@ impl KernelRuntimeOwnedState {
             crate::local::AgentSubstituteAction::Remove { index } => {
                 self.agent_store.remove_agent_substitute(agent_id, index)
             }
+            crate::local::AgentSubstituteAction::Move {
+                from_index,
+                to_index,
+            } => self
+                .agent_store
+                .move_agent_substitute(agent_id, from_index, to_index),
             crate::local::AgentSubstituteAction::Clear {} => {
                 self.agent_store.clear_agent_substitutes(agent_id)
             }
@@ -418,6 +467,7 @@ impl KernelRuntimeOwnedState {
             crate::local::AgentSubstituteAction::Primary {} => {
                 self.agent_store.deactivate_agent_substitute(agent_id)
             }
-        }
+        }?;
+        Ok((updated, retired_run))
     }
 }

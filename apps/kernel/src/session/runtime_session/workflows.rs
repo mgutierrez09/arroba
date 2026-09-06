@@ -598,7 +598,7 @@ impl RuntimeSession {
             .collect()
     }
 
-    fn workflow_run_ids_with_owned_prompts(&self) -> BTreeSet<String> {
+    fn workflow_run_ids_pending_prompt_settlement(&self) -> BTreeSet<String> {
         self.prompt_runtime
             .prompt_states()
             .values()
@@ -609,15 +609,15 @@ impl RuntimeSession {
                     .chain(state.queued_prompts())
             })
             .filter_map(|prompt| prompt.workflow_run_id().map(str::to_string))
+            .chain(self.settling_workflow_run_counts.keys().cloned())
             .collect()
     }
 
     pub(crate) fn durable_runtime_snapshot(&self) -> Self {
-        let workflow_run_ids_with_owned_prompts = self.workflow_run_ids_with_owned_prompts();
+        let pending_settlement = self.workflow_run_ids_pending_prompt_settlement();
         let mut snapshot = self.clone();
         snapshot.workflow_runs.retain(|workflow_run| {
-            !workflow_run.status().is_terminal()
-                || workflow_run_ids_with_owned_prompts.contains(workflow_run.id())
+            !workflow_run.status().is_terminal() || pending_settlement.contains(workflow_run.id())
         });
         snapshot
             .workflow_publication_state
@@ -627,12 +627,12 @@ impl RuntimeSession {
     }
 
     pub(crate) fn archive_terminal_workflow_runs(&mut self) -> Vec<WorkflowRun> {
-        let workflow_run_ids_with_owned_prompts = self.workflow_run_ids_with_owned_prompts();
+        let pending_settlement = self.workflow_run_ids_pending_prompt_settlement();
         let mut active = Vec::with_capacity(self.workflow_runs.len());
         let mut archived = Vec::new();
         for workflow_run in self.workflow_runs.drain(..) {
             if workflow_run.status().is_terminal()
-                && !workflow_run_ids_with_owned_prompts.contains(workflow_run.id())
+                && !pending_settlement.contains(workflow_run.id())
             {
                 archived.push(workflow_run);
             } else {

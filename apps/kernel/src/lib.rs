@@ -55,3 +55,5 @@ pub use error::DaemonError;
 
 #[cfg(test)]
 mod lib_tests;
+#[cfg(test)]
+pub(crate) mod test_support;

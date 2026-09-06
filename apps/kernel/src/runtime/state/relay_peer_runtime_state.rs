@@ -217,6 +217,7 @@ impl KernelRuntimeState {
         model: Option<String>,
         effort: Option<String>,
     ) -> Result<LeasedAgent, DaemonError> {
+        let _operation = self.leased_agent_operations.lock(leased_agent_id).await;
         let leased_agent_id = leased_agent_id.to_string();
         self.with_app_side_effect(move |app| {
             RemoteLeaseRuntime::new(app).update_leased_agent_profile(
@@ -337,9 +338,12 @@ impl KernelRuntimeState {
         .await
     }
 
+    // Keep the relay request fields explicit, like the adjacent lease adapters.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn submit_relay_leased_prompt(
         &self,
         leased_agent_id: &str,
+        expected_profile: crate::transport::relay_peer::RelayAgentExecutionProfile,
         prompt: &str,
         hidden_system_context: &str,
         attachments: Vec<RelayPromptAttachment>,
@@ -349,6 +353,7 @@ impl KernelRuntimeState {
         required_skills: Option<Vec<crate::transport::relay_peer::RequiredRemoteSkill>>,
         remote_extension_manifest: crate::extension::RemoteExtensionManifest,
     ) -> Result<(String, crate::session::PromptSubmissionOutcome), DaemonError> {
+        let _operation = self.leased_agent_operations.lock(leased_agent_id).await;
         let leased_agent_id = leased_agent_id.to_string();
         let prompt = prompt.to_string();
         let hidden_system_context = hidden_system_context.to_string();
@@ -356,6 +361,15 @@ impl KernelRuntimeState {
         let replay_git_context = git_context.clone();
         if let Some(replayed) = self
             .with_app_side_effect(move |app| {
+                // A prior profile acknowledgement may have been lost. Home remains
+                // authoritative, including when this is a retry of an active prompt.
+                RemoteLeaseRuntime::new(app).update_leased_agent_profile(
+                    &replay_leased_agent_id,
+                    expected_profile.provider,
+                    expected_profile.account_profile,
+                    expected_profile.model,
+                    expected_profile.effort,
+                )?;
                 RemoteLeaseRuntime::new(app).replay_active_leased_prompt_submission(
                     &replay_leased_agent_id,
                     replay_git_context.as_ref(),
@@ -625,6 +639,19 @@ impl KernelRuntimeState {
                 )
             })
             .await?;
+        if !outcome.accepted {
+            return Ok(());
+        }
+        if let Some(failure) = outcome.provider_failure {
+            self.finish_remote_provider_failure(
+                &session_id,
+                &agent_id,
+                &provider_run_id,
+                &outcome.completions,
+                failure,
+            )
+            .await?;
+        }
         for completion in outcome.completions {
             self.inject_metaagent_turn_completion_event(&session_id, &agent_id, &completion)?;
         }

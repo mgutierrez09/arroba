@@ -186,6 +186,77 @@ test("GET /health collapses provider runtime aliases before readiness probing", 
   }
 })
 
+test("GET /health checks each selected provider account instead of the provider default", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chariox-server-publication-account-health-"))
+  await writeFile(join(root, "publication.json"), JSON.stringify({ schema_version: 1 }))
+  await writeFile(join(root, "workflow.snapshot.json"), JSON.stringify({
+    schema_version: 1,
+    source_session: { id: "source-session-1" },
+    workflow: { id: "workflow-1", nodes: [] },
+    endpoint: { id: "endpoint-1" },
+    agents: [
+      { id: "agent-1", provider: "claude", account_profile: "claude-team" },
+      { id: "agent-2", provider: "claude-headless", account_profile: "claude-personal" },
+      { id: "agent-3", provider: "claude-p", account_profile: "claude-team" },
+    ],
+  }))
+  await writeFile(join(root, "requirements.json"), JSON.stringify({ schema_version: 1 }))
+  const requests: Record<string, unknown>[] = []
+  let closed = false
+  const { app } = buildServer({
+    ...baseConfig,
+    package_root: root,
+  }, {
+    invokeWorkflow: async () => ({ accepted: true }),
+    getProviderCliStatus: async (command) => ({ available: true, command, version: "claude 1.0.0" }),
+    createProviderReadinessClient: () => ({
+      send: async (request) => {
+        requests.push(request)
+        const accountProfile = (request.GetProviderAuthStatus as { account_profile?: string })?.account_profile
+        return {
+          ProviderAuthStatus: {
+            status: {
+              auth_state: accountProfile === "default" ? "expired" : "authenticated",
+              account_profile: accountProfile,
+            },
+          },
+        }
+      },
+      close: async () => { closed = true },
+    }),
+  })
+
+  try {
+    const response = await app.inject({ method: "GET", url: "/health" })
+
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(requests, [
+      { GetProviderAuthStatus: { provider: "claude", account_profile: "claude-personal" } },
+      { GetProviderAuthStatus: { provider: "claude", account_profile: "claude-team" } },
+    ])
+    assert.deepEqual(response.json().provider_readiness.map((readiness: Record<string, unknown>) => ({
+      provider: readiness.provider,
+      status: readiness.status,
+      auth: readiness.auth,
+    })), [
+      {
+        provider: "claude",
+        status: "provider_ready",
+        auth: { status: "provider_ready", account_profile: "claude-personal" },
+      },
+      {
+        provider: "claude",
+        status: "provider_ready",
+        auth: { status: "provider_ready", account_profile: "claude-team" },
+      },
+    ])
+    assert.equal(closed, true)
+  } finally {
+    await app.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("GET publication status reports runtime binding", async () => {
   const { app } = buildServer({
     ...baseConfig,

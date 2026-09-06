@@ -32,6 +32,11 @@ const CODEX_SESSION_ENV_VARS: &[&str] = &[
     "CODEX_STARTING_DIFF",
     "CODEX_ESCALATE_SOCKET",
     "RUST_LOG",
+    // This is macOS process bookkeeping, not provider configuration. Carrying
+    // a parent's 0x2 value into a fresh Codex app-server breaks its auth HTTP
+    // requests, even though the same request succeeds without the inherited flag.
+    #[cfg(target_os = "macos")]
+    "XPC_FLAGS",
 ];
 
 pub fn resolve_codex_executable() -> Result<PathBuf, DaemonError> {
@@ -279,6 +284,11 @@ mod tests {
             .iter()
             .any(|name| name == "CODEX_TURN_STATE_HEADER"));
         assert!(launch.pty_env_remove.iter().any(|name| name == "RUST_LOG"));
+        #[cfg(target_os = "macos")]
+        assert!(
+            launch.pty_env_remove.iter().any(|name| name == "XPC_FLAGS"),
+            "Codex must not inherit macOS XPC process flags that break account-service networking"
+        );
     }
 
     #[test]

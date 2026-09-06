@@ -374,6 +374,16 @@ impl AgentServiceStore {
         self.write().remove_agent_substitute(agent_id, index)
     }
 
+    pub fn move_agent_substitute(
+        &self,
+        agent_id: &str,
+        from_index: usize,
+        to_index: usize,
+    ) -> Result<AgentInstance, DaemonError> {
+        self.write()
+            .move_agent_substitute(agent_id, from_index, to_index)
+    }
+
     pub fn clear_agent_substitutes(&self, agent_id: &str) -> Result<AgentInstance, DaemonError> {
         self.write().clear_agent_substitutes(agent_id)
     }

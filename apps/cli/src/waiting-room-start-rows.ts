@@ -4,7 +4,7 @@ import {
   type CatalogModelOption,
 } from "./provider-catalog.js"
 import type { SliceRecord } from "./cli-types.js"
-import type { ProviderAccountProfile } from "@chariox/kernel-client"
+import { providerAccountCapacityLabel, type ProviderAccountProfile } from "@chariox/kernel-client"
 import { formatWaitingRoomSliceSelection, waitingRoomSlices } from "./waiting-room-slices.js"
 import {
   formatWaitingRoomLaunchKernelValue,
@@ -174,7 +174,7 @@ export function waitingRoomStartRows(
     {
       id: "account",
       title: "Account",
-      value: formatAccountValue(choice.accountProfile ?? null),
+      value: formatAccountValue(choice.accountProfile ?? null, choice.model?.id),
       titleWidth: options.titleWidth,
       indent: 1,
       focused: state.focus === "account",
@@ -420,11 +420,11 @@ function startRow(
   }
 }
 
-function formatAccountValue(profile: ProviderAccountProfile | null): string {
+function formatAccountValue(profile: ProviderAccountProfile | null, model?: string | null): string {
   if (!profile) {
     return "Default (not discovered)"
   }
-  return profile.label
+  return providerAccountCapacityLabel(profile, Date.now(), model)
 }
 
 function formatTitleCase(value: string) {

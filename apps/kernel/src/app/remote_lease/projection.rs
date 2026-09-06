@@ -18,7 +18,16 @@ const REMOTE_COMPLETION_HARVEST_RESPONSE_TIMEOUT: std::time::Duration =
 
 #[derive(Debug, Default)]
 pub(crate) struct RemoteRuntimeProjectionOutcome {
+    pub(crate) accepted: bool,
     pub(crate) completions: Vec<PromptCompletion>,
+    pub(crate) provider_failure: Option<RemoteProviderFailure>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RemoteProviderFailure {
+    pub(crate) adapter_key: String,
+    pub(crate) message: String,
+    pub(crate) profile_transition: crate::runtime::prompt_state::AgentProfileTransitionClaim,
 }
 
 impl<'a> RemoteLeaseRuntime<'a> {
@@ -460,7 +469,8 @@ impl<'a> RemoteLeaseRuntime<'a> {
         if completions.is_empty()
             && !backing_prompt_active
             && !explicit_completion_waiting
-            && !(requires_explicit_completion && explicit_completion_already_projected)
+            && !((requires_explicit_completion || provider_run_failed)
+                && explicit_completion_already_projected)
             && (settled_quiet
                 || has_settleable_output_history
                 || (requires_explicit_completion && provider_run_has_projected_output)
@@ -767,24 +777,31 @@ impl<'a> RemoteLeaseRuntime<'a> {
     ) -> Result<RemoteRuntimeProjectionOutcome, DaemonError> {
         let _ = self.app.sessions.get_session(session_id)?;
         let mut outcome = RemoteRuntimeProjectionOutcome::default();
+        let agent = self.app.agents.get_agent(agent_id)?;
+        if let Some(remote) = agent.remote_execution() {
+            let admitted = match remote.active_worker_provider_run_id.as_deref() {
+                Some(current) => current == provider_run_id,
+                // Native TUI prompts originate on the worker. Managed prompts
+                // instead acquire their run binding through dispatch ACK/recovery;
+                // old snapshots cannot recreate it after a profile switch.
+                None => provider_run
+                    .as_ref()
+                    .is_some_and(|run| !run.client_interface().is_chariox()),
+            };
+            if !admitted {
+                return Ok(outcome);
+            }
+        }
+        outcome.accepted = true;
+        let leased_agent_id = agent
+            .remote_execution()
+            .map(|remote| remote.leased_agent_id.clone())
+            .unwrap_or_else(|| agent_id.to_string());
+        let projected_provider_run_id =
+            crate::provider::projected_leased_provider_run_id(&leased_agent_id, provider_run_id);
         if let Some(provider_run) = provider_run {
-            let leased_agent_id = self
-                .app
-                .agents
-                .get_agent(agent_id)
-                .ok()
-                .and_then(|agent| {
-                    agent
-                        .remote_execution()
-                        .map(|remote| remote.leased_agent_id.clone())
-                })
-                .unwrap_or_else(|| agent_id.to_string());
-            let projected_provider_run_id = crate::provider::projected_leased_provider_run_id(
-                &leased_agent_id,
-                provider_run_id,
-            );
             let projected_run = provider_run.projected_for_home_agent_with_id(
-                projected_provider_run_id,
+                projected_provider_run_id.clone(),
                 session_id.to_string(),
                 agent_id.to_string(),
             );
@@ -919,13 +936,18 @@ impl<'a> RemoteLeaseRuntime<'a> {
                 ) {
                     let message =
                         "provider completed workflow turn without a validated workflow output";
-                    let provider_diagnostic = self
+                    let failed_provider = self
                         .app
-                        .providers()
-                        .get_run(provider_run_id)
-                        .ok()
+                        .provider_run_projection
+                        .get(&projected_provider_run_id);
+                    let provider_diagnostic = failed_provider
+                        .as_ref()
                         .and_then(|run| run.terminal_diagnostic().map(str::to_string))
                         .filter(|message| !message.trim().is_empty());
+                    let failure_details = failed_provider
+                        .as_ref()
+                        .zip(provider_diagnostic.as_ref())
+                        .map(|(run, message)| (run.adapter_key().to_string(), message.clone()));
                     let (failure_kind, failure_message, notice_message) = if let Some(diagnostic) =
                         provider_diagnostic
                     {
@@ -976,9 +998,31 @@ impl<'a> RemoteLeaseRuntime<'a> {
                         provider_run_id,
                         projected_settled_at_ms.unwrap_or_else(crate::session::unix_epoch_ms),
                     );
-                    let completed = self
-                        .app
-                        .prompt_owner_complete_active_prompt_only(session_id, agent_id)?;
+                    let completed = if let Some((adapter_key, message)) = failure_details {
+                        let session = self.app.sessions.get_session(session_id)?;
+                        let Some((completed, profile_transition)) = self
+                            .app
+                            .prompt_state_owner()
+                            .complete_active_prompt_and_claim_profile_transition(
+                            &session,
+                            agent_id,
+                            active_prompt.id(),
+                        )?
+                        else {
+                            return Ok(outcome);
+                        };
+                        self.app
+                            .mirror_prompt_owner_agent_state(session_id, agent_id)?;
+                        outcome.provider_failure = Some(RemoteProviderFailure {
+                            adapter_key,
+                            message,
+                            profile_transition,
+                        });
+                        completed
+                    } else {
+                        self.app
+                            .prompt_owner_complete_active_prompt_only(session_id, agent_id)?
+                    };
                     outcome.completions.push(PromptCompletion {
                         completed,
                         started_next: None,
@@ -1962,6 +2006,12 @@ mod explicit_completion_tests {
         let RelayPeerEvent::LeasedRuntimeProjection { completions, .. } = first_settled.1;
         assert_eq!(completions.len(), 1);
 
+        // The Codex label above exercises only explicit-completion projection.
+        // Admission must still use the actual stub run's execution profile.
+        app.leased_agents
+            .get_mut(&leased_agent.id)
+            .unwrap()
+            .provider = leased_agent.provider.clone();
         let (reused_provider_run_id, second_outcome) = RemoteLeaseRuntime::new(&mut app)
             .submit_leased_prompt(&leased_agent.id, "second remote prompt\n", Vec::new())
             .expect("second leased prompt should submit");
@@ -1970,6 +2020,10 @@ mod explicit_completion_tests {
             PromptSubmissionOutcome::Started { .. }
         ));
         assert_eq!(reused_provider_run_id, provider_run_id);
+        app.leased_agents
+            .get_mut(&leased_agent.id)
+            .unwrap()
+            .provider = "codex".to_string();
         let second_completed_at_ms = RemoteLeaseRuntime::new(&mut app)
             .leased_agent_snapshot_for_test(&leased_agent.id)
             .and_then(|agent| agent.active_home_prompt_started_at_ms)

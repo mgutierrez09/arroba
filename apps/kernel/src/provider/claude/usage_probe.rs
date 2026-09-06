@@ -410,6 +410,14 @@ process.stdout.write(JSON.stringify({
     }
 
     #[test]
+    fn rejects_legacy_command_summary_without_subscription_windows() {
+        assert!(claude_usage_snapshot_from_text(
+            "Total cost: $0.0000\nTotal duration (API): 0s\nUsage: 0 input, 0 output, 0 cache read, 0 cache write",
+        )
+        .is_none());
+    }
+
+    #[test]
     fn rejects_account_home_override_when_profile_home_is_unsupported() {
         let environment = BTreeMap::from([("HOME".to_string(), "/tmp/account".to_string())]);
 

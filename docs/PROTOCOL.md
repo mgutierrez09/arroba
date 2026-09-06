@@ -384,6 +384,26 @@ Relay peer protocol v15 carries the home kernel's private hidden prompt context 
 context when a queued prompt is dispatched to a leased worker; older workers are
 rejected by the existing relay peer version check.
 
+Relay peer protocol v25 requires `SubmitLeasedPrompt.expected_profile`, containing
+the home-selected provider, stable provider-account ID, optional model, and optional
+effort. It carries no credentials. The worker reconciles this profile before replay
+or admission, using its lease owner's existing account registry. An unavailable
+account blocks admission rather than selecting a different account. Profile changes
+and prompt admission are serialized per leased agent through provider launch and
+prompt ownership assignment. Confirming an unchanged profile is safe during a
+replayed active turn; changing it requires an idle agent. This makes the next prompt
+use the profile committed at home even if an earlier worker update acknowledgement
+was lost. Incompatible peer versions must be rebound before dispatch.
+
+Version 25 also removes the separate `ForwardWorkflowProviderFailure` request and
+its acknowledgement. Workers settle failed leased turns locally without waiting
+for a home RPC. The existing runtime projection carries the terminal diagnostic
+and correlated, replayable completion. The home settles only the matching active
+turn, reserves agent admission, releases the failed workflow's workspace claim,
+and confirms the selected substitute on the worker before advancing queued work.
+Rejected profile acknowledgements preserve the queue. Delayed managed projections
+cannot re-establish a cleared worker-run binding after a profile change.
+
 ## 4.1 Current Kernel Transport Baseline
 
 For the current local baseline, the kernel exposes a request/response plus pushed-event surface over a daemon-owned WebSocket transport.

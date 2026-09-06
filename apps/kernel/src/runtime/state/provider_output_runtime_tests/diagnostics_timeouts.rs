@@ -1558,8 +1558,9 @@ async fn meta_mode_activation_registers_pending_provider_reload_when_agent_busy(
 
 #[tokio::test]
 async fn metaagent_receives_required_failed_turn_event_on_provider_timeout() {
-    let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-        .expect("daemon bootstrap should succeed");
+    let mut app =
+        crate::test_support::bootstrap_authenticated_app(crate::config::DaemonConfig::for_tests())
+            .expect("daemon bootstrap should succeed");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-meta-failure",

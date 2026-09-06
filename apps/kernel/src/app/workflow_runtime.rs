@@ -811,8 +811,10 @@ mod tests {
 
     #[test]
     fn queued_workflow_prompt_preserves_agent_runtime_context() {
-        let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-            .expect("daemon bootstrap should succeed");
+        let mut app = crate::test_support::bootstrap_authenticated_app(
+            crate::config::DaemonConfig::for_tests(),
+        )
+        .expect("daemon bootstrap should succeed");
         let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
             .create_session(crate::session::CreateSessionRequest::new(
                 "workspace-1",
@@ -827,6 +829,13 @@ mod tests {
                 "Workflow test",
             )
             .expect("test account profile should be registered");
+        crate::test_support::authenticate_provider_account(
+            &app.provider_account_profile_registry(),
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            &profile.profile_id,
+        )
+        .expect("workflow fixture account should be authenticated");
         let agent = crate::app::KernelSessionService::new(&mut app)
             .spawn_agent(
                 crate::agent::CreateAgentRequest::new(session.id(), "codex")
@@ -1150,6 +1159,9 @@ mod tests {
 
     #[test]
     fn workflow_context_flush_waits_for_an_active_user_prompt_before_replacing_provider() {
+        // Provider setup reads environment-backed account paths. Config tests
+        // may replace and remove those roots while this test promotes the queue.
+        let _environment = crate::env_lock::lock();
         let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
             .expect("daemon bootstrap should succeed");
         let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
@@ -1278,8 +1290,11 @@ mod tests {
 
     #[test]
     fn queued_event_prompt_derives_reply_and_context_capabilities_independently() {
-        let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-            .expect("daemon bootstrap should succeed");
+        let _environment = crate::env_lock::lock();
+        let mut app = crate::test_support::bootstrap_authenticated_app(
+            crate::config::DaemonConfig::for_tests(),
+        )
+        .expect("daemon bootstrap should succeed");
         let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
             .create_session(crate::session::CreateSessionRequest::new(
                 "workspace-event",
@@ -1456,8 +1471,11 @@ mod tests {
 
     #[test]
     fn queued_workflow_scheduler_continues_after_invalid_candidate() {
-        let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-            .expect("daemon bootstrap should succeed");
+        let _environment = crate::env_lock::lock();
+        let mut app = crate::test_support::bootstrap_authenticated_app(
+            crate::config::DaemonConfig::for_tests(),
+        )
+        .expect("daemon bootstrap should succeed");
         let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
             .create_session(crate::session::CreateSessionRequest::new(
                 "workspace-1",

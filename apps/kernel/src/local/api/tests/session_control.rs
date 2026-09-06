@@ -971,6 +971,13 @@ fn same_agent_profile_update_keeps_active_provider_run() {
         _ => panic!("unexpected local response"),
     };
     let active_run_id = harness.with_app_mut(|app| {
+        crate::test_support::authenticate_provider_account(
+            &app.provider_account_profile_registry(),
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            "default",
+        )
+        .expect("synthetic provider account should be authenticated");
         app.launch_provider(
             LaunchProviderRequest::new(session.id(), "dev-stub", "codex", "default", "gpt-5.4")
                 .with_agent_id(agent.id()),

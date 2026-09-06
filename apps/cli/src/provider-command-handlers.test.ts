@@ -70,6 +70,24 @@ test("provider account list explains unavailable usage and exhausted limits", as
       origin: "default",
       is_default: true,
       auth_state: "authenticated",
+      services: [{
+        service_id: "opencode",
+        label: "OpenCode Zen",
+        auth_state: "authenticated",
+        credential_type: "api_key",
+        billing_kind: "prepaid",
+      }, {
+        service_id: "opencode-go",
+        label: "OpenCode Go",
+        auth_state: "authenticated",
+        credential_type: "api_key",
+        billing_kind: "subscription",
+      }, {
+        service_id: "openai",
+        label: "OpenAI",
+        auth_state: "authenticated",
+        credential_type: "oauth",
+      }],
       usage: {
         profile_id: "default",
         provider: "opencode",
@@ -85,6 +103,9 @@ test("provider account list explains unavailable usage and exhausted limits", as
 
   assert.match(notices.join("\n"), /100% used · exhausted · resets in 1h/)
   assert.match(notices.join("\n"), /not reported \(OpenCode exposes local stats, not upstream balance\)/)
+  assert.match(notices.join("\n"), /OpenCode Zen authenticated \(api key\/prepaid\)/)
+  assert.match(notices.join("\n"), /OpenCode Go authenticated \(api key\/subscription\)/)
+  assert.match(notices.join("\n"), /OpenAI authenticated \(oauth\)/)
   assert.doesNotMatch(notices.join("\n"), /secondary|owner@example.com/)
 })
 

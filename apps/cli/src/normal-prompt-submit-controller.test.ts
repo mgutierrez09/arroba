@@ -289,6 +289,10 @@ test("normal prompt submit restores UI after submit failure", async () => {
   assert.deepEqual(harness.submittingValues(), [false])
   assert.equal(harness.workingValues().at(-1), false)
   assert.equal(harness.fatalErrors().at(-1), "submit failed")
+  assert.deepEqual(harness.footerMessages().at(-1), {
+    message: "submit failed",
+    tone: "error",
+  })
 })
 
 test("normal prompt submit failure preserves active session runtime state", async () => {

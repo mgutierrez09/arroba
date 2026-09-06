@@ -482,6 +482,8 @@ mod tests {
     fn malformed_turn_started_is_skipped_without_returning_an_empty_turn_id() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind websocket fixture");
         let address = listener.local_addr().expect("resolve websocket fixture");
+        let (valid_frame_ready_tx, valid_frame_ready_rx) = std::sync::mpsc::channel();
+        let (release_valid_socket_tx, release_valid_socket_rx) = std::sync::mpsc::channel();
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().expect("accept websocket fixture");
             let mut malformed_socket = accept(stream).expect("upgrade websocket fixture");
@@ -511,6 +513,12 @@ mod tests {
                     .into(),
                 ))
                 .expect("send valid turn-start notification");
+            valid_frame_ready_tx
+                .send(())
+                .expect("signal valid frame ready");
+            release_valid_socket_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("client should consume valid frame before fixture closes");
         });
         let endpoint = format!("ws://{address}");
         let (mut malformed_socket, _) = connect(&endpoint).expect("connect malformed fixture");
@@ -524,6 +532,9 @@ mod tests {
         );
 
         let (mut valid_socket, _) = connect(&client.endpoint).expect("connect valid fixture");
+        valid_frame_ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("fixture should send valid frame before notification deadline starts");
         assert_eq!(
             client
                 .read_notification(&mut valid_socket, Duration::from_secs(1))
@@ -532,6 +543,9 @@ mod tests {
                 turn_id: "turn-1".to_string(),
             })
         );
+        release_valid_socket_tx
+            .send(())
+            .expect("release valid fixture");
         drop(malformed_socket);
         drop(valid_socket);
         server.join().expect("join websocket fixture");

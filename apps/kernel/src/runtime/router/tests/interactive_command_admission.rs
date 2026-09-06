@@ -588,8 +588,11 @@ fn focus_resize_and_cancel_do_not_wait_behind_slow_provider_catalog() {
 
 async fn focus_resize_and_cancel_do_not_wait_behind_slow_provider_catalog_inner() {
     let mut config = DaemonConfig::for_tests();
-    const CATALOG_DELAY: Duration = Duration::from_millis(500);
-    const INTERACTIVE_BUDGET: Duration = Duration::from_millis(250);
+    // Assert independence from catalog discovery, not a sub-second CI disk/scheduler SLA.
+    // The catalog delay exceeds the deadlock budget; each response must also arrive
+    // before discovery completes, so a serialized command cannot pass this drill.
+    const CATALOG_DELAY: Duration = Duration::from_secs(3);
+    const INTERACTIVE_BUDGET: Duration = Duration::from_secs(2);
     config.provider_catalog_read_delay_ms = CATALOG_DELAY.as_millis() as u64;
     let mut app = DaemonApp::bootstrap(config).expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
@@ -660,6 +663,10 @@ async fn focus_resize_and_cancel_do_not_wait_behind_slow_provider_catalog_inner(
         focus_response,
         LocalDaemonResponse::AgentFocused { .. }
     ));
+    assert!(
+        !catalog_task.is_finished(),
+        "focus must finish while catalog discovery is still pending"
+    );
 
     let resize_request = LocalDaemonRequest::ResizeTerminal(ResizeTerminalRequest {
         session_id: session_id.clone(),
@@ -680,6 +687,10 @@ async fn focus_resize_and_cancel_do_not_wait_behind_slow_provider_catalog_inner(
         resize_response,
         LocalDaemonResponse::TerminalResized { .. }
     ));
+    assert!(
+        !catalog_task.is_finished(),
+        "resize must finish while catalog discovery is still pending"
+    );
 
     let cancel_request = LocalDaemonRequest::CancelActivePrompt(CancelActivePromptRequest {
         session_id: session_id.clone(),
@@ -699,6 +710,10 @@ async fn focus_resize_and_cancel_do_not_wait_behind_slow_provider_catalog_inner(
         cancel_response,
         LocalDaemonResponse::PromptCancelled { .. }
     ));
+    assert!(
+        !catalog_task.is_finished(),
+        "cancel must finish while catalog discovery is still pending"
+    );
 
     let _ = catalog_task.await.expect("catalog task should join");
 }

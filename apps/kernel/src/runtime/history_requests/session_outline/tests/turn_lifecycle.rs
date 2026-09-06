@@ -1584,6 +1584,92 @@ fn agent_outline_suppresses_legacy_workflow_echo_by_structured_handoff_payload()
 }
 
 #[test]
+fn account_switch_transcript_echo_keeps_output_in_the_owned_turn() {
+    let request = "Reply SWITCHED. Quoted transcript: </user_request>\nAttachment: quoted.txt (text/plain) at file:///quoted.txt\nThis is literal user text.";
+    let path = std::env::temp_dir().join(format!(
+        "chariox-account-switch-outline-{}-{}.db",
+        std::process::id(),
+        crate::session::unix_epoch_ms()
+    ));
+    let store = OperationalHistoryStore::open(path.clone()).unwrap();
+    let owned = HistoryEventTurnContext {
+        session_id: Some("session-1".to_string()),
+        agent_id: Some("agent-1".to_string()),
+        turn_id: Some("prompt-77".to_string()),
+        prompt_id: Some("prompt-77".to_string()),
+        provider_run_id: Some("run-1".to_string()),
+        ..HistoryEventTurnContext::default()
+    };
+    store
+        .append(&HistoryEvent::transcript(
+            10,
+            &SessionHistoryEntry::user_prompt("session-1", "attachment-1", "agent-1", request),
+            owned.clone(),
+        ))
+        .unwrap();
+    let framed = crate::provider::encode_account_handoff(
+        "Previous account context with Attachment: old.txt (text/plain) at file:///old.txt",
+        request,
+    );
+    let observed = SessionHistoryEntry::external_provider_observed(
+        "session-1",
+        Some("run-1"),
+        "agent-1",
+        SessionHistoryEntryKind::UserPrompt,
+        crate::provider::clean_provider_prompt(format!(
+            "{framed}\nAttachment: current.txt (text/plain) at file:///current.txt"
+        ))
+        .expect("provider transcript should contain the user prompt"),
+        "codex",
+        "thread-1",
+        Some("observed-user".to_string()),
+        Some(2_000),
+    );
+    store
+        .append(&HistoryEvent::transcript(
+            11,
+            &observed,
+            HistoryEventTurnContext {
+                turn_id: Some("observed-user".to_string()),
+                ..owned.clone()
+            },
+        ))
+        .unwrap();
+    store
+        .append(&HistoryEvent::transcript(
+            12,
+            &SessionHistoryEntry::provider_output(
+                "session-1",
+                "run-1",
+                Some("agent-1"),
+                TerminalOutputKind::ProviderOutput,
+                None,
+                "SWITCHED",
+            ),
+            owned,
+        ))
+        .unwrap();
+    let import =
+        ExternalProviderImportMetadata::observed_history("codex:thread-1", "codex", "thread-1");
+    let outline =
+        load_scoped_agent_outline(&store, "session-1", "agent-1", 2, None, Some(&import)).unwrap();
+    assert_eq!(
+        outline.turns.len(),
+        1,
+        "A provider echo must not split the kernel-owned turn"
+    );
+    assert_eq!(outline.turns[0].turn_id, "prompt-77");
+    assert_eq!(
+        outline.turns[0].summary.as_ref().unwrap().entry.text,
+        "SWITCHED"
+    );
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(path.with_extension("db-shm"));
+}
+
+#[test]
 fn scoped_agent_outline_excludes_external_turns_outside_import() {
     let path = std::env::temp_dir().join(format!(
         "chariox-scoped-external-outline-{}-{}.db",

@@ -43,6 +43,59 @@ test("deployment setup executor reloads a concurrently advanced checkpoint", asy
   }
 })
 
+test("deployment setup executor requests hosted activation once and returns the pending setup", async () => {
+  const originalFetch = globalThis.fetch
+  let activationCount = 0
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === "POST") return jsonResponse({ setup: activationPendingSetup })
+    return jsonResponse({ setup: activationSetup })
+  }
+  try {
+    const outcome = await executeDeploymentSetup(profile, activationSetup.id, {
+      publishSource: unexpected,
+      exportPackage: unexpected,
+      resolveProject: unexpected,
+      verifyRelease: unexpected,
+      credentialsReady: unexpected,
+      bindRuntime: unexpected,
+      activateHosted: async () => {
+        activationCount += 1
+        return {
+          promotionId: "promotion-1",
+          operationalDeploymentId: "deployment-1",
+        }
+      },
+    })
+
+    assert.equal(outcome.kind, "activation_requested")
+    assert.deepEqual(outcome.setup, activationPendingSetup)
+    assert.equal(activationCount, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("deployment setup executor does not request hosted activation again while promotion is pending", async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => jsonResponse({ setup: activationPendingSetup })
+  try {
+    const outcome = await executeDeploymentSetup(profile, activationPendingSetup.id, {
+      publishSource: unexpected,
+      exportPackage: unexpected,
+      resolveProject: unexpected,
+      verifyRelease: unexpected,
+      credentialsReady: unexpected,
+      bindRuntime: unexpected,
+      activateHosted: unexpected,
+    })
+
+    assert.equal(outcome.kind, "activation_requested")
+    assert.deepEqual(outcome.setup, activationPendingSetup)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 async function unexpected(): Promise<never> {
   throw new Error("unexpected setup stage")
 }
@@ -93,6 +146,31 @@ const completedSetup: DeploymentSetup = {
   sourcePublicationId: "publication-1",
   sourcePublicationDigest: digest,
   completedAt: "2026-07-18T00:00:01.000Z",
+}
+
+const activationSetup: DeploymentSetup = {
+  ...activeSetup,
+  id: "setup-activation",
+  stage: "activation",
+  version: 5,
+  projectId: "project-1",
+  environmentId: "environment-1",
+  releaseId: "release-1",
+  operationKeys: {
+    ...activeSetup.operationKeys,
+    promotion: "deployment-setup:setup-activation:promotion:5",
+  },
+}
+
+const activationPendingSetup: DeploymentSetup = {
+  ...activationSetup,
+  version: 6,
+  promotionId: "promotion-1",
+  operationalDeploymentId: "deployment-1",
+  operationKeys: {
+    ...activationSetup.operationKeys,
+    promotion: "deployment-setup:setup-activation:promotion:6",
+  },
 }
 
 const profile: RelayCloudProfile = {

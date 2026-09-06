@@ -172,8 +172,10 @@ mod tests {
 
     #[test]
     fn prompt_state_trace_reads_prompt_owner_when_session_mirror_is_stale() {
-        let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-            .expect("daemon bootstrap should succeed");
+        let mut app = crate::test_support::bootstrap_authenticated_app(
+            crate::config::DaemonConfig::for_tests(),
+        )
+        .expect("daemon bootstrap should succeed");
         let (session, agent) = KernelSessionService::new(&mut app)
             .create_session(CreateSessionRequest::new(
                 "workspace-trace-owner",

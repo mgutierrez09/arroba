@@ -13,12 +13,18 @@ impl KernelRuntimeOwnedState {
         else {
             return Ok(());
         };
-        let paused = self
+        let already_interrupted = self
             .session_store
             .read()
             .resolve_workflow_run_ref(session_id, workflow_run_id)
-            .is_ok_and(|run| run.status() == crate::session::WorkflowRunStatus::Paused);
-        if paused {
+            .is_ok_and(|run| {
+                matches!(
+                    run.status(),
+                    crate::session::WorkflowRunStatus::Paused
+                        | crate::session::WorkflowRunStatus::Stopped
+                )
+            });
+        if already_interrupted {
             let _ = self.release_workflow_node_workspace_claim(
                 session_id,
                 workflow_run_id,

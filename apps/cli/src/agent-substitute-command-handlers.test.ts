@@ -66,6 +66,45 @@ test("agent substitute add parses profile flags and applies update", async () =>
   assert.equal(flashedMessage, "agent-1 substitute added: codex/gpt-5.4/high")
 })
 
+test("agent substitute move reorders the fallback chain and reset returns to starter", async () => {
+  const currentAgent = agent({
+    provider: "claude",
+    model: "claude-opus-4-8",
+    substitutes: [
+      { provider: "opencode", model: "opencode-go/deepseek-v4-pro" },
+      { provider: "codex", model: "gpt-5.6-sol", variant: "high" },
+    ],
+  })
+  const currentSession = session({ agents: [currentAgent] })
+  const actions: Record<string, unknown>[] = []
+  const makeDeps = () => ({
+    sessionState: () => currentSession,
+    focusedAgentId: () => currentAgent.id,
+    currentModelId: () => "claude-opus-4-8",
+    currentVariantId: () => "high",
+    flashFooter: () => {},
+    updateAgentSubstitutes: async (_sessionId: string, _agentId: string, action: Record<string, unknown>) => {
+      actions.push(action)
+      return { agent: currentAgent, session: currentSession }
+    },
+    applySessionState: () => {},
+    refreshAgentPanes: async () => {},
+    launchAgentProviderRun: async () => providerRun(),
+    setProviderRunState: () => {},
+    refreshSessionState: async () => currentSession,
+    resolveSessionAgent: () => ({ agent: currentAgent, error: null }),
+    formatAgentLabel: (entry: AgentInstance | null | undefined) => entry?.agent_ref ?? "",
+  })
+
+  await handleAgentSubstituteCommand(makeDeps(), ["substitute", "move", "1", "0"])
+  await handleAgentSubstituteCommand(makeDeps(), ["substitute", "reset"])
+
+  assert.deepEqual(actions, [
+    { Move: { from_index: 1, to_index: 0 } },
+    { Primary: {} },
+  ])
+})
+
 test("agent substitute add resolves an account alias to the stable profile id", async () => {
   const currentAgent = agent()
   const currentSession = session({ agents: [currentAgent] })

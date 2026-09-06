@@ -311,6 +311,7 @@ fn collect_usage_meters(
                 meters.push(ProviderAccountUsageMeter {
                     meter_id,
                     label,
+                    service_id: None,
                     kind,
                     scope: ProviderAccountUsageMeterScope::Account,
                     used_percent,

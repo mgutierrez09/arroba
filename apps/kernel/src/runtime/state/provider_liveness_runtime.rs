@@ -29,7 +29,7 @@ impl KernelRuntimeState {
             let session_outcome = self
                 .settle_owned_provider_prompt(session_id, provider_run_id, false, false, true)
                 .await?;
-            if session_outcome.had_active_prompt {
+            if session_outcome.had_active_prompt && !session_outcome.cancelled_prompt {
                 let recipients = owned
                     .attachment_store
                     .list_session_attachment_ids(session_id);
@@ -92,6 +92,9 @@ impl KernelRuntimeState {
         let session_outcome = self
             .settle_unexpected_provider_run_exit(session_id, provider_run_id, agent_id)
             .await?;
+        if session_outcome.cancelled_prompt {
+            return Ok(true);
+        }
         let recipients = owned
             .attachment_store
             .list_session_attachment_ids(session_id);
@@ -126,10 +129,11 @@ impl KernelRuntimeState {
         let session_outcome = self
             .settle_owned_provider_prompt(session_id, provider_run_id, false, false, true)
             .await?;
-        if self
-            .owned
-            .agent_store
-            .mark_unexpected_provider_exit_error(agent_id, session_outcome.had_active_prompt)?
+        if !session_outcome.cancelled_prompt
+            && self
+                .owned
+                .agent_store
+                .mark_unexpected_provider_exit_error(agent_id, session_outcome.had_active_prompt)?
         {
             let _ = self.owned.session_snapshot(session_id)?;
         }

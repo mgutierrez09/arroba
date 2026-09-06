@@ -189,6 +189,15 @@ impl KernelRuntimeOwnedState {
                 .filter(|workspace| !workspace.trim().is_empty())
                 .map(std::path::PathBuf::from)
                 .collect::<Vec<_>>();
+            if let Some(root) = crate::app::registered_workflow_runtime_worktree_root(
+                &session,
+                request.agent_id.as_deref(),
+                request.working_directory.as_deref(),
+            ) {
+                if !roots.iter().any(|existing| existing == &root) {
+                    roots.push(root);
+                }
+            }
             for root in std::mem::take(&mut request.workspace_live_sync_roots) {
                 if !roots.iter().any(|existing| existing == &root) {
                     roots.push(root);
@@ -342,6 +351,165 @@ mod tests {
                 .any(|existing| existing == name));
         }
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn owned_managed_launch_allows_only_the_registered_pool_instance_worktree() {
+        let root = std::env::temp_dir().join(format!(
+            "chariox-owned-managed-pool-launch-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let primary = root.join("primary");
+        let supporting = root.join("supporting");
+        let instance_worktree = root.join("workflow-runtime").join("instance-2");
+        let unregistered_worktree = root.join("workflow-runtime").join("unregistered");
+        std::fs::create_dir_all(&primary).expect("primary workspace");
+        std::fs::create_dir_all(&supporting).expect("supporting workspace");
+        std::fs::create_dir_all(&instance_worktree).expect("runtime instance worktree");
+        std::fs::create_dir_all(&unregistered_worktree).expect("unregistered worktree");
+
+        let mut app = crate::app::DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
+            .expect("daemon bootstrap");
+        let (session, source_agent) = crate::app::KernelSessionService::new(&mut app)
+            .create_session(
+                crate::session::CreateSessionRequest::new(
+                    primary.to_string_lossy(),
+                    primary.to_string_lossy(),
+                )
+                .with_project_selection(crate::session::SessionProjectSelection::New),
+            )
+            .expect("session");
+        app.sessions_mut()
+            .update_project_workspaces(
+                session.project_id(),
+                vec![
+                    primary.to_string_lossy().into_owned(),
+                    supporting.to_string_lossy().into_owned(),
+                ],
+                crate::session::DEFAULT_LOCAL_USER_ID,
+            )
+            .expect("project workspaces");
+        let runtime_agent = app.agents().clone().materialize_workflow_runtime_agent(
+            source_agent.clone(),
+            session.id(),
+            &instance_worktree.to_string_lossy(),
+        );
+        let unregistered_agent = app.agents().clone().materialize_workflow_runtime_agent(
+            source_agent,
+            session.id(),
+            &unregistered_worktree.to_string_lossy(),
+        );
+        app.sessions_mut()
+            .register_workflow_runtime_instance(
+                session.id(),
+                crate::session::WorkflowEndpointRuntimeInstance::new(
+                    "instance-2",
+                    "workflow-1",
+                    "endpoint-1",
+                    1,
+                    2,
+                    false,
+                    std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        runtime_agent.id().to_string(),
+                    )]),
+                    instance_worktree.to_string_lossy(),
+                ),
+            )
+            .expect("runtime instance should register");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let request = crate::provider::LaunchProviderRequest::new(
+            session.id(),
+            "dev-stub",
+            "dev-stub",
+            "default",
+            "model",
+        )
+        .with_agent_id(runtime_agent.id());
+
+        let _env = crate::env_lock::lock();
+        let previous_isolation = std::env::var_os(crate::provider::MANAGED_PROVIDER_ISOLATION_ENV);
+        std::env::set_var(crate::provider::MANAGED_PROVIDER_ISOLATION_ENV, "1");
+        let prepared = runtime
+            .owned
+            .prepare_provider_launch_request(request, "http://127.0.0.1:43120/mcp".to_string());
+        let unregistered = runtime.owned.prepare_provider_launch_request(
+            crate::provider::LaunchProviderRequest::new(
+                session.id(),
+                "dev-stub",
+                "dev-stub",
+                "default",
+                "model",
+            )
+            .with_agent_id(unregistered_agent.id()),
+            "http://127.0.0.1:43120/mcp".to_string(),
+        );
+        let traversal = runtime.owned.prepare_provider_launch_request(
+            crate::provider::LaunchProviderRequest::new(
+                session.id(),
+                "dev-stub",
+                "dev-stub",
+                "default",
+                "model",
+            )
+            .with_agent_id(runtime_agent.id())
+            .with_working_directory(instance_worktree.join("..").join("unregistered")),
+            "http://127.0.0.1:43120/mcp".to_string(),
+        );
+        #[cfg(unix)]
+        let symlink_escape = {
+            let link = instance_worktree.join("outside-link");
+            std::os::unix::fs::symlink(&unregistered_worktree, &link)
+                .expect("escape symlink fixture");
+            runtime.owned.prepare_provider_launch_request(
+                crate::provider::LaunchProviderRequest::new(
+                    session.id(),
+                    "dev-stub",
+                    "dev-stub",
+                    "default",
+                    "model",
+                )
+                .with_agent_id(runtime_agent.id())
+                .with_working_directory(link),
+                "http://127.0.0.1:43120/mcp".to_string(),
+            )
+        };
+        restore_env(
+            crate::provider::MANAGED_PROVIDER_ISOLATION_ENV,
+            previous_isolation,
+        );
+        let prepared = prepared.expect("managed pool clone launch should prepare");
+        let unregistered = unregistered.expect("unregistered hidden launch should prepare");
+        let traversal = traversal.expect("traversal launch should prepare without expanding roots");
+        #[cfg(unix)]
+        let symlink_escape =
+            symlink_escape.expect("symlink escape should prepare without expanding roots");
+
+        assert_eq!(
+            prepared.workspace_live_sync_roots,
+            vec![primary, supporting, instance_worktree],
+            "the exact registered runtime worktree must join the managed allowlist"
+        );
+        assert_eq!(
+            unregistered.workspace_live_sync_roots,
+            vec![root.join("primary"), root.join("supporting")],
+            "an unregistered hidden agent must not expand the managed allowlist"
+        );
+        assert_eq!(
+            traversal.workspace_live_sync_roots,
+            vec![root.join("primary"), root.join("supporting")],
+            "a lexical traversal outside the registered worktree must not expand the managed allowlist"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            symlink_escape.workspace_live_sync_roots,
+            vec![root.join("primary"), root.join("supporting")],
+            "a symlink escape outside the registered worktree must not expand the managed allowlist"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

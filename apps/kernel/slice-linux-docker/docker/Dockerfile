@@ -85,7 +85,7 @@ COPY apps/kernel/slice-linux-docker/toolchain/package.json apps/kernel/slice-lin
 RUN npm_config_cache=/tmp/chariox-npm-cache npm ci --omit=dev \
   && test "$(node_modules/.bin/codex --version)" = "codex-cli 0.144.0" \
   && test "$(node_modules/.bin/opencode --version)" = "1.18.23" \
-  && test "$(node_modules/.bin/claude --version)" = "2.1.207 (Claude Code)" \
+  && test "$(node_modules/.bin/claude --version)" = "2.1.212 (Claude Code)" \
   && test "$(node_modules/.bin/pnpm --version)" = "11.22.0" \
   && rm -rf /tmp/chariox-npm-cache /root/.npm
 ENV PATH=/opt/chariox-toolchain/node_modules/.bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin

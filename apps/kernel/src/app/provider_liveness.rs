@@ -46,12 +46,14 @@ enum ProviderRunLivenessTransition {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct ProviderRunExitSessionOutcome {
     had_active_prompt: bool,
+    cancelled_prompt: bool,
     started_next_prompt: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderRunExitSessionSummary {
     pub(crate) had_active_prompt: bool,
+    pub(crate) cancelled_prompt: bool,
     pub(crate) started_next_prompt: bool,
 }
 
@@ -166,6 +168,7 @@ impl ProviderRunLivenessSessionEffects {
             .prompt_owner_active_prompt_for_agent(&outcome.session_id, &outcome.agent_id)?
             .and_then(|prompt| prompt.is_chariox_owned().then(|| prompt.status()));
         let had_active_prompt = active_prompt_status.is_some();
+        let cancelled_prompt = active_prompt_status == Some(PromptStatus::Cancelling);
         let started_next_prompt = match ProviderRunExitPromptSettlement::from_active_prompt_status(
             active_prompt_status,
         ) {
@@ -190,9 +193,10 @@ impl ProviderRunLivenessSessionEffects {
                 false
             }
         };
-        if app
-            .agents
-            .mark_unexpected_provider_exit_error(&outcome.agent_id, had_active_prompt)?
+        if !cancelled_prompt
+            && app
+                .agents
+                .mark_unexpected_provider_exit_error(&outcome.agent_id, had_active_prompt)?
         {
             let _ = crate::app::KernelSessionReadService::new(app)
                 .session_snapshot(&outcome.session_id)?;
@@ -200,6 +204,7 @@ impl ProviderRunLivenessSessionEffects {
 
         Ok(ProviderRunExitSessionOutcome {
             had_active_prompt,
+            cancelled_prompt,
             started_next_prompt,
         })
     }
@@ -226,6 +231,9 @@ impl<'a> ProviderRunLivenessRuntime<'a> {
 
         let session_outcome =
             ProviderRunLivenessSessionEffects::apply_provider_exit(self.app, &outcome)?;
+        if session_outcome.cancelled_prompt {
+            return Ok(true);
+        }
         ProviderRunLivenessNotices::record_provider_exit(
             self.app,
             &outcome.session_id,
@@ -323,8 +331,18 @@ mod tests {
 
     #[test]
     fn app_unexpected_provider_exit_marks_active_agent_error() {
+        assert_app_provider_exit_state(false);
+    }
+
+    #[test]
+    fn app_cancelled_provider_exit_does_not_mark_agent_error() {
+        assert_app_provider_exit_state(true);
+    }
+
+    fn assert_app_provider_exit_state(cancelling: bool) {
         let mut app =
-            DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+            crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+                .expect("daemon should boot");
         let (session, agent) = KernelSessionService::new(&mut app)
             .create_session(CreateSessionRequest::new(
                 "workspace-app-unexpected-exit",
@@ -352,6 +370,10 @@ mod tests {
             Vec::new(),
         )
         .expect("prompt should start");
+        if cancelling {
+            app.prompt_owner_begin_cancelling_active_prompt(session.id(), agent.id())
+                .expect("cancellation should precede provider exit");
+        }
         let ended_run = app
             .providers_mut()
             .mark_run_ended_provider_only(session.id(), run.id())
@@ -370,18 +392,30 @@ mod tests {
                 .expect("unexpected exit effects should apply");
 
         assert!(session_outcome.had_active_prompt);
+        assert_eq!(session_outcome.cancelled_prompt, cancelling);
         assert!(app
             .sessions()
             .get_session(session.id())
             .expect("session should remain available")
             .active_prompt_for_agent(agent.id())
             .is_none());
-        assert_eq!(
-            app.agents
-                .get_agent(agent.id())
-                .expect("agent should remain available")
-                .state(),
-            crate::agent::AgentState::Error,
-        );
+        let state = app
+            .agents
+            .get_agent(agent.id())
+            .expect("agent should remain available")
+            .state();
+        if cancelling {
+            assert_ne!(state, crate::agent::AgentState::Error);
+            let turn = app
+                .completed_git_turn_snapshot_store()
+                .latest_projection_for_agent(session.id(), agent.id())
+                .expect("cancelled turn outcome should be projected even without Git changes");
+            assert_eq!(
+                turn.settlement_status,
+                crate::git_observer::CompletedTurnSettlementStatus::Cancelled
+            );
+        } else {
+            assert_eq!(state, crate::agent::AgentState::Error);
+        }
     }
 }

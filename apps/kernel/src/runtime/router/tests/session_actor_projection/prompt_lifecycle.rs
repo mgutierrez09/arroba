@@ -351,10 +351,16 @@ async fn get_session_state_projection_tracks_prompt_cancellation_without_app_loc
         None,
         &cancel_request,
     );
-    router
-        .dispatch(cancel_command, cancel_request)
-        .await
-        .expect("prompt cancellation should publish session projection");
+    // Keep the PTY abort worker from finalizing cancellation before we inspect
+    // its intermediate projection. Cancellation admission itself is owned state.
+    let app_guard = app.lock().await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        router.dispatch(cancel_command, cancel_request),
+    )
+    .await
+    .expect("cancellation admission must not wait for the app lock")
+    .expect("prompt cancellation should publish session projection");
     let prompt_projection = router
         .agent_runtime_projection
         .get(&agent_id)
@@ -367,7 +373,6 @@ async fn get_session_state_projection_tracks_prompt_cancellation_without_app_loc
         Some(PromptStatus::Cancelling)
     );
 
-    let app_guard = app.lock().await;
     let state_request = LocalDaemonRequest::GetSessionState(GetSessionStateRequest {
         session_id: session_id.clone(),
     });

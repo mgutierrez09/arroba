@@ -2,6 +2,21 @@ use super::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[path = "tests/automatic_substitutes.rs"]
+mod automatic_substitutes;
+
+#[path = "tests/remote_completion_substitutes.rs"]
+mod remote_completion_substitutes;
+
+#[path = "tests/remote_substitute_accounts.rs"]
+mod remote_substitute_accounts;
+
+#[path = "tests/worker_failure_settlement.rs"]
+mod worker_failure_settlement;
+
+#[path = "tests/substitute_launch_identity.rs"]
+mod substitute_launch_identity;
+
 #[test]
 fn remote_extension_manifest_pending_revoke_uses_explicit_intent_not_hash_change() {
     let previous = crate::extension::RemoteExtensionManifestSyncStatus::synced(
@@ -173,6 +188,121 @@ async fn agent_config_update_still_blocks_active_prompt_owner() {
 
 #[tokio::test]
 async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket() {
+    assert_remote_agent_profile_response(None, false, ProfileChange::Direct).await;
+}
+
+#[tokio::test]
+async fn remote_profile_transition_queues_arriving_prompt_until_worker_acknowledges() {
+    assert_remote_agent_profile_response(None, true, ProfileChange::Direct).await;
+}
+
+#[tokio::test]
+async fn rejected_remote_profile_transition_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(Some("provider"), true, ProfileChange::Direct).await;
+}
+
+#[tokio::test]
+async fn account_removed_during_remote_confirmation_cannot_be_committed() {
+    assert_remote_agent_profile_response(None, true, ProfileChange::DirectAccountRemoved).await;
+}
+
+#[tokio::test]
+async fn remote_substitute_activation_confirms_worker_and_preserves_starter() {
+    assert_remote_agent_profile_response(None, false, ProfileChange::ManualSubstitute).await;
+}
+
+#[tokio::test]
+async fn remote_substitute_activation_queues_arriving_prompt_until_confirmation() {
+    assert_remote_agent_profile_response(None, true, ProfileChange::ManualSubstitute).await;
+}
+
+#[tokio::test]
+async fn rejected_remote_substitute_transition_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(Some("provider"), true, ProfileChange::ManualSubstitute)
+        .await;
+}
+
+#[tokio::test]
+async fn rejected_remote_automatic_substitute_releases_the_waiting_prompt() {
+    assert_remote_agent_profile_response(
+        Some("provider"),
+        true,
+        ProfileChange::AutomaticSubstitute,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn remote_automatic_substitute_confirms_worker_and_preserves_starter() {
+    assert_remote_agent_profile_response(None, false, ProfileChange::AutomaticSubstitute).await;
+}
+
+#[tokio::test]
+async fn remote_substitute_list_edit_waits_for_the_confirmed_profile_transition() {
+    assert_remote_agent_profile_response(
+        None,
+        false,
+        ProfileChange::ManualSubstituteWithConcurrentListEdit,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn remote_substitute_activation_rejects_mismatched_worker_without_changing_selection() {
+    for field in [
+        "agent",
+        "lease",
+        "home_agent",
+        "provider",
+        "account",
+        "model",
+        "effort",
+    ] {
+        assert_remote_agent_profile_response(Some(field), false, ProfileChange::ManualSubstitute)
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn remote_agent_profile_update_rejects_mismatched_worker_acknowledgement() {
+    for field in [
+        "agent",
+        "lease",
+        "home_agent",
+        "provider",
+        "account",
+        "model",
+        "effort",
+    ] {
+        assert_remote_agent_profile_response(Some(field), false, ProfileChange::Direct).await;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProfileChange {
+    Direct,
+    DirectAccountRemoved,
+    ManualSubstitute,
+    ManualSubstituteWithConcurrentListEdit,
+    AutomaticSubstitute,
+}
+
+async fn assert_remote_agent_profile_response(
+    mismatched_field: Option<&str>,
+    concurrent_prompt: bool,
+    change: ProfileChange,
+) {
+    let substitute = !matches!(
+        change,
+        ProfileChange::Direct | ProfileChange::DirectAccountRemoved
+    );
+    let fixture_account =
+        !concurrent_prompt || matches!(change, ProfileChange::DirectAccountRemoved);
+    let target_provider = if !fixture_account {
+        "dev-stub"
+    } else {
+        "codex"
+    };
     let mut config = crate::config::DaemonConfig::for_tests();
     let relay_url = "ws://127.0.0.1:1".to_string();
     config.relay_url = Some(relay_url.clone());
@@ -260,7 +390,6 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
             permission_level: crate::provider::AgentPermissionLevel::Required,
         } if leased_agent_id == "leased-agent-1"
     ));
-
     let response = crate::transport::relay_peer::RelayPeerResponse::LeasedAgentConfigUpdated {
         leased_agent: crate::execution_lease::LeasedAgent {
             id: "leased-agent-1".to_string(),
@@ -316,24 +445,85 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
     // Profile updates resolve the provider default through the account
     // authority seam, so the exact stable profile ID — not the literal
     // "default" sentinel — must cross the relay.
-    let resolved_default_profile_id = {
-        let app = app.lock().await;
-        app.provider_account_profile_registry()
-            .get(crate::session::DEFAULT_LOCAL_USER_ID, "codex", "default")
-            .expect("seeded codex default should resolve")
-            .profile_id
+    let resolved_default_profile_id = if !fixture_account {
+        "default".to_string()
+    } else {
+        let registry = &runtime.owned.provider_account_profiles;
+        let owner = crate::session::DEFAULT_LOCAL_USER_ID;
+        let profile = registry
+            .create_managed(owner, "codex", "Profile fixture")
+            .unwrap();
+        let environment = registry
+            .resolve_environment(owner, "codex", &profile.profile_id)
+            .unwrap();
+        std::fs::write(
+            std::path::Path::new(&environment["CODEX_HOME"]).join("auth.json"),
+            br#"{"OPENAI_API_KEY":"fixture-only-not-a-real-key"}"#,
+        )
+        .unwrap();
+        registry
+            .set_default(owner, "codex", &profile.profile_id)
+            .unwrap();
+        profile.profile_id
     };
+    let starter = updated.clone();
+    let updated = if substitute {
+        runtime
+            .update_agent_substitutes(
+                &session_id,
+                &agent_id,
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                crate::local::AgentSubstituteAction::Add {
+                    provider: target_provider.into(),
+                    model: "gpt-5.4".into(),
+                    variant: Some("high".into()),
+                    account_profile: Some(resolved_default_profile_id.clone()),
+                    kernel_id: None,
+                    worktree_id: None,
+                },
+            )
+            .await
+            .unwrap()
+    } else {
+        updated
+    };
+    let before_profile = serde_json::to_value(&updated).unwrap();
     let profile_update = tokio::spawn({
         let runtime = runtime.clone();
         let session_id = session_id.clone();
         let agent_id = agent_id.clone();
         async move {
+            if matches!(change, ProfileChange::AutomaticSubstitute) {
+                assert!(
+                    runtime
+                        .activate_next_agent_substitute_after_failure(
+                            &session_id,
+                            &agent_id,
+                            "provider usage exhausted",
+                        )
+                        .await?
+                );
+                return runtime.owned.agent_store.get_agent(&agent_id);
+            }
+            if substitute {
+                return runtime
+                    .update_agent_substitutes(
+                        &session_id,
+                        &agent_id,
+                        crate::session::DEFAULT_LOCAL_USER_ID,
+                        crate::local::AgentSubstituteAction::Activate {
+                            index: 0,
+                            reason: None,
+                        },
+                    )
+                    .await;
+            }
             runtime
                 .update_agent_profile(
                     &session_id,
                     &agent_id,
                     crate::session::DEFAULT_LOCAL_USER_ID,
-                    Some("codex".to_string()),
+                    Some(target_provider.to_string()),
                     None,
                     Some("gpt-5.4".to_string()),
                     Some(Some("high".to_string())),
@@ -341,6 +531,55 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
                 .await
         }
     });
+    if fixture_account {
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), priority_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let chariox_relay::protocol::RelayEnvelope::DaemonPeerRequest {
+            request_id,
+            encrypted_request,
+            ..
+        } = envelope
+        else {
+            panic!("expected encrypted account transfer")
+        };
+        let decrypted = crate::transport::relay_crypto::decrypt_payload_for_private_key(
+            &target_config.relay_private_key,
+            &encrypted_request,
+        )
+        .unwrap();
+        let crate::transport::relay_peer::RelayPeerRequest::EnsureRemoteProviderAccount {
+            materialization,
+            context,
+        } = serde_json::from_slice(&decrypted.plaintext).unwrap()
+        else {
+            panic!("account transfer must precede profile update")
+        };
+        assert_eq!(context.execution_lease_id, "lease-1");
+        assert_eq!(
+            materialization.profile.profile_id,
+            resolved_default_profile_id
+        );
+        let response =
+            crate::transport::relay_peer::RelayPeerResponse::RemoteProviderAccountEnsured {
+                provider: "codex".into(),
+                account_profile: resolved_default_profile_id.clone(),
+            };
+        let encrypted = crate::transport::relay_crypto::encrypt_payload_for_peer(
+            &target_config.relay_private_key,
+            &home_public_key,
+            &serde_json::to_vec(&response).unwrap(),
+        )
+        .unwrap();
+        crate::transport::relay_client::resolve_pending_peer_response_for_test(
+            &relay_state,
+            request_id,
+            "worker-1".into(),
+            encrypted,
+        )
+        .await;
+    }
     let envelope = tokio::time::timeout(std::time::Duration::from_millis(500), priority_rx.recv())
         .await
         .expect("profile update should use the connected relay")
@@ -370,18 +609,90 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
             model,
             effort,
         } if leased_agent_id == "leased-agent-1"
-            && provider == "codex"
+            && provider == target_provider
             && account_profile == resolved_default_profile_id
-            && account_profile != "default"
+            && (concurrent_prompt || account_profile != "default")
             && model.as_deref() == Some("gpt-5.4")
             && effort.as_deref() == Some("high")
     ));
-    let response = crate::transport::relay_peer::RelayPeerResponse::LeasedAgentProfileUpdated {
+    if matches!(change, ProfileChange::DirectAccountRemoved) {
+        runtime
+            .owned
+            .provider_account_profiles
+            .remove_registration(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "codex",
+                &resolved_default_profile_id,
+            )
+            .expect("the not-yet-committed target account should be removable");
+    }
+    if substitute {
+        assert_eq!(
+            serde_json::to_value(runtime.owned.agent_store.get_agent(&agent_id).unwrap()).unwrap(),
+            before_profile,
+            "home selection must wait for the worker acknowledgement"
+        );
+    }
+    if matches!(
+        change,
+        ProfileChange::ManualSubstituteWithConcurrentListEdit
+    ) {
+        let error = runtime
+            .update_agent_substitutes(
+                &session_id,
+                &agent_id,
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                crate::local::AgentSubstituteAction::Add {
+                    provider: "dev-stub".to_string(),
+                    model: "later-substitute".to_string(),
+                    variant: None,
+                    account_profile: None,
+                    kernel_id: None,
+                    worktree_id: None,
+                },
+            )
+            .await
+            .expect_err("a list edit must not overtake a remote profile transition");
+        assert!(error.to_string().contains("profile change in progress"));
+    }
+    if concurrent_prompt {
+        let attachment = crate::app::KernelSessionService::new(&mut *app.lock().await)
+            .attach(crate::attachment::AttachRequest::new(
+                &session_id,
+                "profile-transition-client",
+                crate::attachment::ClientCapabilityLevel::FullTerminal,
+            ))
+            .unwrap();
+        let submission = runtime
+            .submit_prepared_prompt(crate::app::KernelPreparedPromptSubmission {
+                session_id: session_id.clone(),
+                prompt: crate::session::PromptQueueItem::new(
+                    "during-profile-update",
+                    attachment.id(),
+                    &agent_id,
+                    "keep this prompt while the selected account changes",
+                    crate::session::PromptStatus::Queued,
+                ),
+                force_queue: false,
+                refresh_projection: true,
+            })
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                submission.outcome,
+                crate::session::PromptSubmissionOutcome::Queued { .. }
+            ),
+            "a prompt arriving before profile acknowledgement must queue, not start"
+        );
+        assert!(submission.remote_dispatch.is_none());
+    }
+    let mut response = crate::transport::relay_peer::RelayPeerResponse::LeasedAgentProfileUpdated {
         leased_agent: crate::execution_lease::LeasedAgent {
             id: "leased-agent-1".to_string(),
             lease_id: "lease-1".to_string(),
             home_agent_id: agent_id.clone(),
-            provider: "codex".to_string(),
+            provider: target_provider.to_string(),
             account_profile: resolved_default_profile_id.clone(),
             model: Some("gpt-5.4".to_string()),
             effort: Some("high".to_string()),
@@ -401,6 +712,22 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
             created_at_ms: 1,
         },
     };
+    if let crate::transport::relay_peer::RelayPeerResponse::LeasedAgentProfileUpdated {
+        leased_agent,
+    } = &mut response
+    {
+        match mismatched_field {
+            Some("agent") => leased_agent.id = "another-leased-agent".to_string(),
+            Some("lease") => leased_agent.lease_id = "another-lease".to_string(),
+            Some("home_agent") => leased_agent.home_agent_id = "another-home-agent".to_string(),
+            Some("provider") => leased_agent.provider = "opencode".to_string(),
+            Some("account") => leased_agent.account_profile = "another-account".to_string(),
+            Some("model") => leased_agent.model = Some("another-model".to_string()),
+            Some("effort") => leased_agent.effort = None,
+            None => {}
+            _ => panic!("unknown mismatch fixture"),
+        }
+    }
     let encrypted_response = crate::transport::relay_crypto::encrypt_payload_for_peer(
         &target_config.relay_private_key,
         &home_public_key,
@@ -414,19 +741,233 @@ async fn remote_agent_config_update_uses_connected_relay_without_metadata_socket
         encrypted_response,
     )
     .await;
-    let updated = profile_update
+    let result = profile_update
         .await
-        .expect("profile update task should join")
-        .expect("profile update should complete through the connected relay");
-    assert_eq!(updated.provider(), "codex");
+        .expect("profile update task should join");
+    if let Some(field) = mismatched_field {
+        let error = result.expect_err(&format!(
+            "must reject a worker acknowledgement with mismatched {field}"
+        ));
+        assert!(error.to_string().contains("does not match"));
+        let current = runtime.owned.agent_store.get_agent(&agent_id).unwrap();
+        if concurrent_prompt {
+            assert!(super::remote_agent_profile_runtime::same_execution_profile(
+                &current, &updated
+            ));
+            assert_eq!(current.primary_provider(), updated.primary_provider());
+            assert_eq!(current.substitutes(), updated.substitutes());
+            assert_eq!(
+                current.active_substitute_index(),
+                updated.active_substitute_index()
+            );
+        } else {
+            assert_eq!(serde_json::to_value(&current).unwrap(), before_profile);
+        }
+        if concurrent_prompt {
+            let current_session = runtime
+                .owned
+                .session_store
+                .get_session(&session_id)
+                .unwrap();
+            let prompt = runtime
+                .owned
+                .prompt_state_owner
+                .active_prompt_for_agent(&current_session, &agent_id)
+                .expect("the queued prompt must resume on the unchanged home profile");
+            assert_eq!(
+                prompt.prompt(),
+                "keep this prompt while the selected account changes"
+            );
+            assert!(runtime
+                .owned
+                .prompt_state_owner
+                .state_parts(&current_session, &agent_id)
+                .1
+                .is_empty());
+        }
+        return;
+    }
+    if matches!(change, ProfileChange::DirectAccountRemoved) {
+        let error = result.expect_err("a removed account cannot become the home selection");
+        assert!(error.to_string().contains("not registered"), "{error}");
+        let current = runtime.owned.agent_store.get_agent(&agent_id).unwrap();
+        assert!(super::remote_agent_profile_runtime::same_execution_profile(
+            &current, &updated
+        ));
+        let current_session = runtime
+            .owned
+            .session_store
+            .get_session(&session_id)
+            .unwrap();
+        let prompt = runtime
+            .owned
+            .prompt_state_owner
+            .active_prompt_for_agent(&current_session, &agent_id)
+            .expect("the queued prompt must resume under the unchanged home profile");
+        assert_eq!(
+            prompt.prompt(),
+            "keep this prompt while the selected account changes"
+        );
+        return;
+    }
+    let updated = result.expect("profile update should complete through the connected relay");
+    assert_eq!(updated.provider(), target_provider);
     assert_eq!(updated.model(), Some("gpt-5.4"));
     assert_eq!(updated.effort(), Some("high"));
+    if substitute {
+        assert_eq!(updated.active_substitute_index(), Some(0));
+        assert_eq!(updated.primary_provider(), starter.provider());
+        assert_eq!(updated.primary_model(), starter.model());
+        assert_eq!(updated.primary_effort(), starter.effort());
+        assert_eq!(
+            updated.primary_account_profile(),
+            starter.primary_account_profile()
+        );
+        assert_eq!(updated.substitutes().len(), 1);
+        assert_eq!(
+            updated.provider_account_profile(),
+            resolved_default_profile_id
+        );
+    }
+    if concurrent_prompt {
+        let session = runtime
+            .owned
+            .session_store
+            .get_session(&session_id)
+            .unwrap();
+        let prompt = runtime
+            .owned
+            .prompt_state_owner
+            .active_prompt_for_agent(&session, &agent_id)
+            .expect("the queued prompt must resume after the successful profile change");
+        assert_eq!(
+            prompt.prompt(),
+            "keep this prompt while the selected account changes"
+        );
+        assert!(runtime
+            .owned
+            .prompt_state_owner
+            .state_parts(&session, &agent_id)
+            .1
+            .is_empty());
+    }
     assert_eq!(
         updated
             .remote_execution()
             .and_then(|binding| binding.active_worker_provider_run_id.as_deref()),
         None
     );
+    if substitute && !concurrent_prompt {
+        let reset = tokio::spawn({
+            let runtime = runtime.clone();
+            let session_id = session_id.clone();
+            let agent_id = agent_id.clone();
+            async move {
+                runtime
+                    .update_agent_substitutes(
+                        &session_id,
+                        &agent_id,
+                        crate::session::DEFAULT_LOCAL_USER_ID,
+                        crate::local::AgentSubstituteAction::Primary {},
+                    )
+                    .await
+            }
+        });
+        let envelope =
+            tokio::time::timeout(std::time::Duration::from_millis(500), priority_rx.recv())
+                .await
+                .expect("return to starter must confirm the worker")
+                .expect("starter profile request");
+        let chariox_relay::protocol::RelayEnvelope::DaemonPeerRequest {
+            request_id,
+            encrypted_request,
+            ..
+        } = envelope
+        else {
+            panic!("expected starter profile peer request");
+        };
+        let decrypted = crate::transport::relay_crypto::decrypt_payload_for_private_key(
+            &target_config.relay_private_key,
+            &encrypted_request,
+        )
+        .unwrap();
+        let crate::transport::relay_peer::RelayPeerRequest::UpdateLeasedAgentProfile {
+            leased_agent_id,
+            provider,
+            account_profile,
+            model,
+            effort,
+        } = serde_json::from_slice(&decrypted.plaintext).unwrap()
+        else {
+            panic!("expected starter profile update");
+        };
+        assert_eq!(leased_agent_id, "leased-agent-1");
+        assert_eq!(provider, starter.provider());
+        assert_eq!(model.as_deref(), starter.model());
+        assert_eq!(effort.as_deref(), starter.effort());
+        let expected_account =
+            if crate::provider::canonical_provider_family(starter.provider()).is_some() {
+                app.lock()
+                    .await
+                    .provider_account_profile_registry()
+                    .get(
+                        crate::session::DEFAULT_LOCAL_USER_ID,
+                        starter.provider(),
+                        starter.provider_account_profile(),
+                    )
+                    .unwrap()
+                    .profile_id
+            } else {
+                starter.provider_account_profile().to_string()
+            };
+        assert_eq!(account_profile, expected_account);
+        assert_eq!(
+            runtime
+                .owned
+                .agent_store
+                .get_agent(&agent_id)
+                .unwrap()
+                .active_substitute_index(),
+            Some(0)
+        );
+        if let crate::transport::relay_peer::RelayPeerResponse::LeasedAgentProfileUpdated {
+            leased_agent,
+        } = &mut response
+        {
+            leased_agent.provider = provider;
+            leased_agent.account_profile = account_profile;
+            leased_agent.model = model;
+            leased_agent.effort = effort;
+        }
+        let encrypted = crate::transport::relay_crypto::encrypt_payload_for_peer(
+            &target_config.relay_private_key,
+            &home_public_key,
+            &serde_json::to_vec(&response).unwrap(),
+        )
+        .unwrap();
+        crate::transport::relay_client::resolve_pending_peer_response_for_test(
+            &relay_state,
+            request_id,
+            "worker-1".into(),
+            encrypted,
+        )
+        .await;
+        let restored = reset.await.unwrap().unwrap();
+        assert_eq!(restored.active_substitute_index(), None);
+        assert_eq!(restored.provider(), starter.provider());
+        assert_eq!(restored.provider_account_profile(), expected_account);
+        assert_eq!(restored.model(), starter.model());
+        assert_eq!(restored.effort(), starter.effort());
+        assert_eq!(restored.substitutes(), updated.substitutes());
+        assert_eq!(
+            restored.execution_mode_override(),
+            starter.execution_mode_override()
+        );
+        assert_eq!(
+            restored.permission_level_override(),
+            starter.permission_level_override()
+        );
+    }
 }
 
 #[tokio::test]
@@ -585,6 +1126,58 @@ async fn substitute_lifecycle_binds_stable_account_and_primary_edit_targets_snap
     assert_eq!(agent.model(), Some("gpt-5.6-edited"));
     assert_eq!(agent.effort(), Some("high"));
     assert_eq!(agent.account_profile().map(str::to_string), primary_account);
+}
+
+#[tokio::test]
+async fn substitute_move_updates_the_durable_order_and_active_index_atomically() {
+    let (_app, runtime, session_id, agent_id) = agent_config_runtime().await;
+    for (provider, model) in [("provider-a", "model-a"), ("provider-b", "model-b")] {
+        runtime
+            .update_agent_substitutes(
+                &session_id,
+                &agent_id,
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                crate::local::AgentSubstituteAction::Add {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    variant: None,
+                    account_profile: None,
+                    kernel_id: None,
+                    worktree_id: None,
+                },
+            )
+            .await
+            .expect("substitute should be added");
+    }
+    runtime
+        .update_agent_substitutes(
+            &session_id,
+            &agent_id,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            crate::local::AgentSubstituteAction::Activate {
+                index: 1,
+                reason: Some("resource exhausted".to_string()),
+            },
+        )
+        .await
+        .expect("second substitute should activate");
+
+    let agent = runtime
+        .update_agent_substitutes(
+            &session_id,
+            &agent_id,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            crate::local::AgentSubstituteAction::Move {
+                from_index: 1,
+                to_index: 0,
+            },
+        )
+        .await
+        .expect("active substitute should move");
+
+    assert_eq!(agent.substitutes()[0].model, "model-b");
+    assert_eq!(agent.active_substitute_index(), Some(0));
+    assert_eq!(agent.model(), Some("model-b"));
 }
 
 #[tokio::test]

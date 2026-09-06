@@ -1080,7 +1080,8 @@ mod tests {
         crate::provider::RuntimeProviderRun,
         crate::app::KernelPromptDispatch,
     ) {
-        let mut app = DaemonApp::bootstrap(DaemonConfig::for_tests()).expect("daemon should boot");
+        let mut app = crate::test_support::bootstrap_authenticated_app(DaemonConfig::for_tests())
+            .expect("daemon should boot");
         let (session, agent) = KernelSessionService::new(&mut app)
             .create_session(CreateSessionRequest::new(
                 "workspace-claude-ack-failure",

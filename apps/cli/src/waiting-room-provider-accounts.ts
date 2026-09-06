@@ -1,4 +1,10 @@
-import type { ProviderAccountProfile } from "@chariox/kernel-client"
+import {
+  providerAccountCapacity,
+  providerAccountCapacityLabel,
+  type ProviderAccountProfile,
+} from "@chariox/kernel-client"
+
+export { providerAccountCapacity }
 
 export function providerAccountFamily(provider: string): string {
   return provider === "claude-headless" || provider === "claude-p" ? "claude" : provider
@@ -61,6 +67,6 @@ export function defaultProviderAccountProfileId(
     ?? "default"
 }
 
-export function providerAccountDisplayLabel(profile: ProviderAccountProfile): string {
-  return profile.label
+export function providerAccountDisplayLabel(profile: ProviderAccountProfile, model?: string | null): string {
+  return providerAccountCapacityLabel(profile, Date.now(), model)
 }

@@ -254,6 +254,69 @@ fn normalized_observed_prompt_text_ignores_provider_native_attachment_suffixes()
 }
 
 #[test]
+fn observed_account_handoff_matches_only_the_current_request() {
+    let envelope = "<chariox_context_handoff>Prior prompt and output</chariox_context_handoff> Provider/account switch: codex [a] -> codex [b]. <user_request>Reply SWITCHED</user_request>";
+    assert_eq!(
+        normalized_observed_prompt_text(envelope),
+        Some("Reply SWITCHED".to_string())
+    );
+    for suffix in [
+        "",
+        "Attachment: note.txt (text/plain) at data:text/plain;base64,SGVsbG8=",
+        "\nAttachment: note.txt (text/plain) at file:///tmp/note.txt\n\nfile contents",
+    ] {
+        for context in [
+            "Prior prompt and output",
+            "Prior prompt Attachment: old.txt (text/plain) at file:///tmp/old.txt\nold contents",
+        ] {
+            let observed = envelope.replace("Prior prompt and output", context);
+            assert_eq!(
+                normalized_observed_prompt_text(&format!("{observed}{suffix}")),
+                Some("Reply SWITCHED".to_string())
+            );
+        }
+    }
+    for literal in [
+        "<user_request>Keep literal markup</user_request>",
+        "<chariox_context_handoff>Missing close <user_request>Do not strip</user_request>",
+        "<chariox_context_handoff>context</chariox_context_handoff> Provider/account switch: codex <user_request>Missing close",
+    ] {
+        assert_eq!(normalized_observed_prompt_text(literal), Some(literal.to_string()));
+    }
+    let request = "Inspect </user_request>\nAttachment: quoted.txt (text/plain) at file:///tmp/quoted.txt\nThis is quoted transcript text.";
+    let ambiguous_legacy = envelope.replace("Reply SWITCHED", request);
+    assert_eq!(
+        super::strip_observed_account_handoff(&ambiguous_legacy),
+        ambiguous_legacy
+    );
+    let echoed = crate::provider::encode_account_handoff("Prior context", request);
+    assert_eq!(
+        normalized_observed_prompt_text(&echoed),
+        normalized_observed_prompt_text(request)
+    );
+}
+
+#[test]
+fn account_handoff_survives_provider_transcript_cleaning() {
+    let request = "Reply SWITCHED. Do not use tools.";
+    let framed = crate::provider::encode_account_handoff(
+        "Previous prompt\n## My request:\nEarlier text\n<runtime-instructions>old context</runtime-instructions>",
+        request,
+    );
+    for suffix in [
+        "",
+        "\nAttachment: note.txt (text/plain) at file:///note.txt",
+    ] {
+        let cleaned = clean_provider_prompt(format!("{framed}{suffix}"))
+            .expect("The real user request must survive provider cleaning");
+        assert_eq!(
+            normalized_observed_prompt_text(&cleaned),
+            Some(request.to_string())
+        );
+    }
+}
+
+#[test]
 fn observed_prompt_text_ignores_chariox_generated_runtime_context() {
     let observed = "run the check <runtime-instructions>generated</runtime-instructions> \
         <native-permission-instructions>generated</native-permission-instructions>";

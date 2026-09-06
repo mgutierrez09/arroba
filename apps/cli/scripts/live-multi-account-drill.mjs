@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 import { setTimeout as sleep } from "node:timers/promises"
+import { completedAccountTurns } from "./live-multi-account-turns.mjs"
 
 import { LocalIpcClient } from "../dist/ipc.js"
 import {
@@ -12,8 +13,12 @@ import {
   deleteSessionRequest,
   getProviderAuthStatusRequest,
   getProviderCatalogRequest,
+  getProviderRunRequest,
   getSessionStateRequest,
+  getSessionHistoryOutlineRequest,
+  getSessionHistoryBlobContentRequest,
   listProviderAccountProfilesRequest,
+  listSessionsRequest,
   spawnAgentRequest,
   submitPromptRequest,
   updateAgentProfileRequest,
@@ -48,18 +53,35 @@ function working(activity) {
     || (prompt !== "" && !["none", "idle", "completed", "cancelled"].includes(prompt))
 }
 
-async function waitForTurns(client, sessionId, agentIds, timeoutMs) {
+async function waitForTurns(client, sessionId, expected, timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  const sawWorking = new Set()
+  let sawConcurrentWork = false
   while (Date.now() < deadline) {
     const state = await client.send(getSessionStateRequest(sessionId))
-    for (const agentId of agentIds) {
-      if (working(activityFor(state, agentId))) sawWorking.add(agentId)
+    const session = variant(state, "SessionState").session
+    for (const { agentId, profileId } of expected) {
+      assert.equal(session.agents.find(agent => agent.id === agentId)?.account_profile, profileId)
     }
-    if (agentIds.every((agentId) => sawWorking.has(agentId) && !working(activityFor(state, agentId)))) return
+    if (expected.length > 1 && expected.every(({ agentId }) => working(activityFor(state, agentId)))) sawConcurrentWork = true
+    const history = variant(await client.send(getSessionHistoryOutlineRequest(sessionId, expected.map(e => e.agentId), 2)), "SessionHistoryOutline").agents
+    for (const agent of history) for (const turn of agent.turns) {
+      for (const blob of turn.blobs.filter(blob => ["provider_output", "provider_error"].includes(blob.kind))) {
+        const content = variant(await client.send(getSessionHistoryBlobContentRequest(sessionId, agent.agent_id, blob.blob_id)), "SessionHistoryBlobContent")
+        turn.entries.push(...content.entries)
+      }
+    }
+    const receipts = completedAccountTurns(history, expected)
+    if (receipts && expected.every(({ agentId }) => !working(activityFor(state, agentId)))) {
+      for (const receipt of receipts) for (const runId of receipt.providerRunIds) {
+        const run = variant(await client.send(getProviderRunRequest(runId)), "ProviderRun").provider_run
+        assert.equal(run.session_id, sessionId, "Provider output belongs to another session")
+        assert.equal(run.account_profile, receipt.profileId, "Provider run used the wrong account")
+      }
+      return { receipts, sawConcurrentWork }
+    }
     await sleep(500)
   }
-  throw new Error(`timed out waiting for provider turns; observed working agents: ${[...sawWorking].join(", ")}`)
+  throw new Error("Timed out waiting for completed, attributed account-test output")
 }
 
 const provider = option("provider")
@@ -104,6 +126,7 @@ try {
       await client.send(getProviderAuthStatusRequest(provider, profileId)),
       "ProviderAuthStatus",
     ).status
+    assert.equal(status.auth_state, "authenticated", `profile ${profileId} is not authenticated`)
     evidence.checks.push({ kind: "profile", profile_id: profileId, auth_state: status.auth_state })
     const catalog = variant(
       await client.send(getProviderCatalogRequest({ provider, accountProfile: profileId })),
@@ -146,12 +169,22 @@ try {
     assert.equal(second.account_profile, profiles[1])
     assert.equal(second.model, model)
     assert.equal(second.effort, effort)
-    const prompt = "Reply with exactly the account-isolation marker: CHARIOX_MULTI_ACCOUNT_OK"
-    await Promise.all([
-      client.send(submitPromptRequest(sessionId, attachment.id, first.id, prompt, [])),
-      client.send(submitPromptRequest(sessionId, attachment.id, second.id, prompt, [])),
+    const marker = `CHARIOX_MULTI_ACCOUNT_${Date.now()}`
+    const expected = [
+      { agentId: first.id, profileId: profiles[0], marker: `${marker}_A` },
+      { agentId: second.id, profileId: profiles[1], marker: `${marker}_B` },
+    ]
+    const submissions = await Promise.allSettled([
+      client.send(submitPromptRequest(sessionId, attachment.id, first.id, `Reply exactly ${expected[0].marker}. Do not use tools.`, [])),
+      client.send(submitPromptRequest(sessionId, attachment.id, second.id, `Reply exactly ${expected[1].marker}. Do not use tools.`, [])),
     ])
-    await waitForTurns(client, sessionId, [first.id, second.id], timeoutMs)
+    for (const submission of submissions) {
+      if (submission.status === "rejected") throw submission.reason
+      variant(submission.value, "PromptSubmitted")
+    }
+    const concurrent = await waitForTurns(client, sessionId, expected, timeoutMs)
+    evidence.checks.push({ kind: "concurrent_turns", ...concurrent })
+    assert.ok(concurrent.sawConcurrentWork, "Concurrent provider work was not observed")
     const switched = variant(await client.send(updateAgentProfileRequest({
       sessionId,
       agentId: first.id,
@@ -163,15 +196,30 @@ try {
     assert.equal(switched.account_profile, profiles[1])
     assert.equal(switched.model, model)
     assert.equal(switched.effort, effort)
-    await client.send(submitPromptRequest(sessionId, attachment.id, first.id, prompt, []))
-    await waitForTurns(client, sessionId, [first.id], timeoutMs)
-    evidence.checks.push({ kind: "concurrent_turns", profiles: [...profiles], passed: true })
-    evidence.checks.push({ kind: "context_handoff", from: profiles[0], to: profiles[1], passed: true })
+    const switchedExpected = [{ agentId: first.id, profileId: profiles[1], marker: `${marker}_SWITCHED` }]
+    await client.send(submitPromptRequest(sessionId, attachment.id, first.id, `Reply exactly ${switchedExpected[0].marker}. Do not use tools.`, []))
+    const switchedTurns = await waitForTurns(client, sessionId, switchedExpected, timeoutMs)
+    evidence.checks.push({ kind: "context_handoff", from: profiles[0], to: profiles[1], ...switchedTurns })
   }
   evidence.completed_at_ms = Date.now()
   evidence.passed = true
+} catch (error) {
+  evidence.passed = false
+  evidence.failure = error instanceof Error ? error.message : "Account drill failed"
+  process.exitCode = 1
 } finally {
-  if (sessionId) await client.send(deleteSessionRequest(sessionId, workspace)).catch(() => {})
+  if (sessionId) {
+    try {
+      await client.send(deleteSessionRequest(sessionId, workspace))
+      const remaining = variant(await client.send(listSessionsRequest()), "SessionsListed").sessions
+      assert.ok(!remaining.some(session => session.id === sessionId), "Account drill session remains after deletion")
+      evidence.cleanup = "session deleted"
+    } catch {
+      evidence.cleanup = "session deletion failed"
+      evidence.passed = false
+      process.exitCode = 1
+    }
+  }
   await client.close().catch(() => {})
 }
 
@@ -182,4 +230,4 @@ const evidenceRoot = path.resolve(option(
 await mkdir(evidenceRoot, { recursive: true })
 const evidencePath = path.join(evidenceRoot, `live-${provider}-${Date.now()}.json`)
 await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8")
-console.log(`multi-account drill passed; safe evidence: ${evidencePath}`)
+console.log(`multi-account drill ${evidence.passed ? "passed" : "failed"}; safe evidence: ${evidencePath}`)

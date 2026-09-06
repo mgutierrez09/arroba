@@ -287,29 +287,30 @@ impl KernelRuntimeOwnedState {
                 ),
             _ => false,
         };
+        if !self.provider_account_allows_queued_prompt_advance(
+            session_id,
+            &target_agent,
+            "advance queued prompt after completion",
+        ) {
+            return self.finalize_local_completion_without_queued_advance(
+                session_id,
+                agent_id,
+                completed,
+                &provider_run_id,
+                released_workflow_claim,
+            );
+        }
         let acquired_next_workflow_claim =
             match self.ensure_workflow_prompt_workspace_claim(session_id, next_queued_prompt) {
                 Ok(acquired) => acquired,
                 Err(DaemonError::WorkspaceClaimConflict { .. }) => {
-                    let (active_prompt, queued_prompts) =
-                        self.prompt_state_owner.state_parts(&session, agent_id);
-                    self.mirror_prompt_owner_agent_state(
+                    return self.finalize_local_completion_without_queued_advance(
                         session_id,
                         agent_id,
-                        active_prompt,
-                        queued_prompts,
-                    )?;
-                    let released_claim =
-                        self.clear_prompt_activity(&provider_run_id) || released_workflow_claim;
-                    let _ = self.session_snapshot(session_id)?;
-                    return Ok(Some(OwnedPromptCompletion {
-                        completion: crate::session::PromptCompletion {
-                            completed,
-                            started_next: None,
-                        },
-                        released_claim,
-                        dispatch: None,
-                    }));
+                        completed,
+                        &provider_run_id,
+                        released_workflow_claim,
+                    );
                 }
                 Err(error) => return Err(error),
             };
@@ -460,6 +461,30 @@ impl KernelRuntimeOwnedState {
                     .map(str::to_string),
                 steering: false,
             }),
+        }))
+    }
+
+    fn finalize_local_completion_without_queued_advance(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        completed: crate::session::PromptQueueItem,
+        provider_run_id: &str,
+        released_workflow_claim: bool,
+    ) -> Result<Option<OwnedPromptCompletion>, DaemonError> {
+        let session = self.session_store.get_session(session_id)?;
+        let (active_prompt, queued_prompts) =
+            self.prompt_state_owner.state_parts(&session, agent_id);
+        self.mirror_prompt_owner_agent_state(session_id, agent_id, active_prompt, queued_prompts)?;
+        let released_claim = self.clear_prompt_activity(provider_run_id) || released_workflow_claim;
+        let _ = self.session_snapshot(session_id)?;
+        Ok(Some(OwnedPromptCompletion {
+            completion: crate::session::PromptCompletion {
+                completed,
+                started_next: None,
+            },
+            released_claim,
+            dispatch: None,
         }))
     }
 

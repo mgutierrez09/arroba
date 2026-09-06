@@ -483,7 +483,8 @@ export function createCliCommandActionComposition(deps: CliCommandActionComposit
     applyModeSelection,
     applyPermissionSelection,
     getProviderAuthStatus: (provider, accountProfile) => getProviderAuthStatus(client, provider, accountProfile),
-    startProviderLogin: (provider, accountProfile) => startProviderLogin(client, provider, accountProfile),
+    startProviderLogin: (provider, accountProfile, method) =>
+      startProviderLogin(client, provider, accountProfile, method),
     getProviderLoginStatus: (loginId) => getProviderLoginStatus(client, loginId),
     sendProviderLoginInput: (loginId, dataBase64) => sendProviderLoginInput(client, loginId, dataBase64),
     cancelProviderLogin: (loginId) => cancelProviderLogin(client, loginId),

@@ -10,6 +10,12 @@ impl DaemonApp {
         session_id: &str,
         agent_id: &str,
     ) -> Result<String, DaemonError> {
+        let agent = self.agents.get_agent(agent_id)?;
+        self.provider_account_profiles.require_agent_authenticated(
+            &self.config,
+            &agent,
+            "ensure prompt provider run for agent",
+        )?;
         if let Some(agent_run) = self.providers.get_run_for_agent(session_id, agent_id) {
             match agent_run.state() {
                 ProviderRunState::Running | ProviderRunState::Starting => {
@@ -24,7 +30,6 @@ impl DaemonApp {
             }
         }
 
-        let agent = self.agents.get_agent(agent_id)?;
         if agent.remote_execution().is_some() {
             return Err(DaemonError::LocalTransport {
                 operation: "ensure prompt provider run for agent",

@@ -134,6 +134,12 @@ impl<'a> RemoteLeaseRuntime<'a> {
             &leased_agent.backing_session_id,
             &leased_agent.backing_agent_id,
         );
+        let existing_profile_matches = existing.as_ref().is_some_and(|run| {
+            run.provider() == leased_agent.provider
+                && run.account_profile() == leased_agent.account_profile
+                && run.model() == leased_agent.model.as_deref().unwrap_or("default")
+                && run.variant() == leased_agent.effort.as_deref()
+        });
         if let Some(run) = existing.as_ref() {
             let mcp_matches = provider_run_mcp_set_matches(run, required_mcps)?;
             let reply_capability_matches =
@@ -142,7 +148,8 @@ impl<'a> RemoteLeaseRuntime<'a> {
                 run.workflow_event_context_enabled() == event_context_enabled;
             let actions_capability_matches =
                 run.workflow_event_actions_enabled() == event_actions_enabled;
-            if mcp_matches
+            if existing_profile_matches
+                && mcp_matches
                 && reply_capability_matches
                 && context_capability_matches
                 && actions_capability_matches
@@ -163,6 +170,19 @@ impl<'a> RemoteLeaseRuntime<'a> {
                     &leased_agent.backing_agent_id,
                 )?
                 .is_some();
+            let queued = self
+                .app
+                .prompt_owner_peek_next_queued_prompt(
+                    &leased_agent.backing_session_id,
+                    &leased_agent.backing_agent_id,
+                )?
+                .is_some();
+            if !existing_profile_matches && (active || queued) {
+                return Err(DaemonError::LocalTransport {
+                    operation: "remote provider profile reconciliation",
+                    message: "the worker provider run differs from the selected profile and still has pending work; settle or cancel it before retrying".to_string(),
+                });
+            }
             if active && !mcp_matches {
                 return Err(DaemonError::LocalTransport {
                     operation: "remote MCP provider reload",
@@ -200,7 +220,7 @@ impl<'a> RemoteLeaseRuntime<'a> {
             &leased_agent.backing_session_id,
             &leased_agent.provider,
             &leased_agent.provider,
-            "default",
+            &leased_agent.account_profile,
             leased_agent
                 .model
                 .clone()
@@ -244,7 +264,7 @@ impl<'a> RemoteLeaseRuntime<'a> {
         if leased_agent.effort.is_some() {
             request = request.with_variant(leased_agent.effort.clone());
         }
-        if let Some(run) = existing.as_ref() {
+        if let Some(run) = existing.as_ref().filter(|_| existing_profile_matches) {
             request = request.with_resume_state(run.resume_state().clone());
             if request.variant.is_none() {
                 request = request.with_variant(run.variant().map(str::to_string));

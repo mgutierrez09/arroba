@@ -70,6 +70,35 @@ test("fallback catalog exposes Claude headless and Claude -p as isolated backend
   assert.equal(opencodeOptions.some((option) => option.providerId.startsWith("claude")), false)
 })
 
+test("OpenCode model selection includes Go, Zen, and arbitrary upstream providers", () => {
+  const catalog: ProviderCatalog = {
+    all: [
+      provider("opencode-go", "OpenCode Go", "deepseek-v4-pro"),
+      provider("opencode", "OpenCode Zen", "gpt-5.2"),
+      provider("openai", "OpenAI", "gpt-5.2"),
+      provider("codex", "Codex", "gpt-5.6"),
+    ],
+    default: {},
+    connected: ["opencode-go", "opencode", "openai", "codex"],
+  }
+
+  assert.deepEqual(
+    catalogModelOptions(catalog, "opencode").map((option) => option.providerId).sort(),
+    ["openai", "opencode", "opencode-go"],
+  )
+})
+
+function provider(id: string, name: string, modelId: string) {
+  return {
+    id,
+    name,
+    remote_machine_aliases: [],
+    models: {
+      [modelId]: { id: modelId, name: modelId, status: "active", variants: {} },
+    },
+  }
+}
+
 test("fallback catalog can be marked as local fallback metadata", () => {
   const catalog = fallbackProviderCatalog({
     source: "local_fallback",

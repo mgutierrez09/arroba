@@ -186,7 +186,27 @@ impl KernelRuntimeState {
                         .leased_workflow_turn_context_for_provider_run(started.run.id())
                 })
                 .await;
-            if durable_active_prompt.is_some() {
+            if leased_context.is_some() {
+                if let Some(agent_id) = started.run.agent_instance_id() {
+                    if let Err(error) = self
+                        .settle_leased_workflow_provider_failure(
+                            started.run.session_id(),
+                            agent_id,
+                            started.run.id(),
+                        )
+                        .await
+                    {
+                        crate::logging::warn_with_fields(
+                            "daemon.provider",
+                            "leased provider launch failure settlement failed",
+                            serde_json::json!({
+                                "provider_run_id": started.run.id(),
+                                "error": error.to_string(),
+                            }),
+                        );
+                    }
+                }
+            } else if durable_active_prompt.is_some() {
                 crate::logging::warn_with_fields(
                     "durable_state.recovery",
                     "preserving durable prompt after provider launch failure",
@@ -196,30 +216,6 @@ impl KernelRuntimeState {
                         "provider_run_id": started.run.id(),
                     }),
                 );
-            } else if let Some(context) = leased_context {
-                let _ = self
-                    .with_app_side_effect(|app| {
-                        app.block_on_relay_future(
-                            crate::transport::relay_client::send_peer_request_via_temporary_connection(
-                                app.config(),
-                                chariox_relay::protocol::ClientTarget {
-                                    daemon_id: Some(context.home_kernel_id.clone()),
-                                    daemon_alias: None,
-                                },
-                                crate::transport::relay_peer::RelayPeerRequest::ForwardWorkflowProviderFailure {
-                                    context,
-                                    message: diagnostic.clone(),
-                                },
-                            ),
-                        )
-                    })
-                    .await;
-                let _ = self
-                    .with_app_side_effect(|app| {
-                        crate::app::RemoteLeaseRuntime::new(app)
-                            .complete_leased_workflow_prompt_for_provider_run(started.run.id())
-                    })
-                    .await;
             } else if let Some(agent_id) = started.run.agent_instance_id() {
                 if let Ok(session) = owned.session_store.get_session(started.run.session_id()) {
                     if let Some(active_prompt) = owned

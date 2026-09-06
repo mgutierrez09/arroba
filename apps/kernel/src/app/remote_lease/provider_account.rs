@@ -5,6 +5,33 @@ use crate::transport::relay_peer::RemoteProviderAccountSyncContext;
 use super::RemoteLeaseRuntime;
 
 impl RemoteLeaseRuntime<'_> {
+    pub(super) fn resolve_leased_profile_account(
+        &self,
+        leased_agent: &crate::execution_lease::LeasedAgent,
+        provider: &str,
+        account_profile: &str,
+    ) -> Result<String, DaemonError> {
+        if crate::provider::canonical_provider_family(provider).is_none() {
+            return Ok(account_profile.to_string());
+        }
+        let lease = self
+            .app
+            .execution_leases
+            .get(&leased_agent.lease_id)
+            .ok_or_else(|| DaemonError::ExecutionLeaseNotFound {
+                lease_id: leased_agent.lease_id.clone(),
+            })?;
+        // Replicas are registered under the lease owner, not the worker's local
+        // user or another lease's owner. Resolve aliases before changing a run.
+        self.app.provider_account_profile_registry()
+            .get(&lease.owner_user_id, provider, account_profile)
+            .map(|profile| profile.profile_id)
+            .map_err(|_| DaemonError::LocalTransport {
+                operation: "update leased agent profile",
+                message: format!("the selected {provider} account is unavailable on the worker; connect or select an available account before changing the profile"),
+            })
+    }
+
     pub(crate) fn ensure_remote_provider_account(
         &mut self,
         context: RemoteProviderAccountSyncContext,

@@ -31,6 +31,7 @@ pub(in crate::runtime::state) struct OwnedAgentProfileUpdate {
 
 pub(in crate::runtime::state) struct OwnedRemoteAgentProfileUpdate {
     pub(in crate::runtime::state) worker_kernel_id: String,
+    pub(in crate::runtime::state) execution_lease_id: String,
     pub(in crate::runtime::state) leased_agent_id: String,
     pub(in crate::runtime::state) relay_url: Option<String>,
     pub(in crate::runtime::state) relay_token: Option<String>,

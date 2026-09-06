@@ -424,8 +424,9 @@ async fn provider_quiet_gap_does_not_settle_without_completion_signal() {
 #[tokio::test]
 async fn workflow_prompt_with_completed_tool_advances_when_output_pump_consumed_completion_signal()
 {
-    let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-        .expect("daemon bootstrap should succeed");
+    let mut app =
+        crate::test_support::bootstrap_authenticated_app(crate::config::DaemonConfig::for_tests())
+            .expect("daemon bootstrap should succeed");
     let (session, first_agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-1",

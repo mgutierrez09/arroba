@@ -80,8 +80,29 @@ impl KernelRuntimeOwnedState {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut existing_run = self.provider_store.get_run_for_agent(session_id, agent_id);
         let previous_run = existing_run.clone();
+        let agent = self.agent_store.get_agent(agent_id)?;
+        let provider = crate::provider::provider_id_for_launch(agent.provider());
+        // Only custom provider variants may reuse an adapter mapping from a prior
+        // run. Known providers must always use their official adapter, including
+        // when recovering a run created with an inconsistent persisted identity.
+        let adapter_key = previous_run
+            .as_ref()
+            .filter(|run| {
+                run.provider() == provider
+                    && crate::provider::canonical_provider_family(provider).is_none()
+                    && run.state() != crate::provider::ProviderRunState::Ended
+            })
+            .map(|run| run.adapter_key())
+            .unwrap_or_else(|| crate::provider::adapter_key_for_provider(provider));
+        let profile_changed = existing_run.as_ref().is_some_and(|run| {
+            run.provider() != provider
+                || run.adapter_key() != adapter_key
+                || run.account_profile() != agent.provider_account_profile()
+                || run.model() != agent.model().unwrap_or("default")
+                || run.variant() != agent.effort()
+        });
         let mut retired_provider_run_id = None;
-        if fresh_context {
+        if fresh_context || profile_changed {
             if let Some(run) = existing_run.as_ref() {
                 let session = self.session_store.get_session(session_id)?;
                 let has_queued_prompt = run.agent_instance_id().is_some_and(|agent_id| {
@@ -144,19 +165,6 @@ impl KernelRuntimeOwnedState {
                 return Ok((run.id().to_string(), None));
             }
         }
-        let agent = self.agent_store.get_agent(agent_id)?;
-        let provider = crate::provider::provider_id_for_launch(agent.provider());
-        // An existing provider run can use a provider-specific variant on a
-        // shared adapter, such as the test-only `slow-structured` dev stub.
-        // The agent profile stores the provider id, but the adapter identity
-        // belongs to the run that is being rotated. Reuse that adapter when
-        // replacing an idle run so workflow admission does not try to resolve
-        // a provider variant as a standalone adapter.
-        let adapter_key = previous_run
-            .as_ref()
-            .filter(|run| run.state() != crate::provider::ProviderRunState::Ended)
-            .map(|run| run.adapter_key())
-            .unwrap_or_else(|| crate::provider::adapter_key_for_provider(provider));
         let mut request = crate::provider::LaunchProviderRequest::new(
             session_id,
             adapter_key,
@@ -167,7 +175,7 @@ impl KernelRuntimeOwnedState {
         .with_agent_id(agent.id().to_string())
         .with_owner_user_id(agent.owner_user_id().to_string())
         .with_variant(agent.effort().map(str::to_string));
-        if fresh_context {
+        if fresh_context || profile_changed {
             request.resume_state = Some(crate::provider::ProviderResumeState::default());
         }
         if let Some(working_directory) = previous_run

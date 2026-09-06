@@ -35,15 +35,27 @@ test("cli stdin key controller delegates session browser keys early", () => {
   assert.deepEqual(harness.calls(), ["parse:x:true", "session-browser:down"])
 })
 
-test("cli stdin key controller routes exit and focused interaction shortcuts before prompt state", () => {
+test("cli stdin key controller routes exit before prompt state", () => {
   const exitHarness = createHarness({ parsedEvent: keyEvent("e", { ctrl: true }) })
   assert.equal(exitHarness.controller.handleData("x"), true)
   assert.deepEqual(exitHarness.calls(), ["parse:x:true", "session-browser:e", "exit"])
+})
+
+test("cli stdin key controller yields focused interactions to the focused prompt input", () => {
+  const promptHarness = createHarness({
+    focusedInteractionActive: true,
+    focusedInteractionHandled: true,
+    promptFocused: true,
+    parsedEvent: keyEvent("p"),
+  })
+  assert.equal(promptHarness.controller.handleData("x"), true)
+  assert.deepEqual(promptHarness.calls(), [
+    "parse:x:true",
+    "session-browser:p",
+  ])
 
   const focusedHarness = createHarness({
     focusedInteractionHandled: true,
-    promptFocused: true,
-    commandCenterOpen: true,
     parsedEvent: keyEvent("return"),
   })
   assert.equal(focusedHarness.controller.handleData("x"), true)
@@ -237,6 +249,7 @@ function createHarness(options: {
   parsedEvent?: CliStdinKeyEvent | null
   dialogOpen?: boolean
   sessionBrowserHandled?: boolean
+  focusedInteractionActive?: boolean
   focusedInteractionHandled?: boolean
   queuedPromptHandled?: boolean
   onQueuedPromptKey?: (event: CliStdinKeyEvent) => boolean
@@ -274,6 +287,7 @@ function createHarness(options: {
     requestExit: () => {
       calls.push("exit")
     },
+    focusedInteractionActive: () => options.focusedInteractionActive ?? false,
     handleFocusedInteractionKey: (event) => {
       calls.push(`focused:${event.name}`)
       return options.focusedInteractionHandled ?? false

@@ -1,9 +1,120 @@
 use super::*;
 
 #[tokio::test]
+async fn cancellation_acknowledgement_does_not_fail_an_already_stopped_workflow() {
+    assert_stopped_workflow_cancellation_acknowledgement(false).await;
+}
+
+#[tokio::test]
+async fn cancellation_acknowledgement_preserves_existing_workflow_failures() {
+    assert_stopped_workflow_cancellation_acknowledgement(true).await;
+}
+
+async fn assert_stopped_workflow_cancellation_acknowledgement(existing_failure: bool) {
+    let mut app = DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).unwrap();
+    let (session, agent) = crate::app::KernelSessionService::new(&mut app)
+        .create_session(crate::session::CreateSessionRequest::new(
+            "cancel-ack",
+            "cancel-ack",
+        ))
+        .unwrap();
+    let attachment = crate::app::KernelSessionService::new(&mut app)
+        .attach(crate::attachment::AttachRequest::new(
+            session.id(),
+            "cancel-ack-client",
+            crate::attachment::ClientCapabilityLevel::FullTerminal,
+        ))
+        .unwrap();
+    let workflow = app
+        .sessions_mut()
+        .create_workflow(session.id(), None)
+        .unwrap();
+    let node = app
+        .sessions_mut()
+        .add_workflow_node(session.id(), workflow.id(), agent.id())
+        .unwrap();
+    let endpoint = app
+        .sessions_mut()
+        .create_workflow_endpoint(session.id(), workflow.id(), node.id(), None)
+        .unwrap();
+    let run = app
+        .sessions_mut()
+        .invoke_workflow_endpoint(session.id(), workflow.id(), endpoint.id(), None)
+        .unwrap();
+    let prompt = crate::session::PromptQueueItem::new(
+        "cancel-ack-prompt",
+        attachment.id(),
+        agent.id(),
+        "cancel",
+        crate::session::PromptStatus::Queued,
+    )
+    .with_workflow_context(run.id(), run.node_runs()[0].id());
+    app.prompt_owner_submit_prepared_prompt(session.id(), prompt.clone(), false)
+        .unwrap();
+    app.sessions_mut()
+        .cancel_workflow_run(session.id(), run.id())
+        .unwrap();
+    if existing_failure {
+        app.sessions_mut()
+            .record_workflow_failure_event(
+                session.id(),
+                run.id(),
+                crate::session::WorkflowFailureEvent::new(
+                    crate::session::WorkflowFailureKind::ProviderFailure,
+                    run.node_runs()[0].id(),
+                    Vec::new(),
+                    "provider failed before stop",
+                ),
+            )
+            .unwrap();
+    }
+    let expected_failures = app
+        .sessions()
+        .resolve_workflow_run_ref(session.id(), run.id())
+        .unwrap()
+        .failure_events()
+        .to_vec();
+    let app = Arc::new(Mutex::new(app));
+    let runtime = owned_runtime_state(&app).await;
+    for _ in 0..2 {
+        runtime
+            .owned
+            .workflow_cancel_prompt(session.id(), &prompt)
+            .unwrap();
+        let mut app = app.lock().await;
+        crate::app::workflow_runtime::cancel_workflow_prompt_from_runtime(
+            &mut app,
+            session.id(),
+            &prompt,
+        )
+        .unwrap();
+        let stopped = app
+            .sessions()
+            .resolve_workflow_run_ref(session.id(), run.id())
+            .unwrap();
+        assert_eq!(stopped.status(), crate::session::WorkflowRunStatus::Stopped);
+        assert_eq!(
+            stopped.failure_events(),
+            expected_failures,
+            "acknowledging an intentional stop must preserve failure events unchanged"
+        );
+    }
+}
+
+#[tokio::test]
 async fn unexpected_owned_provider_exit_marks_active_agent_error() {
+    assert_owned_provider_exit_state(false).await;
+}
+
+#[tokio::test]
+async fn cancelled_owned_provider_exit_does_not_mark_agent_error() {
+    assert_owned_provider_exit_state(true).await;
+}
+
+async fn assert_owned_provider_exit_state(cancelling: bool) {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-unexpected-exit",
@@ -37,6 +148,10 @@ async fn unexpected_owned_provider_exit_marks_active_agent_error() {
         Vec::new(),
     )
     .expect("prompt should start");
+    if cancelling {
+        app.prompt_owner_begin_cancelling_active_prompt(session.id(), agent.id())
+            .expect("cancellation should be recorded before provider exit");
+    }
     let ended = app
         .providers_mut()
         .mark_run_ended_provider_only(session.id(), run.id())
@@ -52,26 +167,34 @@ async fn unexpected_owned_provider_exit_marks_active_agent_error() {
         .expect("unexpected provider exit should settle");
 
     assert!(outcome.had_active_prompt);
+    assert_eq!(outcome.cancelled_prompt, cancelling);
     let session_state = runtime
         .owned
         .session_snapshot(session.id())
         .expect("session snapshot should exist");
     assert!(session_state.active_prompt_for_agent(agent.id()).is_none());
-    assert_eq!(
-        runtime
-            .owned
-            .agent_store
-            .get_agent(agent.id())
-            .expect("agent should remain available")
-            .state(),
-        crate::agent::AgentState::Error,
-    );
+    let agent_state = runtime
+        .owned
+        .agent_store
+        .get_agent(agent.id())
+        .expect("agent should remain available")
+        .state();
+    if cancelling {
+        assert_ne!(
+            agent_state,
+            crate::agent::AgentState::Error,
+            "a deliberate cancellation must not become an unexpected provider failure"
+        );
+    } else {
+        assert_eq!(agent_state, crate::agent::AgentState::Error);
+    }
 }
 
 #[tokio::test]
 async fn unexpected_owned_provider_exit_without_active_prompt_preserves_agent_state() {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-idle-exit",
@@ -120,7 +243,8 @@ async fn unexpected_owned_provider_exit_without_active_prompt_preserves_agent_st
 #[tokio::test]
 async fn owned_end_session_clears_stale_prompt_runtime_state_for_already_ended_session() {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-1",
@@ -185,7 +309,8 @@ async fn owned_end_session_clears_stale_prompt_runtime_state_for_already_ended_s
 #[tokio::test]
 async fn owned_liveness_reconciliation_settles_already_ended_active_prompt() {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-1",
@@ -266,7 +391,8 @@ async fn owned_liveness_reconciliation_settles_already_ended_active_prompt() {
 #[tokio::test]
 async fn stale_provider_exit_does_not_settle_prompt_on_replacement_run() {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-1",
@@ -488,7 +614,8 @@ async fn stale_provider_exit_preserves_starting_cross_agent_workflow_handoff() {
 #[tokio::test]
 async fn owned_destroy_agent_clears_stale_prompt_runtime_state_for_ended_provider_runs() {
     let mut app =
-        DaemonApp::bootstrap(crate::DaemonConfig::for_tests()).expect("daemon should boot");
+        crate::test_support::bootstrap_authenticated_app(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-1",

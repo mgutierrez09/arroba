@@ -236,6 +236,7 @@ async fn submit_remote_prompt_to_worker(
     };
     let request = RelayPeerRequest::SubmitLeasedPrompt {
         leased_agent_id: dispatch.leased_agent_id.clone(),
+        expected_profile: crate::transport::relay_peer::RelayAgentExecutionProfile::from(&agent),
         prompt,
         hidden_system_context: dispatch.hidden_system_context.clone(),
         attachments,

@@ -2041,7 +2041,9 @@ mod tests {
 
     #[tokio::test]
     async fn restart_recovery_preserves_superseding_resume_as_uncertain_delivery() {
-        let mut app = DaemonApp::bootstrap(DaemonConfig::for_tests()).expect("daemon should boot");
+        let _environment = crate::env_lock::lock();
+        let mut app = crate::test_support::bootstrap_authenticated_app(DaemonConfig::for_tests())
+            .expect("daemon should boot");
         let worktree = std::env::current_dir().expect("test workspace should resolve");
         let (session, agent) = KernelSessionService::new(&mut app)
             .create_session(CreateSessionRequest::new(

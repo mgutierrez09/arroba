@@ -220,8 +220,9 @@ test("bootstrapSession attaches, launches, and hydrates history for the visible 
   })
 })
 
-test("bootstrapSession uses kernel session agent defaults for newly created sessions", async () => {
+test("bootstrapSession seeds newly created sessions from the requested provider account selection", async () => {
   const launched: Array<{ provider: string; model: string; effort: string; agentId: string | null | undefined }> = []
+  let createdAgentDefaults: RuntimeSession["agent_defaults"] | undefined
   const createdSession = {
     id: "session-created",
     project_id: "project-default",
@@ -230,9 +231,10 @@ test("bootstrapSession uses kernel session agent defaults for newly created sess
     created_at_ms: 1,
     status: "Active",
     agent_defaults: {
-      provider: "codex",
-      model: "codex/gpt-5.4-mini",
-      effort: "low",
+      provider: "opencode",
+      model: "opencode/gpt-5.4",
+      effort: "high",
+      account_profile: "default",
     },
     active_provider_run_id: null,
     attachment_ids: [],
@@ -262,7 +264,14 @@ test("bootstrapSession uses kernel session agent defaults for newly created sess
       getProviderCatalog: async () => fallbackProviderCatalog(),
       getProviderCommandCatalogs: async () => fallbackProviderCommandCatalogs(),
       getTerminalCommandCatalog: async () => terminalCatalog(),
-      createSession: async () => createdSession,
+      createSession: async (_client, _workspace, _worktree, _alias, agentDefaults) => {
+        assert.ok(agentDefaults)
+        createdAgentDefaults = agentDefaults
+        return {
+          ...createdSession,
+          agent_defaults: agentDefaults,
+        }
+      },
       resolveSession: async () => { throw new Error("should not resolve") },
       attachToSession: async () => ({ id: "attachment-created", session_id: "session-created" }),
       getSessionState: async () => createdSession,
@@ -289,10 +298,16 @@ test("bootstrapSession uses kernel session agent defaults for newly created sess
     },
   )
 
+  assert.deepEqual(createdAgentDefaults, {
+    provider: "opencode",
+    model: "opencode/gpt-5.4",
+    effort: "high",
+    account_profile: "default",
+  })
   assert.deepEqual(launched, [{
-    provider: "codex",
-    model: "codex/gpt-5.4-mini",
-    effort: "low",
+    provider: "opencode",
+    model: "opencode/gpt-5.4",
+    effort: "high",
     agentId: null,
   }])
 })

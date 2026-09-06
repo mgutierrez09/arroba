@@ -164,11 +164,23 @@ impl<'a> ProviderOutputPump<'a> {
             );
         }
         if crate::provider::provider_run_uses_claude_native_bridge(&provider_run) {
-            self.context.process_claude_native_tui_bridge(
+            if let Some(message) = self.context.process_claude_native_tui_bridge(
                 request.session_id,
                 request.provider_run_id,
                 &provider_run,
-            )?;
+            )? {
+                let run = self
+                    .context
+                    .provider_store
+                    .record_terminal_diagnostic(request.provider_run_id, message.clone())?;
+                self.context.app.update_provider_run_projection(run);
+                self.context.fail_prompt_for_terminal_failure(
+                    request.session_id,
+                    request.provider_run_id,
+                    &message,
+                )?;
+                return Ok(Vec::new());
+            }
         }
 
         let mut chunks = match self.context.drain_pty_output(request.provider_run_id) {
@@ -990,7 +1002,7 @@ impl<'a> ProviderOutputPumpContext<'a> {
         session_id: &str,
         provider_run_id: &str,
         provider_run: &RuntimeProviderRun,
-    ) -> Result<(), DaemonError> {
+    ) -> Result<Option<String>, DaemonError> {
         // The interactive TUI pump revisits transcripts on its own cadence, so
         // the deferred-drain hint is not needed on this path.
         ProviderOutputClaudeNativeBridge::new(self.app)
@@ -1000,7 +1012,7 @@ impl<'a> ProviderOutputPumpContext<'a> {
                 provider_run,
                 self.provider_store.native_interaction_bridge(),
             )
-            .map(|_| ())
+            .map(|outcome| outcome.terminal_failure)
     }
 
     fn process_claude_native_terminal_output_bridge(

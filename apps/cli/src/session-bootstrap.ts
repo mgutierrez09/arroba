@@ -32,7 +32,13 @@ type BootstrapDeps = {
   getProviderCatalog: (client: LocalIpcClient, logger?: CharioxLogger | null) => Promise<ProviderCatalog>
   getProviderCommandCatalogs: (client: LocalIpcClient, logger?: CharioxLogger | null) => Promise<ProviderCommandCatalogs>
   getTerminalCommandCatalog: (client: LocalIpcClient, logger?: CharioxLogger | null) => Promise<TerminalCommandCatalog>
-  createSession: (client: LocalIpcClient, workspace: string, worktree: string, alias?: string) => Promise<RuntimeSession>
+  createSession: (
+    client: LocalIpcClient,
+    workspace: string,
+    worktree: string,
+    alias?: string,
+    agentDefaults?: RuntimeSession["agent_defaults"],
+  ) => Promise<RuntimeSession>
   resolveSession: (client: LocalIpcClient, sessionRef: string, workspace: string) => Promise<RuntimeSession>
   attachToSession: (client: LocalIpcClient, sessionId: string, clientId: string) => Promise<RuntimeAttachment>
   getSessionState: (client: LocalIpcClient, sessionId: string) => Promise<RuntimeSession>
@@ -96,9 +102,17 @@ export async function bootstrapSession(
 
   const sessions = await deps.listSessions(client)
   const decision = decideBootstrapAction(options, sessions, workspace, worktree)
+  const requestedAgentDefaults = options.provider
+    ? {
+        provider: options.provider,
+        model: options.model,
+        effort: options.effort,
+        account_profile: options.accountProfile,
+      }
+    : undefined
   switch (decision.action) {
     case "create":
-      session = await deps.createSession(client, workspace, worktree, options.alias)
+      session = await deps.createSession(client, workspace, worktree, options.alias, requestedAgentDefaults)
       createdSession = true
       break
     case "resolve":
@@ -107,7 +121,7 @@ export async function bootstrapSession(
     case "attach_existing": {
       const existing = selectAttachableSession(sessions, workspace, worktree)
       if (!existing) {
-        session = await deps.createSession(client, workspace, worktree, options.alias)
+        session = await deps.createSession(client, workspace, worktree, options.alias, requestedAgentDefaults)
         createdSession = true
         break
       }

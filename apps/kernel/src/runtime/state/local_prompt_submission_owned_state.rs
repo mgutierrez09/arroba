@@ -37,6 +37,11 @@ impl KernelRuntimeOwnedState {
         if target_agent.remote_execution().is_some() {
             return Ok(None);
         }
+        self.provider_account_profiles.require_agent_authenticated(
+            &self.config_projection.snapshot(),
+            &target_agent,
+            "submit prompt",
+        )?;
         let session = self.session_store.get_session(&session_id)?;
         let queued_while_active = self
             .prompt_state_owner

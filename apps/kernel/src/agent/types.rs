@@ -731,8 +731,6 @@ impl AgentInstance {
         self.clear_publication_runtime_state();
         self.controlled_by_metaagent_id = None;
         self.meta_mode = None;
-        self.active_substitute_index = None;
-        self.last_substitution = None;
         self.visible_in_freeform = false;
         self.created_at_ms = crate::session::unix_epoch_ms();
         self.last_activity_at_ms = self.created_at_ms;
@@ -838,10 +836,45 @@ impl AgentInstance {
         let removed = self.substitutes.remove(index);
         match self.active_substitute_index {
             Some(active) if active == index => self.deactivate_substitute(),
-            Some(active) if active > index => self.active_substitute_index = Some(active - 1),
-            _ => {}
+            Some(active) if active > index => {
+                let shifted_active = active - 1;
+                self.active_substitute_index = Some(shifted_active);
+                if let Some(record) = self.last_substitution.as_mut() {
+                    record.substitute_index = shifted_active;
+                }
+                self.last_activity_at_ms = crate::session::unix_epoch_ms();
+            }
+            _ => self.last_activity_at_ms = crate::session::unix_epoch_ms(),
         }
         Some(removed)
+    }
+
+    pub fn move_substitute(&mut self, from_index: usize, to_index: usize) -> bool {
+        if from_index >= self.substitutes.len() || to_index >= self.substitutes.len() {
+            return false;
+        }
+        if from_index == to_index {
+            return true;
+        }
+        let profile = self.substitutes.remove(from_index);
+        self.substitutes.insert(to_index, profile);
+        if let Some(active) = self.active_substitute_index {
+            let moved_active = if active == from_index {
+                to_index
+            } else if from_index < active && active <= to_index {
+                active - 1
+            } else if to_index <= active && active < from_index {
+                active + 1
+            } else {
+                active
+            };
+            self.active_substitute_index = Some(moved_active);
+            if let Some(record) = self.last_substitution.as_mut() {
+                record.substitute_index = moved_active;
+            }
+        }
+        self.last_activity_at_ms = crate::session::unix_epoch_ms();
+        true
     }
 
     pub fn clear_substitutes(&mut self) {

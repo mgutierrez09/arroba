@@ -6,8 +6,9 @@ async fn assert_completed_publication_output_settlement(
     client_interface: crate::provider::ProviderClientInterface,
     waits_for_provider_completion: bool,
 ) {
-    let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-        .expect("daemon bootstrap should succeed");
+    let mut app =
+        crate::test_support::bootstrap_authenticated_app(crate::config::DaemonConfig::for_tests())
+            .expect("daemon bootstrap should succeed");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-publication-claim",
@@ -222,6 +223,76 @@ async fn assert_completed_publication_output_settlement(
                 .map(|prompt| prompt.id()),
             Some(active_prompt_id.as_str()),
             "validated output must not activate the next queued prompt before the provider turn ends",
+        );
+        // The real provider settlement marks this reservation before clearing
+        // the prompt, then awaits post-turn work. Another event may persist and
+        // archive the room while that await is in flight.
+        runtime
+            .owned
+            .session_store
+            .write()
+            .mark_workflow_run_settling(session.id(), workflow_run.id())
+            .unwrap();
+        let completion = runtime
+            .owned
+            .complete_local_prompt_without_advance_if_matches(
+                session.id(),
+                agent.id(),
+                Some(provider_run.id()),
+                Some(&active_prompt_id),
+            )
+            .unwrap()
+            .expect("provider prompt should settle");
+        runtime
+            .owned
+            .persist_workflow_runtime_session(session.id(), "interleaved_settlement_test")
+            .unwrap();
+        let hot = runtime
+            .owned
+            .session_store
+            .get_session(session.id())
+            .unwrap();
+        assert!(
+            hot.workflow_run(workflow_run.id()).is_some(),
+            "archival must retain a terminal workflow during post-provider settlement"
+        );
+        assert!(
+            hot.durable_runtime_snapshot()
+                .workflow_run(workflow_run.id())
+                .is_some(),
+            "durable snapshot must retain the in-progress settlement"
+        );
+        runtime
+            .owned
+            .workflow_complete_prompt(
+                session.id(),
+                &completion.completion.completed,
+                Some(provider_run.id()),
+            )
+            .expect("interleaved persistence must not lose the completing workflow");
+        assert!(
+            !runtime.owned.prompt_workspace_claims.contains(&claim_id),
+            "completed provider settlement must release the node's workspace claim"
+        );
+        runtime
+            .owned
+            .session_store
+            .write()
+            .clear_workflow_run_settling(session.id(), workflow_run.id())
+            .unwrap();
+        runtime
+            .owned
+            .persist_workflow_runtime_session(session.id(), "settlement_test_finished")
+            .unwrap();
+        assert!(
+            runtime
+                .owned
+                .session_store
+                .get_session(session.id())
+                .unwrap()
+                .workflow_run(workflow_run.id())
+                .is_none(),
+            "finished settlement must not retain terminal runs indefinitely"
         );
     } else {
         assert!(

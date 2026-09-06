@@ -5,7 +5,7 @@ import { createSliceRequest } from "./ipc-slice-requests.js"
 import { LOCAL_DAEMON_PROTOCOL_VERSION } from "./kernel-types.js"
 
 test("slice create serializes exact multi-repository development selection", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 284)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 287)
   assert.deepEqual(createSliceRequest({
     name: "project-slice",
     workspaceId: "/primary",

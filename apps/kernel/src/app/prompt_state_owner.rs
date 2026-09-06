@@ -281,15 +281,28 @@ impl DaemonApp {
             .providers
             .get_run_for_agent(session_id, agent_id)
             .map(|run| run.id().to_string());
+        let settled_at_ms = crate::session::unix_epoch_ms();
         self.operational_history_store().record_prompt_settlement(
             self.history_archive_enabled(),
             session_id,
             agent_id,
             prompt.id(),
             provider_run_id.as_deref(),
-            crate::session::unix_epoch_ms(),
+            settled_at_ms,
             "cancelled",
         );
+        self.completed_git_turn_snapshot_store()
+            .record_prompt_settlement(
+                session_id,
+                agent_id,
+                provider_run_id
+                    .as_deref()
+                    .unwrap_or("provider-run-cancelled"),
+                prompt,
+                settled_at_ms,
+                Some(prompt.created_at_ms()),
+                crate::git_observer::CompletedTurnSettlementStatus::Cancelled,
+            );
     }
 
     pub(crate) fn prompt_owner_peek_next_queued_prompt(

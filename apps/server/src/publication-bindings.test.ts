@@ -41,6 +41,39 @@ test("publication bindings resolve the default model sentinel without prompting"
   assert.equal(resolved.changed, false)
 })
 
+test("publication bindings reject a default model when the provider is unavailable", async () => {
+  const snapshot = {
+    workflow: {
+      id: "workflow-1",
+      nodes: [{ id: "node-1", agent_id: "agent-1" }],
+    },
+    agents: [{
+      id: "agent-1",
+      provider: "missing-provider",
+      model: "default",
+      effort: null,
+    }],
+  } as unknown as WorkflowPublicationSnapshot
+
+  await assert.rejects(
+    resolvePublicationProviderModelBindings(
+      snapshot,
+      "/tmp/chariox-publication-missing-provider-bindings-does-not-exist.json",
+      {
+        send: async <T>(): Promise<T> => ({
+          ProviderCatalog: {
+            catalog: {
+              all: [{ id: "codex", models: { "gpt-5.6-sol": {} } }],
+            },
+          },
+        }) as T,
+      },
+      { promptReplacement: false },
+    ),
+    /publication provider\/model is unavailable/,
+  )
+})
+
 test("publication bindings keep OpenCode models provider-qualified after catalog validation", async () => {
   for (const capturedModel of ["gpt-5.2", "opencode/gpt-5.2"]) {
     const snapshot = {
@@ -74,6 +107,75 @@ test("publication bindings keep OpenCode models provider-qualified after catalog
     assert.equal(resolved.snapshot.agents?.[0]?.model, "opencode/gpt-5.2")
     assert.equal(resolved.changed, false)
   }
+})
+
+test("publication bindings validate OpenCode Go models against the selected catalog provider", async () => {
+  const snapshot = {
+    workflow: {
+      id: "workflow-1",
+      nodes: [{ id: "node-1", agent_id: "agent-1" }],
+    },
+    agents: [{
+      id: "agent-1",
+      provider: "opencode",
+      model: "opencode-go/deepseek-v4-flash",
+      effort: "low",
+    }],
+  } as unknown as WorkflowPublicationSnapshot
+
+  const resolved = await resolvePublicationProviderModelBindings(
+    snapshot,
+    "/tmp/chariox-publication-opencode-go-bindings-does-not-exist.json",
+    {
+      send: async <T>(): Promise<T> => ({
+        ProviderCatalog: {
+          catalog: {
+            all: [
+              { id: "opencode", models: { "deepseek-v4-flash": {} } },
+              { id: "opencode-go", models: { "deepseek-v4-flash": {} } },
+            ],
+          },
+        },
+      }) as T,
+    },
+    { promptReplacement: false },
+  )
+
+  assert.equal(resolved.snapshot.agents?.[0]?.model, "opencode-go/deepseek-v4-flash")
+  assert.equal(resolved.changed, false)
+})
+
+test("publication bindings do not validate OpenCode Go models against the Zen catalog", async () => {
+  const snapshot = {
+    workflow: {
+      id: "workflow-1",
+      nodes: [{ id: "node-1", agent_id: "agent-1" }],
+    },
+    agents: [{
+      id: "agent-1",
+      provider: "opencode",
+      model: "opencode-go/deepseek-v4-flash",
+      effort: "low",
+    }],
+  } as unknown as WorkflowPublicationSnapshot
+
+  await assert.rejects(
+    resolvePublicationProviderModelBindings(
+      snapshot,
+      "/tmp/chariox-publication-opencode-go-zen-only-bindings-does-not-exist.json",
+      {
+        send: async <T>(): Promise<T> => ({
+          ProviderCatalog: {
+            catalog: {
+              all: [{ id: "opencode", models: { "deepseek-v4-flash": {} } }],
+            },
+          },
+        }) as T,
+      },
+      { promptReplacement: false },
+    ),
+    /publication provider\/model is unavailable/,
+  )
 })
 
 test("publication bindings validate the Claude family against runtime adapter catalogs", async () => {

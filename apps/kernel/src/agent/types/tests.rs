@@ -288,6 +288,73 @@ fn switching_substitutes_does_not_overwrite_stored_primary_and_removing_active_r
 }
 
 #[test]
+fn moving_substitutes_preserves_order_and_tracks_the_active_profile_identity() {
+    let mut agent = AgentInstance::new(
+        "agent-1",
+        "agent-1",
+        "session-1",
+        None,
+        "claude",
+        Some("claude-opus-4-8".to_string()),
+        Some("high".to_string()),
+        None,
+        GridPosition::new(0, 0, 1, 1),
+    );
+    for (provider, model) in [
+        ("opencode", "opencode-go/deepseek-v4-pro"),
+        ("opencode", "deepseek-v4-pro"),
+        ("codex", "gpt-5.6-sol"),
+    ] {
+        agent.add_substitute(AgentSubstituteProfile::new(provider, model, None));
+    }
+    agent.activate_substitute(1, "resource exhausted");
+
+    assert!(agent.move_substitute(1, 0));
+    assert_eq!(
+        agent
+            .substitutes()
+            .iter()
+            .map(|profile| profile.model.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "deepseek-v4-pro",
+            "opencode-go/deepseek-v4-pro",
+            "gpt-5.6-sol"
+        ]
+    );
+    assert_eq!(agent.active_substitute_index(), Some(0));
+    assert_eq!(
+        agent
+            .last_substitution()
+            .map(|record| record.substitute_index),
+        Some(0)
+    );
+    assert_eq!(agent.model(), Some("deepseek-v4-pro"));
+
+    assert!(agent.move_substitute(2, 0));
+    assert_eq!(agent.active_substitute_index(), Some(1));
+    assert_eq!(
+        agent
+            .last_substitution()
+            .map(|record| record.substitute_index),
+        Some(1)
+    );
+    assert_eq!(agent.model(), Some("deepseek-v4-pro"));
+
+    agent.remove_substitute(0);
+    assert_eq!(agent.active_substitute_index(), Some(0));
+    assert_eq!(
+        agent
+            .last_substitution()
+            .map(|record| record.substitute_index),
+        Some(0)
+    );
+    assert_eq!(agent.model(), Some("deepseek-v4-pro"));
+    assert!(!agent.move_substitute(3, 0));
+    assert!(!agent.move_substitute(0, 3));
+}
+
+#[test]
 fn workflow_runtime_materialization_preserves_config_without_live_state() {
     let mut source = AgentInstance::new(
         "agent-1",
@@ -304,6 +371,11 @@ fn workflow_runtime_materialization_preserves_config_without_live_state() {
     source.set_execution_mode_override(Some(crate::provider::AgentExecutionMode::Build));
     source.set_permission_level_override(Some(crate::provider::AgentPermissionLevel::Yolo));
     source.grant_mcp("github");
+    source.add_substitute(
+        AgentSubstituteProfile::new("codex", "gpt-5.6-sol", Some("high".to_string()))
+            .with_account_profile(Some("codex-work".to_string())),
+    );
+    source.activate_substitute(0, "resource exhausted");
     source.set_provider_resume_state(
         crate::provider::ProviderResumeState::from_opencode_session_id("provider-session-secret"),
     );
@@ -317,10 +389,17 @@ fn workflow_runtime_materialization_preserves_config_without_live_state() {
         "/isolated",
     );
 
-    assert_eq!(runtime.provider(), "opencode");
-    assert_eq!(runtime.model(), Some("x-preview-f-free"));
+    assert_eq!(runtime.provider(), "codex");
+    assert_eq!(runtime.model(), Some("gpt-5.6-sol"));
     assert_eq!(runtime.effort(), Some("high"));
-    assert_eq!(runtime.account_profile(), Some("zen"));
+    assert_eq!(runtime.account_profile(), Some("codex-work"));
+    assert_eq!(runtime.active_substitute_index(), Some(0));
+    assert_eq!(
+        runtime
+            .last_substitution()
+            .map(|record| record.reason.as_str()),
+        Some("resource exhausted")
+    );
     assert_eq!(
         runtime.execution_mode_override(),
         Some(crate::provider::AgentExecutionMode::Build)

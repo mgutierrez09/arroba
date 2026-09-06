@@ -269,7 +269,8 @@ fn provider_process_projection_stores_canonical_unfiltered_snapshot() {
 }
 
 async fn provider_process_projection_stores_canonical_unfiltered_snapshot_inner() {
-    let mut app = DaemonApp::bootstrap(DaemonConfig::for_tests()).expect("daemon should boot");
+    let mut app = crate::test_support::bootstrap_authenticated_app(DaemonConfig::for_tests())
+        .expect("daemon should boot");
     for (idx, provider, model) in [(1, "claude-code", "sonnet"), (2, "codex", "gpt-5.4")] {
         let (session, agent) = crate::app::KernelSessionService::new(&mut app)
             .create_session(CreateSessionRequest::new(

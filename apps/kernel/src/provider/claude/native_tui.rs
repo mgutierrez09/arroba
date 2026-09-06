@@ -262,6 +262,8 @@ if (!contextOnlyHook) {
     tool_input: input.tool_input ?? null,
     tool_response: input.tool_response ?? null,
     error: input.error ?? null,
+    error_details: eventName === "StopFailure" ? input.error_details ?? null : null,
+    last_assistant_message: eventName === "StopFailure" ? input.last_assistant_message ?? null : null,
   }) + "\n")
 }
 
@@ -448,6 +450,63 @@ mod tests {
         CLAUDE_NATIVE_MAX_HIDDEN_CONTEXT_BYTES,
     };
     use crate::error::DaemonError;
+
+    #[test]
+    fn claude_stop_failure_hook_preserves_error_fields() {
+        let request = LaunchProviderRequest::new(
+            "session-1",
+            "claude",
+            "claude-headless",
+            "default",
+            "sonnet",
+        );
+        let native = prepare_claude_native_tui_files(&request).unwrap();
+        let input = serde_json::json!({
+            "hook_event_name": "StopFailure",
+            "error": "rate_limit",
+            "error_details": "429 Too Many Requests",
+            "last_assistant_message": "You've hit your session limit · resets 4am (Europe/Madrid)"
+        });
+        let mut child = Command::new("node")
+            .arg(
+                native
+                    .events_file
+                    .parent()
+                    .unwrap()
+                    .join("hook-handler.mjs"),
+            )
+            .env("CHARIOX_CLAUDE_NATIVE_EVENTS", &native.events_file)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let recorded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&native.events_file).unwrap()).unwrap();
+        for key in [
+            "hook_event_name",
+            "error",
+            "error_details",
+            "last_assistant_message",
+        ] {
+            assert_eq!(
+                recorded[key], input[key],
+                "{key} must reach the native failure bridge"
+            );
+        }
+    }
 
     #[test]
     fn hook_auto_allows_only_bypass_permissions() {

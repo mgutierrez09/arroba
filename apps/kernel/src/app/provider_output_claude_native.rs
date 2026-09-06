@@ -77,12 +77,14 @@ pub(crate) enum ClaudeNativeDispatchAttempt {
 
 const CLAUDE_HEADLESS_SUBMIT_RETRY_LIMIT: u8 = 10;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ClaudeNativeProcessOutcome {
     /// A managed Claude run reported Stop/SessionEnd this pass. The caller
     /// should drain its transcript once more after a short delay taken off the
     /// app lock, capturing the final assistant flush before settlement.
     pub(crate) needs_deferred_transcript_drain: bool,
+    /// Provider-native failure, settled by the caller's normal failure/substitution path.
+    pub(crate) terminal_failure: Option<String>,
 }
 
 pub(crate) struct ProviderOutputClaudeNativeBridge<'a> {
@@ -403,7 +405,10 @@ impl<'a> ProviderOutputClaudeNativeBridge<'a> {
                 if let crate::session::PromptSubmissionOutcome::Started { prompt } = outcome {
                     write_claude_native_marker(context_file, &format!("native:{}", prompt.id()));
                 }
-            } else if matches!(event_name, "Stop" | "StopFailure" | "SessionEnd") {
+            } else if event_name == "StopFailure" {
+                outcome.terminal_failure = crate::provider::claude_native_stop_failure(&event);
+                return Ok(outcome);
+            } else if matches!(event_name, "Stop" | "SessionEnd") {
                 // Stop is the authoritative settlement signal for every
                 // managed Claude interface. Drain now and once more after a
                 // short off-lock delay because the final transcript flush can

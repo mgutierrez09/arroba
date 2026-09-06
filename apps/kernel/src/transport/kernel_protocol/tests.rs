@@ -665,6 +665,7 @@ fn provider_account_profile() -> crate::account_profile::ProviderAccountProfile 
         plan: Some("pro".to_string()),
         detected_provider_version: None,
         last_validated_at_ms: Some(100),
+        services: Vec::new(),
         usage: crate::account_profile::ProviderAccountUsageSnapshot::unavailable(
             "managed-claude",
             "claude",

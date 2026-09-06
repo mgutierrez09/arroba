@@ -704,7 +704,7 @@ test("buildCliAutomationSnapshot shows the selected account and provider profile
   })
 
   const rows = (snapshot.waitingRoom as { rows: Array<Record<string, unknown>> }).rows
-  assert.equal(rows.find((row) => row.id === "account")?.value, "opencode-1")
+  assert.equal(rows.find((row) => row.id === "account")?.value, "opencode-1 · OpenCode Zen")
   assert.equal(rows.find((row) => row.id === "provider-accounts")?.value, "4 profiles · Press Enter")
 })
 

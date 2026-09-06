@@ -217,6 +217,8 @@ impl<'a> KernelAgentService<'a> {
                 },
                 RelayPeerRequest::SubmitLeasedPrompt {
                     leased_agent_id: dispatch.leased_agent_id.clone(),
+                    expected_profile:
+                        crate::transport::relay_peer::RelayAgentExecutionProfile::from(&agent),
                     prompt: dispatch.prompt.clone(),
                     hidden_system_context: dispatch.hidden_system_context.clone(),
                     attachments,
@@ -493,6 +495,8 @@ impl<'a> KernelAgentService<'a> {
                     },
                     RelayPeerRequest::SubmitLeasedPrompt {
                         leased_agent_id: leased_agent_id.to_string(),
+                        expected_profile:
+                            crate::transport::relay_peer::RelayAgentExecutionProfile::from(&agent),
                         prompt: peeked.prompt().to_string(),
                         hidden_system_context: peeked.hidden_system_context().to_string(),
                         attachments: self

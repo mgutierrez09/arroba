@@ -254,5 +254,9 @@ function providerBelongsToBackend(
   if (backendProviderId === "claude-p") {
     return providerId === "claude-p" || providerId === "claude"
   }
-  return providerId === "opencode"
+  return providerId !== "codex"
+    && providerId !== "claude"
+    && providerId !== "claude-headless"
+    && providerId !== "claude-p"
+    && providerId !== "dev-stub"
 }

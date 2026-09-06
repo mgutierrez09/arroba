@@ -139,6 +139,12 @@ pub(crate) fn text_from_content(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn clean_provider_prompt(prompt: String) -> Option<String> {
+    // Decode before provider wrapper removal or whitespace compaction destroys
+    // the frame's byte offsets. Its request is already the user-authored text.
+    let request = strip_observed_account_handoff(&prompt);
+    if request != prompt {
+        return (!request.trim().is_empty()).then(|| request.trim().to_string());
+    }
     let prompt = strip_observed_generated_prompt_context(prompt.trim()).trim();
     if prompt.is_empty()
         || prompt.starts_with("# AGENTS.md instructions")
@@ -381,13 +387,56 @@ fn read_u64_path(value: &serde_json::Value, path: &[&str]) -> Option<u64> {
 }
 
 pub(crate) fn normalized_observed_prompt_text(text: &str) -> Option<String> {
-    let without_provider_attachment_suffix = strip_observed_provider_attachment_suffix(text);
+    let without_account_handoff = strip_observed_account_handoff(text);
+    let without_provider_attachment_suffix =
+        strip_observed_provider_attachment_suffix(without_account_handoff);
     let without_attachments = strip_observed_attachment_markup(without_provider_attachment_suffix);
     let normalized = strip_observed_generated_prompt_context(&without_attachments)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
     (!normalized.is_empty()).then_some(normalized)
+}
+
+fn strip_observed_account_handoff(text: &str) -> &str {
+    if let Some((request, suffix)) = super::account_handoff::decode_account_handoff(text.trim()) {
+        return if strip_observed_provider_attachment_suffix(suffix)
+            .trim()
+            .is_empty()
+        {
+            request
+        } else {
+            text
+        };
+    }
+    let Some(context) = text.trim().strip_prefix("<chariox_context_handoff>") else {
+        return text;
+    };
+    let Some((_, remainder)) = context.split_once("</chariox_context_handoff>") else {
+        return text;
+    };
+    let Some(transition) = remainder
+        .trim_start()
+        .strip_prefix("Provider/account switch:")
+    else {
+        return text;
+    };
+    let Some((_, request)) = transition.split_once("<user_request>") else {
+        return text;
+    };
+    // Historical, unframed records can only be decoded when unambiguous.
+    // New provider prompts use byte-counted framing above.
+    let Some((request, suffix)) = request.split_once("</user_request>") else {
+        return text;
+    };
+    if !suffix.contains("</user_request>")
+        && strip_observed_provider_attachment_suffix(suffix)
+            .trim()
+            .is_empty()
+    {
+        return request;
+    }
+    text
 }
 
 fn strip_observed_provider_attachment_suffix(text: &str) -> &str {

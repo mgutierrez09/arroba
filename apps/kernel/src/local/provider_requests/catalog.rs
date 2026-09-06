@@ -265,6 +265,12 @@ pub(crate) fn provider_auth_status_response(
             status: {
                 let status = opencode_auth_status(&profile.profile_id, &environment)?;
                 update_profile_auth_observation(registry, owner_user_id, &status)?;
+                registry.update_services(
+                    owner_user_id,
+                    "opencode",
+                    &profile.profile_id,
+                    inspect_opencode_services(&environment),
+                )?;
                 status
             },
         }),
@@ -283,7 +289,10 @@ pub(crate) fn refresh_provider_account_profile_response(
 ) -> Result<crate::account_profile::ProviderAccountProfile, DaemonError> {
     let profile = registry.get(owner_user_id, provider, account_profile)?;
     let environment = registry.resolve_environment(owner_user_id, provider, &profile.profile_id)?;
-    let (status, usage) = match crate::provider::canonical_provider_family(provider) {
+    let provider_family = crate::provider::canonical_provider_family(provider);
+    let opencode_services =
+        (provider_family == Some("opencode")).then(|| inspect_opencode_services(&environment));
+    let (status, usage) = match provider_family {
         Some("codex") => {
             let endpoint = crate::provider::ensure_codex_account_endpoint(
                 owner_user_id,
@@ -324,7 +333,7 @@ pub(crate) fn refresh_provider_account_profile_response(
             ));
         }
     };
-    registry.update_observation(
+    let updated = registry.update_observation(
         owner_user_id,
         &status.provider,
         &status.account_profile,
@@ -333,7 +342,12 @@ pub(crate) fn refresh_provider_account_profile_response(
         status.plan,
         status.detected_version,
         Some(usage),
-    )
+    )?;
+    if let Some(services) = opencode_services {
+        registry.update_services(owner_user_id, "opencode", &updated.profile_id, services)
+    } else {
+        Ok(updated)
+    }
 }
 
 fn claude_auth_status(
@@ -423,7 +437,9 @@ fn opencode_auth_status(
         }
         .to_string(),
         account_profile: account_profile.to_string(),
-        identity_summary: has_credentials.then(|| "Provider credentials configured".to_string()),
+        // A generic phrase is not an account identity. Treating it as one
+        // would collapse distinct OpenCode profiles during duplicate checks.
+        identity_summary: None,
         plan: None,
         login_hint: Some(
             if credential_inspection == OpenCodeCredentialInspection::Malformed {
@@ -472,6 +488,7 @@ fn opencode_usage_snapshot(
         meters.push(ProviderAccountUsageMeter {
             meter_id: "local/tokens".to_string(),
             label: "Local token usage".to_string(),
+            service_id: None,
             kind: ProviderAccountUsageMeterKind::TokenUsage,
             scope: ProviderAccountUsageMeterScope::Account,
             used_percent: None,
@@ -493,6 +510,7 @@ fn opencode_usage_snapshot(
         meters.push(ProviderAccountUsageMeter {
             meter_id: "local/cost".to_string(),
             label: "Local recorded cost".to_string(),
+            service_id: None,
             kind: ProviderAccountUsageMeterKind::LocalCost,
             scope: ProviderAccountUsageMeterScope::Account,
             used_percent: None,
@@ -548,9 +566,7 @@ fn opencode_go_usage(
     environment: &BTreeMap<String, String>,
     observed_at_ms: u64,
 ) -> OpenCodeGoUsage {
-    let Some(key) = opencode_provider_api_key(environment, "opencode-go")
-        .or_else(|| opencode_provider_api_key(environment, "opencode"))
-    else {
+    let Some(key) = opencode_provider_api_key(environment, "opencode-go") else {
         return OpenCodeGoUsage::Unavailable;
     };
     let response = ureq::AgentBuilder::new()
@@ -642,6 +658,64 @@ fn inspect_opencode_credentials(
     }
 }
 
+fn inspect_opencode_services(
+    environment: &BTreeMap<String, String>,
+) -> Vec<crate::account_profile::ProviderAccountService> {
+    use crate::account_profile::{
+        ProviderAccountAuthState, ProviderAccountService, ProviderAccountServiceCredentialType,
+        ProviderCredentialKind,
+    };
+    let Some(document) = read_opencode_auth_document(environment) else {
+        return Vec::new();
+    };
+    let Some(entries) = document.as_object() else {
+        return Vec::new();
+    };
+    let mut services = entries
+        .iter()
+        .map(|(service_id, credential)| {
+            let credential_type = match credential.get("type").and_then(serde_json::Value::as_str) {
+                Some("api") => ProviderAccountServiceCredentialType::ApiKey,
+                Some("oauth") => ProviderAccountServiceCredentialType::Oauth,
+                _ => ProviderAccountServiceCredentialType::Unknown,
+            };
+            let secret = match credential_type {
+                ProviderAccountServiceCredentialType::ApiKey => credential.get("key"),
+                ProviderAccountServiceCredentialType::Oauth => credential.get("access"),
+                ProviderAccountServiceCredentialType::Unknown => None,
+            }
+            .and_then(serde_json::Value::as_str);
+            ProviderAccountService {
+                service_id: service_id.clone(),
+                label: opencode_service_label(service_id),
+                auth_state: if secret.is_some_and(valid_opencode_secret) {
+                    ProviderAccountAuthState::Authenticated
+                } else {
+                    ProviderAccountAuthState::Error
+                },
+                credential_type,
+                billing_kind: match service_id.as_str() {
+                    "opencode-go" => Some(ProviderCredentialKind::Subscription),
+                    "opencode" => Some(ProviderCredentialKind::Prepaid),
+                    _ => None,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
+    services
+}
+
+fn opencode_service_label(service_id: &str) -> String {
+    match service_id {
+        "opencode-go" => "OpenCode Go".to_string(),
+        "opencode" => "OpenCode Zen".to_string(),
+        "openai" => "OpenAI".to_string(),
+        "anthropic" => "Anthropic".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn read_opencode_auth_document(
     environment: &BTreeMap<String, String>,
 ) -> Option<serde_json::Value> {
@@ -667,9 +741,9 @@ fn opencode_go_usage_from_value(
     };
     let usage = value.get("usage").unwrap_or(value);
     let windows = [
-        ("rolling", "5-hour", Some(5 * 60)),
-        ("weekly", "Weekly", Some(7 * 24 * 60)),
-        ("monthly", "Monthly", None),
+        ("rolling", "OpenCode Go 5-hour", Some(5 * 60)),
+        ("weekly", "OpenCode Go weekly", Some(7 * 24 * 60)),
+        ("monthly", "OpenCode Go monthly", None),
     ];
     let meters = windows
         .into_iter()
@@ -679,6 +753,7 @@ fn opencode_go_usage_from_value(
             Some(ProviderAccountUsageMeter {
                 meter_id: format!("go/{id}"),
                 label: label.to_string(),
+                service_id: Some("opencode-go".to_string()),
                 kind: ProviderAccountUsageMeterKind::RollingLimit,
                 scope: ProviderAccountUsageMeterScope::Plan,
                 used_percent: Some(used_percent),
@@ -1007,7 +1082,6 @@ fn opencode_backend_catalog(catalog: OpenCodeProviderCatalog) -> OpenCodeProvide
     let mut all = catalog
         .all
         .into_iter()
-        .filter(|provider| matches!(provider.id.as_str(), "opencode" | "opencode-go"))
         .filter(|provider| !provider.models.is_empty())
         .map(|mut provider| {
             provider.remote_machine_aliases.clear();
@@ -1441,7 +1515,7 @@ exit 2
     }
 
     #[test]
-    fn opencode_backend_catalog_keeps_zen_and_go_but_hides_upstream_provider_ids() {
+    fn opencode_backend_catalog_keeps_zen_go_and_configured_upstream_providers() {
         let catalog = opencode_backend_catalog(OpenCodeProviderCatalog {
             all: vec![
                 OpenCodeProviderInfo {
@@ -1504,8 +1578,13 @@ exit 2
 
         assert_eq!(
             catalog.connected,
-            vec!["opencode".to_string(), "opencode-go".to_string()]
+            vec![
+                "openai".to_string(),
+                "opencode".to_string(),
+                "opencode-go".to_string(),
+            ]
         );
+        assert_eq!(catalog.default.get("openai"), Some(&"gpt-5.2".to_string()));
         assert_eq!(
             catalog.default.get("opencode"),
             Some(&"gpt-5.2".to_string())
@@ -1514,13 +1593,16 @@ exit 2
             catalog.default.get("opencode-go"),
             Some(&"deepseek-v4-pro".to_string())
         );
-        assert_eq!(catalog.all.len(), 2);
-        assert_eq!(catalog.all[0].id, "opencode");
-        assert_eq!(catalog.all[0].name, "OpenCode Zen");
+        assert_eq!(catalog.all.len(), 3);
+        assert_eq!(catalog.all[0].id, "openai");
+        assert_eq!(catalog.all[0].name, "OpenAI");
         assert!(catalog.all[0].models.contains_key("gpt-5.2"));
-        assert_eq!(catalog.all[1].id, "opencode-go");
-        assert_eq!(catalog.all[1].name, "OpenCode Go");
-        assert!(catalog.all[1].models.contains_key("deepseek-v4-pro"));
+        assert_eq!(catalog.all[1].id, "opencode");
+        assert_eq!(catalog.all[1].name, "OpenCode Zen");
+        assert!(catalog.all[1].models.contains_key("gpt-5.2"));
+        assert_eq!(catalog.all[2].id, "opencode-go");
+        assert_eq!(catalog.all[2].name, "OpenCode Go");
+        assert!(catalog.all[2].models.contains_key("deepseek-v4-pro"));
     }
 
     #[test]
@@ -1538,11 +1620,11 @@ exit 2
         .expect("Go usage should parse");
 
         assert_eq!(meters.len(), 3);
-        assert_eq!(meters[0].label, "5-hour");
+        assert_eq!(meters[0].label, "OpenCode Go 5-hour");
         assert_eq!(meters[0].state, ProviderAccountUsageMeterState::Warning);
-        assert_eq!(meters[1].label, "Weekly");
+        assert_eq!(meters[1].label, "OpenCode Go weekly");
         assert_eq!(meters[1].resets_at_ms, Some(1_800_000_000_000));
-        assert_eq!(meters[2].label, "Monthly");
+        assert_eq!(meters[2].label, "OpenCode Go monthly");
         assert_eq!(meters[2].state, ProviderAccountUsageMeterState::Exhausted);
     }
 
@@ -1646,6 +1728,44 @@ exit 2
         assert_eq!(
             inspect_opencode_credentials(&environment),
             OpenCodeCredentialInspection::Valid
+        );
+
+        fs::write(
+            data_home.join("opencode/auth.json"),
+            r#"{"opencode-go":{"type":"api","key":"go-key"},"opencode":{"type":"api","key":"zen-key"},"openai":{"type":"oauth","access":"oauth-token"}}"#,
+        )
+        .expect("mixed service auth file should write");
+        let services = inspect_opencode_services(&environment);
+        assert_eq!(
+            services
+                .iter()
+                .map(|service| (
+                    service.service_id.as_str(),
+                    service.label.as_str(),
+                    service.credential_type,
+                    service.billing_kind,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "openai",
+                    "OpenAI",
+                    crate::account_profile::ProviderAccountServiceCredentialType::Oauth,
+                    None,
+                ),
+                (
+                    "opencode",
+                    "OpenCode Zen",
+                    crate::account_profile::ProviderAccountServiceCredentialType::ApiKey,
+                    Some(crate::account_profile::ProviderCredentialKind::Prepaid),
+                ),
+                (
+                    "opencode-go",
+                    "OpenCode Go",
+                    crate::account_profile::ProviderAccountServiceCredentialType::ApiKey,
+                    Some(crate::account_profile::ProviderCredentialKind::Subscription),
+                ),
+            ]
         );
 
         fs::write(

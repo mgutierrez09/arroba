@@ -15,6 +15,32 @@ use support::runtime_integration::{
 };
 
 #[test]
+fn mock_opencode_without_fixture_credentials_cannot_launch() {
+    let _guard = opencode_env_guard();
+    let fixture_path = create_opencode_fixture_script();
+    env::set_var("CHARIOX_OPENCODE_BIN", &fixture_path);
+    let fixture_data = std::path::PathBuf::from(env::var_os("XDG_DATA_HOME").unwrap());
+    fs::remove_file(fixture_data.join("opencode/auth.json"))
+        .expect("remove only the isolated fake credential");
+    let mut app = DaemonApp::bootstrap(DaemonConfig::for_tests()).unwrap();
+    let (session, agent) = app
+        .create_session(CreateSessionRequest::new("workspace-1", "worktree-1"))
+        .unwrap();
+    let result = app.launch_provider(
+        LaunchProviderRequest::new(session.id(), "opencode", "opencode", "default", "default")
+            .with_agent_id(agent.id()),
+    );
+    fs::remove_file(&fixture_path).expect("remove fixture executable");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("is not authenticated"),
+        "a successful mock auth command alone must not bypass credential validation"
+    );
+}
+
+#[test]
 fn focused_agent_prompts_route_to_distinct_opencode_runs_and_history() {
     let _guard = opencode_env_guard();
     let fixture_path = create_opencode_fixture_script();

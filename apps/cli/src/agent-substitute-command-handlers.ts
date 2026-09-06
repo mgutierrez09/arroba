@@ -139,6 +139,17 @@ export async function handleAgentSubstituteCommand(
     deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} substitute ${index} removed`, "info")
     return
   }
+  if (subcommand === "move") {
+    const fromIndex = Number.parseInt(filteredArgs[0] ?? "", 10)
+    const toIndex = Number.parseInt(filteredArgs[1] ?? "", 10)
+    if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) {
+      deps.flashFooter("usage: /agent substitute move <from-index> <to-index> [--agent a]", "error")
+      return
+    }
+    const payload = await applyUpdate({ Move: { from_index: fromIndex, to_index: toIndex } })
+    deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} substitute moved from ${fromIndex} to ${toIndex}`, "info")
+    return
+  }
   if (subcommand === "clear") {
     const payload = await applyUpdate({ Clear: {} })
     deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} substitutes cleared`, "info")
@@ -183,7 +194,7 @@ export async function handleAgentSubstituteCommand(
     deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} activated substitute ${index}: ${profile.provider}/${profile.model}${accountSuffix}`, "info")
     return
   }
-  if (subcommand === "primary") {
+  if (subcommand === "primary" || subcommand === "reset") {
     const payload = await applyUpdate({ Primary: {} })
     const run = await deps.launchAgentProviderRun(
       payload.agent.provider,
@@ -196,10 +207,10 @@ export async function handleAgentSubstituteCommand(
     const refreshedSession = await deps.refreshSessionState(payload.session.id)
     deps.applySessionState(refreshedSession)
     await deps.refreshAgentPanes(refreshedSession)
-    deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} returned to primary profile`, "info")
+    deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} reset to starter profile`, "info")
     return
   }
-  deps.flashFooter("usage: /agent substitute list|add|remove|clear|timeout|activate|primary", "error")
+  deps.flashFooter("usage: /agent substitute list|add|remove|move|clear|timeout|activate|reset", "error")
 }
 
 function parseSubstitutionTimeoutMs(value: string | null | undefined): number | undefined {

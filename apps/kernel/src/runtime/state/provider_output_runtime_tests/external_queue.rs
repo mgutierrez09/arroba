@@ -1,6 +1,141 @@
 use super::*;
 
 #[tokio::test]
+async fn unavailable_provider_account_defers_explicit_queue_advances_without_losing_work() {
+    let mut app =
+        crate::test_support::bootstrap_authenticated_app(crate::config::DaemonConfig::for_tests())
+            .expect("daemon should boot");
+    let (session, agent) = crate::app::KernelSessionService::new(&mut app)
+        .create_session(crate::session::CreateSessionRequest::new(
+            "workspace-unavailable-account-queue",
+            "worktree-unavailable-account-queue",
+        ))
+        .expect("session should be created");
+    let attachment = crate::app::KernelSessionService::new(&mut app)
+        .attach(crate::attachment::AttachRequest::new(
+            session.id(),
+            "unavailable-account-queue-client",
+            crate::attachment::ClientCapabilityLevel::FullTerminal,
+        ))
+        .expect("client should attach");
+    let account = app
+        .provider_account_profile_registry()
+        .create_managed(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            "Queued work account",
+        )
+        .expect("account profile should register");
+    crate::test_support::authenticate_provider_account(
+        &app.provider_account_profile_registry(),
+        crate::session::DEFAULT_LOCAL_USER_ID,
+        "codex",
+        &account.profile_id,
+    )
+    .expect("account should start authenticated");
+
+    let app = Arc::new(Mutex::new(app));
+    let runtime = owned_runtime_state(&app).await;
+    runtime
+        .update_agent_profile(
+            session.id(),
+            agent.id(),
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            Some("codex".to_string()),
+            Some(account.profile_id.clone()),
+            Some("gpt-5.4".to_string()),
+            Some(Some("low".to_string())),
+        )
+        .await
+        .expect("authenticated account should be assigned");
+    let (provider_run_id, queued_prompt_id) = {
+        let mut app = app.lock().await;
+        let run = app
+            .launch_provider(
+                crate::provider::LaunchProviderRequest::new(
+                    session.id(),
+                    "dev-stub",
+                    "codex",
+                    &account.profile_id,
+                    "gpt-5.4",
+                )
+                .with_agent_id(agent.id()),
+            )
+            .expect("provider fixture should launch");
+        app.update_provider_run_projection(run.clone());
+        let queued = crate::session::PromptQueueItem::new(
+            app.sessions_mut().reserve_prompt_id(),
+            attachment.id(),
+            agent.id(),
+            "preserve this queued prompt",
+            crate::session::PromptStatus::Queued,
+        );
+        let crate::session::PromptSubmissionOutcome::Queued { prompt } = app
+            .prompt_owner_submit_prepared_prompt(session.id(), queued, true)
+            .expect("prompt should queue")
+        else {
+            panic!("forced queue submission should remain queued");
+        };
+        (run.id().to_string(), prompt.id().to_string())
+    };
+    app.lock()
+        .await
+        .provider_account_profile_registry()
+        .update_observation(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            &account.profile_id,
+            crate::account_profile::ProviderAccountAuthState::Expired,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("account should expire before queue advancement");
+
+    assert!(runtime
+        .owned
+        .activate_next_queued_prompt_for_agent(session.id(), agent.id(), None)
+        .expect("unavailable account should defer direct queue activation")
+        .is_none());
+    assert!(runtime
+        .owned
+        .advance_next_queued_prompt_dispatch(session.id(), agent.id(), &provider_run_id)
+        .expect("unavailable account should defer provider queue dispatch")
+        .is_none());
+    app.lock()
+        .await
+        .provider_account_profile_registry()
+        .remove_registration(
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            &account.profile_id,
+        )
+        .expect("fixture should simulate a missing bound account");
+    assert!(runtime
+        .owned
+        .activate_next_queued_prompt_for_agent(session.id(), agent.id(), None)
+        .expect("missing account should fail closed and defer queue activation")
+        .is_none());
+    assert!(runtime
+        .owned
+        .advance_next_queued_prompt_dispatch(session.id(), agent.id(), &provider_run_id)
+        .expect("missing account should fail closed and defer provider dispatch")
+        .is_none());
+
+    let snapshot = runtime
+        .owned
+        .session_snapshot(session.id())
+        .expect("session snapshot should remain available");
+    assert!(snapshot.active_prompt_for_agent(agent.id()).is_none());
+    let queued = snapshot
+        .queued_prompts_for_agent(agent.id())
+        .expect("queued work should remain durable");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].id(), queued_prompt_id);
+}
+
+#[tokio::test]
 async fn completed_metaagent_task_starts_queued_task_despite_stale_session_prompt_mirror() {
     let mut app =
         DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests()).expect("daemon should boot");

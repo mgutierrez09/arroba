@@ -89,6 +89,10 @@ pub enum AgentSubstituteAction {
     Remove {
         index: usize,
     },
+    Move {
+        from_index: usize,
+        to_index: usize,
+    },
     Clear {},
     SetTimeout {
         #[serde(default, skip_serializing_if = "Option::is_none")]

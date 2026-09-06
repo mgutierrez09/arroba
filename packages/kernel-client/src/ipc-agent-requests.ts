@@ -148,6 +148,7 @@ export function updateAgentProfileRequest(options: {
 export type AgentSubstituteAction =
   | { Add: { provider: string; model: string; variant?: string | null; account_profile?: string | null; kernel_id?: string | null; worktree_id?: string | null } }
   | { Remove: { index: number } }
+  | { Move: { from_index: number; to_index: number } }
   | { Clear: Record<string, never> }
   | { SetTimeout: { timeout_ms?: number | null } }
   | { Activate: { index: number; reason?: string | null } }

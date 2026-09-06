@@ -5,7 +5,7 @@ import { updateAgentSubstitutesRequest } from "./ipc-agent-requests.js"
 import { LOCAL_DAEMON_PROTOCOL_VERSION } from "./kernel-types.js"
 
 test("agent substitute add request carries the chosen account profile", () => {
-  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 284)
+  assert.equal(LOCAL_DAEMON_PROTOCOL_VERSION, 287)
   assert.deepEqual(
     updateAgentSubstitutesRequest({
       sessionId: "session-1",
@@ -45,4 +45,21 @@ test("agent substitute add request omits account profile for default semantics",
   const add = (request.UpdateAgentSubstitutes as { action: { Add: Record<string, unknown> } })
     .action.Add
   assert.equal("account_profile" in add, false)
+})
+
+test("agent substitute move request carries the ordered fallback indices", () => {
+  assert.deepEqual(
+    updateAgentSubstitutesRequest({
+      sessionId: "session-1",
+      agentId: "agent-1",
+      action: { Move: { from_index: 2, to_index: 0 } },
+    }),
+    {
+      UpdateAgentSubstitutes: {
+        session_id: "session-1",
+        agent_id: "agent-1",
+        action: { Move: { from_index: 2, to_index: 0 } },
+      },
+    },
+  )
 })

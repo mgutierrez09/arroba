@@ -493,8 +493,9 @@ async fn remote_machine_agents_execute_prompts_through_the_home_session_async() 
     let _ = server_shutdown_tx.send(());
     server_task.await.expect("relay accept loop should stop");
 
-    let router =
-        crate::runtime::router::CommandRouter::with_interactive_capacity(Arc::clone(&app_home), 1);
+    let router = Arc::new(
+        crate::runtime::router::CommandRouter::with_interactive_capacity(Arc::clone(&app_home), 1),
+    );
     let prompt_request = LocalDaemonRequest::SubmitPrompt(crate::local::SubmitPromptRequest {
         session_id: session_id.clone(),
         attachment_id: attachment_id.clone(),
@@ -755,16 +756,132 @@ async fn remote_machine_agents_execute_prompts_through_the_home_session_async() 
         .as_deref()
         .is_some_and(|content| content.contains("REMOTE_QUEUE_STEER_DELIVERY")));
 
-    let completion = app_home
-        .lock()
+    let queued_request = LocalDaemonRequest::SubmitPrompt(crate::local::SubmitPromptRequest {
+        session_id: session_id.clone(),
+        attachment_id: attachment_id.clone(),
+        target_agent_id: Some(remote_agent_id.clone()),
+        prompt: "REMOTE_QUEUE_COMPLETION_DELIVERY\n".to_string(),
+        attachments: Vec::new(),
+    });
+    let queued_command = KernelCommand::from_local_request(
+        "command-remote-completion-queue",
+        None,
+        None,
+        &queued_request,
+    );
+    assert!(matches!(
+        router
+            .dispatch(queued_command, queued_request)
+            .await
+            .unwrap(),
+        LocalDaemonResponse::PromptSubmitted {
+            outcome: crate::session::PromptSubmissionOutcome::Queued { .. },
+            ..
+        }
+    ));
+    let complete_request =
+        LocalDaemonRequest::CompletePrompt(crate::local::CompletePromptRequest {
+            session_id: session_id.clone(),
+        });
+    let complete_command = KernelCommand::from_local_request(
+        "command-remote-completion-promote",
+        None,
+        None,
+        &complete_request,
+    );
+    let response = router
+        .dispatch(complete_command, complete_request)
         .await
-        .complete_active_prompt(&session_id, &remote_agent_id, None)
-        .expect("remote prompt should complete");
+        .expect("remote completion must promote the queued prompt through the runtime");
+    let LocalDaemonResponse::PromptCompleted { completion, .. } = response else {
+        panic!("unexpected remote completion response");
+    };
     assert_eq!(completion.completed.target_agent_id(), remote_agent_id);
     assert_eq!(
         completion.completed.prompt(),
         "remote prompt over home session\n"
     );
+    let promoted = completion
+        .started_next
+        .expect("queued prompt must be promoted");
+    assert_eq!(promoted.prompt(), "REMOTE_QUEUE_COMPLETION_DELIVERY\n");
+    let mut home = app_home.lock().await;
+    let confirmed_run = home
+        .agents()
+        .get_agent(&remote_agent_id)
+        .unwrap()
+        .remote_execution()
+        .unwrap()
+        .active_worker_provider_run_id
+        .clone();
+    assert_eq!(
+        confirmed_run.as_deref(),
+        Some(worker_provider_run_id.as_str()),
+        "queue promotion must retain the acknowledged worker run so managed output is accepted"
+    );
+    let active = home
+        .prompt_owner_active_prompt_for_agent(&session_id, &remote_agent_id)
+        .unwrap()
+        .expect("promoted prompt must remain active");
+    assert_eq!(active.id(), promoted.id());
+    assert_eq!(
+        active.durable_delivery_phase(),
+        Some(crate::session::DurablePromptDeliveryPhase::Delivered),
+        "acknowledged queue promotion must be durable as delivered"
+    );
+    drop(home);
+
+    let worker_run = app_worker
+        .lock()
+        .await
+        .providers()
+        .get_run(&worker_provider_run_id)
+        .expect("acknowledged worker run must exist");
+    let event = RelayPeerEvent::LeasedRuntimeProjection {
+        home_session_id: session_id.clone(),
+        home_agent_id: remote_agent_id.clone(),
+        provider_run_id: worker_provider_run_id.clone(),
+        provider_run: Some(worker_run),
+        prompts: Vec::new(),
+        output_chunks: vec![crate::transport::relay_peer::RelayProjectedOutputChunk {
+            kind: crate::terminal::TerminalOutputKind::ProviderOutput,
+            merge_key: Some("promoted-worker-result".into()),
+            bytes: b"PROMOTED_WORKER_RESULT".to_vec(),
+        }],
+        notices: Vec::new(),
+        completions: vec![crate::transport::relay_peer::RelayProjectedCompletion {
+            message_id: "promoted-worker-completion".into(),
+            completed_at_ms: crate::session::unix_epoch_ms(),
+            home_prompt_id: Some(promoted.id().to_string()),
+        }],
+    };
+    let encrypted = relay_crypto::encrypt_payload_for_peer(
+        &config_worker.relay_private_key,
+        &config_home.relay_public_key,
+        &serde_json::to_vec(&event).unwrap(),
+    )
+    .unwrap();
+    handle_daemon_peer_event(&router, encrypted)
+        .await
+        .expect("acknowledged managed worker output must project to the home");
+    let mut home = app_home.lock().await;
+    let output = home
+        .terminal_mut()
+        .drain_output_records(&session_id, &attachment_id);
+    assert!(
+        output
+            .iter()
+            .any(|record| record.bytes == b"PROMOTED_WORKER_RESULT"
+                && record.agent_id.as_deref() == Some(remote_agent_id.as_str())),
+        "promoted managed output must reach the home attachment"
+    );
+    assert!(
+        home.prompt_owner_active_prompt_for_agent(&session_id, &remote_agent_id)
+            .unwrap()
+            .is_none(),
+        "promoted prompt must settle from its worker completion"
+    );
+    drop(home);
 
     let _ = shutdown_home_tx.send(true);
     let _ = shutdown_worker_tx.send(true);

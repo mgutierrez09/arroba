@@ -37,7 +37,7 @@ fn sample_event_connection(
 
 #[test]
 fn local_daemon_protocol_event_publication_shape_is_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 284);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 287);
     let requests = vec![
         LocalDaemonRequest::GetEventGeneratorCatalogLanding(
             crate::local::GetEventGeneratorCatalogLandingRequest { limit: 12 },

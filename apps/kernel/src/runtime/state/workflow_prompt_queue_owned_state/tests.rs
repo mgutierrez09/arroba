@@ -996,6 +996,121 @@ async fn source_agent_profile_change_retires_idle_materialized_pool_copies() {
     assert!(runtime.owned.agent_store.get_agent(&clone_id).is_err());
 }
 
+#[tokio::test]
+async fn source_agent_substitute_change_retires_idle_materialized_pool_copies() {
+    let (runtime, session_id, workflow_id, endpoint_id, test_root) = runtime_with_idle_workflow();
+    let source = runtime
+        .owned
+        .agent_store
+        .get_session_agents(&session_id)
+        .into_iter()
+        .find(|agent| agent.alias() == Some("owned-workflow-agent"))
+        .expect("source workflow agent should exist");
+    let source = runtime
+        .owned
+        .agent_store
+        .add_agent_substitute(
+            source.id(),
+            crate::agent::AgentSubstituteProfile::new(
+                "codex",
+                "gpt-5.6-sol",
+                Some("high".to_string()),
+            ),
+        )
+        .expect("source substitute should be configured");
+    let workflow = runtime
+        .owned
+        .session_store
+        .read()
+        .resolve_workflow_ref(&session_id, &workflow_id)
+        .expect("workflow should resolve");
+    let previous_revision = workflow.revision();
+    let node_id = workflow
+        .nodes()
+        .first()
+        .expect("workflow should have one node")
+        .id()
+        .to_string();
+    runtime
+        .owned
+        .session_store
+        .write()
+        .register_workflow_runtime_instance(
+            &session_id,
+            crate::session::WorkflowEndpointRuntimeInstance::new(
+                "instance-primary",
+                &workflow_id,
+                &endpoint_id,
+                previous_revision,
+                1,
+                true,
+                std::collections::BTreeMap::from([(node_id.clone(), source.id().to_string())]),
+                test_root.0.display().to_string(),
+            ),
+        )
+        .expect("primary instance should register");
+    let clone = runtime
+        .owned
+        .agent_store
+        .materialize_workflow_runtime_agent(
+            source.clone(),
+            &session_id,
+            &test_root.0.display().to_string(),
+        );
+    let clone_id = clone.id().to_string();
+    runtime
+        .owned
+        .session_store
+        .write()
+        .register_workflow_runtime_instance(
+            &session_id,
+            crate::session::WorkflowEndpointRuntimeInstance::new(
+                "instance-clone",
+                &workflow_id,
+                &endpoint_id,
+                previous_revision,
+                2,
+                false,
+                std::collections::BTreeMap::from([(node_id, clone_id.clone())]),
+                test_root.0.display().to_string(),
+            ),
+        )
+        .expect("clone instance should register");
+
+    runtime
+        .update_agent_substitutes(
+            &session_id,
+            source.id(),
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            crate::local::AgentSubstituteAction::Activate {
+                index: 0,
+                reason: Some("resource exhausted".to_string()),
+            },
+        )
+        .await
+        .expect("source substitute activation should retire stale copies");
+
+    let session = runtime
+        .owned
+        .session_store
+        .get_session(&session_id)
+        .expect("session should remain");
+    assert_eq!(
+        session
+            .workflow(&workflow_id)
+            .expect("workflow should remain")
+            .revision(),
+        previous_revision + 1
+    );
+    assert_eq!(session.workflow_runtime_instances().len(), 1);
+    let primary = session
+        .workflow_runtime_instance("instance-primary")
+        .expect("primary should remain");
+    assert!(primary.primary());
+    assert_eq!(primary.workflow_revision(), previous_revision + 1);
+    assert!(runtime.owned.agent_store.get_agent(&clone_id).is_err());
+}
+
 #[test]
 fn pool_aliases_and_ordinals_survive_durable_restart_without_collisions() {
     let (runtime, session_id, workflow_id, endpoint_id, _test_root) = runtime_with_idle_workflow();

@@ -300,3 +300,80 @@ test("executeShellCommand manages agent substitutes", async () => {
   })
 })
 
+test("executeShellCommand reorders substitutes and resets to the starter", async () => {
+  const starter = makeAgent({
+    provider: "claude",
+    model: "claude-opus-4-8",
+    effort: "high",
+    substitutes: [
+      { provider: "opencode-go", model: "deepseek-v4-pro", variant: "high" },
+      { provider: "opencode", model: "deepseek-v4-pro", variant: "high" },
+      { provider: "codex", model: "gpt-5.6-sol", variant: "high" },
+    ],
+  })
+  const reordered = makeAgent({
+    ...starter,
+    provider: "opencode",
+    model: "deepseek-v4-pro",
+    substitutes: [
+      { provider: "opencode", model: "deepseek-v4-pro", variant: "high" },
+      { provider: "opencode-go", model: "deepseek-v4-pro", variant: "high" },
+      { provider: "codex", model: "gpt-5.6-sol", variant: "high" },
+    ],
+    active_substitute_index: 0,
+  })
+  const fake = fakeClient((request) => {
+    if ("ListAgents" in request) {
+      return { AgentsListed: { agents: [starter] } }
+    }
+    if ("UpdateAgentSubstitutes" in request) {
+      const payload = request.UpdateAgentSubstitutes as { action: Record<string, unknown> }
+      if ("Move" in payload.action) {
+        return { AgentConfigUpdated: { agent: reordered, session: makeSession({ agents: [reordered] }) } }
+      }
+      if ("Primary" in payload.action) {
+        return { AgentConfigUpdated: { agent: starter, session: makeSession({ agents: [starter] }) } }
+      }
+    }
+    if ("LaunchProviderRun" in request) {
+      return {
+        ProviderRunLaunchAccepted: {
+          provider_run: {
+            id: "run-starter",
+            session_id: "session-1",
+            agent_instance_id: "agent-1",
+            adapter_key: "claude",
+            provider: "claude",
+            account_profile: "default",
+            model: "claude-opus-4-8",
+            variant: "high",
+            usage_tokens_total: null,
+            state: "Starting",
+          },
+        },
+      }
+    }
+    throw new Error(`unexpected request ${JSON.stringify(request)}`)
+  })
+  const context = createDefaultShellContext({
+    workspace: "/repo",
+    worktree: "/repo",
+    sessionId: "session-1",
+    agentId: "agent-1",
+  })
+
+  const moveResult = await executeShellCommand(parseShellCommand("agent substitute move 1 0"), context, { client: fake.client })
+  const resetResult = await executeShellCommand(parseShellCommand("agent substitute reset"), context, { client: fake.client })
+
+  assert.equal(moveResult.ok, true)
+  assert.match(moveResult.message ?? "", /substitute moved from 1 to 0/)
+  assert.equal(resetResult.ok, true)
+  assert.match(resetResult.message ?? "", /reset to starter profile/)
+  const updateActions = fake.requests
+    .filter((request) => "UpdateAgentSubstitutes" in request)
+    .map((request) => (request.UpdateAgentSubstitutes as { action: unknown }).action)
+  assert.deepEqual(updateActions, [
+    { Move: { from_index: 1, to_index: 0 } },
+    { Primary: {} },
+  ])
+})

@@ -18,6 +18,13 @@ fn materialize_empty_codex_profile_for_test(app: &DaemonApp, owner_user_id: &str
             },
         )
         .expect("test worker should materialize the selected Codex profile");
+    crate::test_support::authenticate_provider_account(
+        &app.provider_account_profile_registry(),
+        owner_user_id,
+        "codex",
+        "default",
+    )
+    .expect("synthetic worker account should be authenticated");
 }
 
 #[test]

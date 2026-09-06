@@ -71,16 +71,27 @@ export function renderCommandCenterOverlay({
   for (const [offset, item] of visibleItems.entries()) {
     const index = windowStart + offset
     const selected = index === clampedIndex
+    const rowColor = item.tone === "danger"
+      ? theme.error
+      : item.tone === "warning"
+        ? theme.warning
+        : theme.primary
     const row = new BoxRenderable(renderer, {
       flexDirection: "row",
       justifyContent: "space-between",
       paddingLeft: 1,
       paddingRight: 1,
-      ...(selected ? { backgroundColor: theme.primary } : {}),
+      ...(selected ? { backgroundColor: rowColor } : {}),
     })
     row.add(new TextRenderable(renderer, {
       content: item.kind === "group" ? `${item.label} >` : item.label,
-      fg: selected ? theme.background : theme.text,
+      fg: selected
+        ? theme.background
+        : item.tone === "danger"
+          ? theme.error
+          : item.tone === "warning"
+            ? theme.warning
+            : theme.text,
       attributes: selected ? TextAttributes.BOLD : TextAttributes.NONE,
       wrapMode: "none",
     }))

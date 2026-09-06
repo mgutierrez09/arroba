@@ -97,7 +97,7 @@ test("publication image pins and verifies every official provider CLI", () => {
   assert.match(dockerfile, /ARG CHARIOX_CLAUDE_VERSION=\d+\.\d+\.\d+/)
   assert.equal(toolchainPackage.dependencies["@openai/codex"], "0.144.0")
   assert.equal(toolchainPackage.dependencies["opencode-ai"], "1.18.23")
-  assert.equal(toolchainPackage.dependencies["@anthropic-ai/claude-code"], "2.1.207")
+  assert.equal(toolchainPackage.dependencies["@anthropic-ai/claude-code"], "2.1.212")
   assert.equal(toolchainPackage.dependencies.pnpm, "9.15.0")
   assert.match(dockerfile, /npm ci --omit=dev/)
   assert.match(dockerfile, /npm sbom --sbom-format cyclonedx/)
@@ -165,9 +165,12 @@ test("embedded toolchain SBOM removes volatile identity and time fields", () => 
 test("publication image labels the protocol version verified against its kernel", () => {
   const protocolVersion = kernelTypes.match(/LOCAL_DAEMON_PROTOCOL_VERSION\s*=\s*(\d+)/)?.[1]
   assert.ok(protocolVersion, "the shared kernel client protocol version must be readable")
-  assert.match(
-    dockerfile,
-    new RegExp(`ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=${protocolVersion}`, "g"),
+  const protocolDefaults = [...dockerfile.matchAll(/^ARG CHARIOX_LOCAL_DAEMON_PROTOCOL_VERSION=(\d+)$/gm)]
+    .map((match) => match[1])
+  assert.deepEqual(
+    protocolDefaults,
+    [protocolVersion, protocolVersion],
+    "both the Rust build check and runtime label must use the shared protocol version",
   )
   assert.match(
     dockerfile,

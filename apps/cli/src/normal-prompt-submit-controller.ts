@@ -133,8 +133,9 @@ export function createNormalPromptSubmitController(
         deps.updateSessionChrome()
         deps.recordPromptAreaHistoryEntry(deps.getSessionId(), rawPrompt)
       } catch (error) {
+        const message = formatError(error)
         deps.logError?.("prompt submission failed", {
-          error: formatError(error),
+          error: message,
         })
         deps.restoreFailedPromptUi(submissionUi)
         const transition = promptSubmissionFailureTransition({
@@ -146,7 +147,8 @@ export function createNormalPromptSubmitController(
         deps.setSubmitting(transition.submitting)
         deps.setStreamingAgentId(transition.streamingAgentId)
         deps.setWorking(transition.working)
-        deps.setFatalError(formatError(error))
+        deps.setFatalError(message)
+        deps.flashFooter(message, "error")
         deps.updateSessionChrome()
       }
     },

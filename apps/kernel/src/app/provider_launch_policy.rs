@@ -188,6 +188,34 @@ pub(crate) fn workspace_live_sync_protected_roots(
     roots
 }
 
+pub(crate) fn registered_workflow_runtime_worktree_root(
+    session: &RuntimeSession,
+    agent_id: Option<&str>,
+    working_directory: Option<&Path>,
+) -> Option<PathBuf> {
+    let agent_id = agent_id?;
+    let working_directory = working_directory?;
+    let canonical_working_directory = working_directory.canonicalize().ok()?;
+    session
+        .workflow_runtime_instances()
+        .iter()
+        .filter(|instance| !instance.primary())
+        .find_map(|instance| {
+            let owns_agent = instance
+                .node_agent_ids()
+                .values()
+                .any(|runtime_agent_id| runtime_agent_id == agent_id);
+            if !owns_agent {
+                return None;
+            }
+            let root = PathBuf::from(instance.worktree_id());
+            let canonical_root = root.canonicalize().ok()?;
+            canonical_working_directory
+                .starts_with(canonical_root)
+                .then_some(root)
+        })
+}
+
 fn resolve_git_root(path: &Path) -> Option<PathBuf> {
     let output = std::process::Command::new("git")
         .arg("-C")

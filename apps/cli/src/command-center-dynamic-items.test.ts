@@ -80,6 +80,71 @@ test("command center account choices display labels but execute stable profile i
   }])
 })
 
+test("command center marks hard account exhaustion red and allowance-only Claude exhaustion amber", () => {
+  const nowMs = Date.now()
+  const context = {
+    providerCatalog: fallbackProviderCatalog(),
+    currentProvider: "codex" as const,
+    currentAccount: "default",
+    currentModel: "codex/gpt-5.6-luna",
+    currentVariant: "low",
+  }
+  const allowance = {
+    meter_id: "allowance",
+    label: "Allowance",
+    kind: "rolling_limit",
+    scope: "plan",
+    state: "exhausted",
+    source: "test",
+    observed_at_ms: nowMs,
+    resets_at_ms: nowMs + 60_000,
+  }
+  const account = {
+    provider: "codex",
+    profile_id: "codex-account",
+    label: "Codex account",
+    auth_state: "authenticated",
+    is_default: true,
+    usage: {
+      profile_id: "codex-account",
+      provider: "codex",
+      availability: "available",
+      meters: [allowance],
+      observed_at_ms: nowMs,
+      source: "test",
+    },
+  }
+
+  const allowanceOnly = buildAccountItems("/account ", {
+    ...context,
+    providerAccounts: [account] as never,
+  })[0]
+  assert.equal(allowanceOnly?.label, "Codex account")
+  assert.equal(allowanceOnly?.tone, "warning")
+  assert.match(allowanceOnly?.description ?? "", /credits not reported/)
+
+  const fullyExhausted = buildAccountItems("/account ", {
+    ...context,
+    providerAccounts: [{
+      ...account,
+      usage: {
+        ...account.usage,
+        meters: [allowance, {
+          ...allowance,
+          meter_id: "credits",
+          label: "Credits",
+          kind: "credit_balance",
+          scope: "account",
+          resets_at_ms: undefined,
+        }],
+      },
+    }] as never,
+  })[0]
+  assert.equal(fullyExhausted?.label, "Codex account (exhausted)")
+  assert.equal(fullyExhausted?.tone, "danger")
+  assert.match(fullyExhausted?.description ?? "", /allowance and credits exhausted/)
+})
+
 test("command center marks provider and model choices from local fallback provider catalog", () => {
   const providerNode = commandTree.find((node) => node.id === "provider")!
   const context = {

@@ -14,6 +14,7 @@ import type {
   PublicationProviderReadiness,
   WorkflowPublicationConfig,
   WorkflowPublicationSnapshot,
+  KernelLookupClient,
 } from "./publication-types.js"
 
 const execFileAsync = promisify(execFile)
@@ -55,36 +56,55 @@ export async function publicationProviderReadiness(
   if (deps.getProviderReadiness) {
     return deps.getProviderReadiness(publication)
   }
-  const providers = await requiredPublicationProviders(publication)
-  if (providers.length === 0) {
+  const accounts = await requiredPublicationProviderAccounts(publication)
+  if (accounts.length === 0) {
     return []
   }
-  const client = new LocalIpcClient(publication.kernel_endpoint ?? defaultKernelEndpoint())
+  const endpoint = publication.kernel_endpoint ?? defaultKernelEndpoint()
+  const client = deps.createProviderReadinessClient?.(endpoint) ?? new LocalIpcClient(endpoint)
   try {
     const readiness: PublicationProviderReadiness[] = []
-    for (const provider of providers) {
-      readiness.push(await providerReadiness(provider, client))
+    for (const account of accounts) {
+      readiness.push(await providerReadiness(account, client, deps.getProviderCliStatus))
     }
     return readiness
   } finally {
-    await client.close().catch(() => {})
+    await client.close?.().catch(() => {})
   }
 }
 
-async function requiredPublicationProviders(publication: WorkflowPublicationConfig): Promise<string[]> {
+type PublicationProviderAccount = {
+  provider: string
+  accountProfile: string
+}
+
+async function requiredPublicationProviderAccounts(
+  publication: WorkflowPublicationConfig,
+): Promise<PublicationProviderAccount[]> {
   if (!publication.package_root) {
     return []
   }
   const snapshot = JSON.parse(await readFile(join(publication.package_root, "workflow.snapshot.json"), "utf8")) as WorkflowPublicationSnapshot
-  const providers = new Set<string>()
+  const accounts = new Map<string, PublicationProviderAccount>()
   for (const agent of snapshot.agents ?? []) {
     const provider = normalizeProvider(agent.provider)
-    if (provider) providers.add(provider)
+    if (!provider) continue
+    const accountProfile = normalizedAccountProfile(agent.account_profile)
+    const account = { provider, accountProfile }
+    accounts.set(JSON.stringify([provider, accountProfile]), account)
   }
-  return [...providers].sort()
+  return [...accounts.values()].sort((left, right) => (
+    left.provider.localeCompare(right.provider)
+    || left.accountProfile.localeCompare(right.accountProfile)
+  ))
 }
 
-async function providerReadiness(provider: string, client: LocalIpcClient): Promise<PublicationProviderReadiness> {
+async function providerReadiness(
+  account: PublicationProviderAccount,
+  client: KernelLookupClient,
+  getCliStatus: ((command: string) => Promise<PublicationProviderReadiness["cli"]>) = providerCliStatus,
+): Promise<PublicationProviderReadiness> {
+  const { provider, accountProfile } = account
   if (provider === "dev-stub" && developmentProviderStubEnabled()) {
     return {
       provider,
@@ -95,7 +115,7 @@ async function providerReadiness(provider: string, client: LocalIpcClient): Prom
     }
   }
   const command = providerCommand(provider)
-  const cli = await providerCliStatus(command)
+  const cli = await getCliStatus(command)
   if (!cli.available) {
     return {
       provider,
@@ -106,7 +126,7 @@ async function providerReadiness(provider: string, client: LocalIpcClient): Prom
       error: `${provider} CLI was not found`,
     }
   }
-  const auth = await providerAuthStatus(provider, client)
+  const auth = await providerAuthStatus(provider, accountProfile, client)
   const status = auth.status === "provider_auth_expired"
     ? "provider_auth_expired"
     : "provider_ready"
@@ -175,10 +195,11 @@ function providerVersionEnvironment(): NodeJS.ProcessEnv {
 
 async function providerAuthStatus(
   provider: string,
-  client: LocalIpcClient,
+  accountProfile: string,
+  client: KernelLookupClient,
 ): Promise<PublicationProviderReadiness["auth"]> {
   try {
-    const response = await client.send<Record<string, unknown>>(getProviderAuthStatusRequest(provider))
+    const response = await client.send(getProviderAuthStatusRequest(provider, accountProfile))
     const status = (response.ProviderAuthStatus as { status?: Record<string, unknown> } | undefined)?.status
     const authState = typeof status?.auth_state === "string" ? status.auth_state : "unknown"
     if (authState === "authenticated") {
@@ -194,6 +215,12 @@ async function providerAuthStatus(
   } catch {
     return { status: "provider_auth_unknown" }
   }
+}
+
+function normalizedAccountProfile(accountProfile: unknown): string {
+  return typeof accountProfile === "string" && accountProfile.trim()
+    ? accountProfile.trim()
+    : "default"
 }
 
 function providerCommand(provider: string): string {

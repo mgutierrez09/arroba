@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use crate::error::DaemonError;
 use crate::session::{PromptQueueItem, PromptStatus, PromptSubmissionOutcome, RuntimeSession};
 
+mod profile_transition;
+pub(crate) use profile_transition::AgentProfileTransitionClaim;
+
 pub(crate) const PROMPT_QUEUE_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +66,7 @@ impl Drop for PromptDeliverySettlementClaim {
 #[derive(Debug, Default)]
 struct PromptStateOwnerState {
     states: BTreeMap<PromptStateKey, OwnedAgentPromptState>,
+    profile_transitions: BTreeMap<PromptStateKey, Arc<()>>,
     next_pending_prompt_number: u64,
 }
 
@@ -333,9 +337,12 @@ impl PromptStateOwner {
                 return Ok(outcome);
             }
         }
+        let profile_transition_pending = owner
+            .profile_transitions
+            .contains_key(&PromptStateKey::new(session.id(), &agent_id));
         let should_start = {
             let state = owner.ensure_agent_state(session, &agent_id);
-            !force_queue && state.active_prompt.is_none()
+            !force_queue && !profile_transition_pending && state.active_prompt.is_none()
         };
         if should_start {
             let state = owner.ensure_agent_state(session, &agent_id);
@@ -709,7 +716,22 @@ impl PromptStateOwner {
             .state
             .lock()
             .expect("prompt state owner lock should not be poisoned");
+        if owner
+            .profile_transitions
+            .contains_key(&PromptStateKey::new(session.id(), agent_id))
+        {
+            return Ok(None);
+        }
         let state = owner.ensure_agent_state(session, agent_id);
+        Self::activate_owned_queued_prompt(state, agent_id, expected_prompt_id, prompt_id)
+    }
+
+    fn activate_owned_queued_prompt(
+        state: &mut OwnedAgentPromptState,
+        agent_id: &str,
+        expected_prompt_id: Option<&str>,
+        prompt_id: String,
+    ) -> Result<Option<PromptQueueItem>, DaemonError> {
         if let Some(active_prompt) = state.active_prompt.as_ref() {
             return Err(DaemonError::LocalTransport {
                 operation: "activate queued prompt",

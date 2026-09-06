@@ -69,9 +69,29 @@ impl std::fmt::Debug for RelayManagedSliceToken {
     }
 }
 
-/// Version 24 adds an authenticated post-reconnect confirmation for managed
-/// slice relay-token activation.
-pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 24;
+/// Version 25 requires the home-selected execution profile on every leased prompt
+/// and retires the separate workflow-provider failure RPC.
+pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 25;
+
+/// Home-selected execution identity for a leased prompt. Contains no credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayAgentExecutionProfile {
+    pub provider: String,
+    pub account_profile: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+impl From<&crate::agent::AgentInstance> for RelayAgentExecutionProfile {
+    fn from(agent: &crate::agent::AgentInstance) -> Self {
+        Self {
+            provider: agent.provider().to_string(),
+            account_profile: agent.provider_account_profile().to_string(),
+            model: agent.model().map(str::to_string),
+            effort: agent.effort().map(str::to_string),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -462,6 +482,7 @@ pub enum RelayPeerRequest {
     },
     SubmitLeasedPrompt {
         leased_agent_id: String,
+        expected_profile: RelayAgentExecutionProfile,
         prompt: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         hidden_system_context: String,
@@ -513,10 +534,6 @@ pub enum RelayPeerRequest {
         context: RemoteWorkflowTurnContext,
         tool_name: String,
         arguments: serde_json::Value,
-    },
-    ForwardWorkflowProviderFailure {
-        context: RemoteWorkflowTurnContext,
-        message: String,
     },
     ForwardWorkspaceLiveSyncRuntimeTool {
         context: RemoteWorkspaceLiveSyncContext,
@@ -726,7 +743,6 @@ pub enum RelayPeerResponse {
     WorkflowRuntimeToolHandled {
         result: crate::transport::runtime_tools::RuntimeToolResult,
     },
-    WorkflowProviderFailureHandled,
     WorkspaceLiveSyncRuntimeToolHandled {
         result: crate::transport::runtime_tools::RuntimeToolResult,
         final_artifact_states: Vec<RemoteWorkspaceLiveSyncArtifactState>,
@@ -836,6 +852,35 @@ pub enum RelayPeerEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_workflow_failure_forwarding_is_not_an_accepted_peer_protocol_path() {
+        let request = serde_json::json!({
+            "kind": "forward_workflow_provider_failure",
+            "context": {
+                "home_kernel_id": "home",
+                "home_session_id": "room",
+                "home_agent_id": "agent",
+                "workflow_run_id": "run",
+                "workflow_node_run_id": "node",
+                "delivery_token": "test-turn",
+                "event_reply_enabled": false,
+                "event_context_enabled": false,
+                "event_actions_enabled": false
+            },
+            "message": "provider capacity exhausted"
+        });
+        assert!(
+            serde_json::from_value::<RelayPeerRequest>(request).is_err(),
+            "provider failures must use correlated runtime projection, not a second RPC"
+        );
+        assert!(
+            serde_json::from_value::<RelayPeerResponse>(serde_json::json!({
+                "kind": "workflow_provider_failure_handled"
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn managed_slice_relay_token_keeps_wire_shape_and_redacts_debug_output() {

@@ -151,6 +151,11 @@ function formatSetupOutcome(outcome: DeploymentSetupExecutionOutcome): Deploymen
         notice: `${formatDeploymentSetup(setup)}\nnext=reconnect the relay, then run deployments setup resume ${setup.id}`,
         footer: "deployment setup waits for relay runtime",
       }
+    case "activation_requested":
+      return {
+        notice: `${formatDeploymentSetup(setup)}\nnext=wait for hosted activation, then run deployments setup resume ${setup.id}`,
+        footer: "deployment setup activation requested",
+      }
     case "blocked":
       return { notice: formatDeploymentSetup(setup), footer: "deployment setup blocked" }
     case "abandoned":

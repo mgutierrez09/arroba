@@ -11,6 +11,7 @@ export type DeploymentSetupExecutionOutcome =
   | { readonly kind: "completed"; readonly setup: DeploymentSetup }
   | { readonly kind: "awaiting_credentials"; readonly setup: DeploymentSetup }
   | { readonly kind: "waiting_for_runtime"; readonly setup: DeploymentSetup }
+  | { readonly kind: "activation_requested"; readonly setup: DeploymentSetup }
   | { readonly kind: "blocked"; readonly setup: DeploymentSetup }
   | { readonly kind: "abandoned"; readonly setup: DeploymentSetup }
 
@@ -112,6 +113,9 @@ export async function executeDeploymentSetup(
         break
       }
       case "activation": {
+        if (setup.promotionId) {
+          return { kind: "activation_requested", setup }
+        }
         const activation = await operations.activateHosted(setup)
         setup = await checkpointOrReload(profile, setup, setup.operationKeys.promotion, {
           kind: "activation_requested",

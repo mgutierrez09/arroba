@@ -367,6 +367,7 @@ fn schema_v4_empty_launch_target_gains_a_durable_workspace_on_upgrade() {
 
 #[test]
 fn schema_v3_pruned_import_recovers_launch_target_from_confirmed_publication() {
+    let _environment = crate::env_lock::lock();
     let root = test_root("schema-v3-pruned-launch-target");
     let transfer_root = root.join("managed-context-transfers");
     let store = ManagedContextTransferStore::open(transfer_root.clone())
@@ -523,6 +524,7 @@ fn schema_v3_pruned_import_recovers_launch_target_from_confirmed_publication() {
 
 #[test]
 fn schema_v3_pruned_import_rejects_legacy_publication_without_source_bindings() {
+    let _environment = crate::env_lock::lock();
     let root = test_root("schema-v3-pruned-legacy-publication");
     let transfer_root = root.join("managed-context-transfers");
     let store = ManagedContextTransferStore::open(transfer_root.clone())
@@ -1911,7 +1913,11 @@ fn initialize_git_repository(path: &std::path::Path) -> String {
         .arg(path)
         .output()
         .expect("initialize Git repository");
-    assert!(init.status.success(), "git init failed");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     fs::write(path.join("README.md"), "managed context\n").expect("write repository fixture");
     for args in [
         vec!["add", "README.md"],

@@ -76,6 +76,15 @@ impl KernelRuntimeState {
                     )
                 })
                 .await?;
+            if let Some(message) = outcome.terminal_failure {
+                let run = owned
+                    .provider_store
+                    .record_terminal_diagnostic(provider_run_id, message.clone())?;
+                owned.provider_run_projection.update(run);
+                self.fail_owned_provider_prompt(session_id, provider_run_id, &message, true)
+                    .await?;
+                return Ok(Vec::new());
+            }
             if outcome.needs_deferred_transcript_drain {
                 // The final Claude transcript flush can trail the Stop event;
                 // wait for it off the app lock so the whole daemon stays
@@ -218,10 +227,10 @@ impl KernelRuntimeState {
                 .await?;
             return Ok(records);
         }
-        if !self
-            .reconcile_provider_run_exit(session_id, provider_run_id)
-            .await?
-        {
+        // Settlement can include cancellation, queue advancement, and remote
+        // substitute reconciliation. Keep that future off enclosing
+        // launch/dispatch/output stack frames.
+        if !Box::pin(self.reconcile_provider_run_exit(session_id, provider_run_id)).await? {
             if records.is_empty() {
                 let _ = self
                     .settle_owned_pty_prompt_if_quiet(session_id, provider_run_id)
@@ -245,12 +254,14 @@ impl KernelRuntimeState {
         {
             return Ok(crate::app::ProviderRunExitSessionSummary {
                 had_active_prompt: false,
+                cancelled_prompt: false,
                 started_next_prompt: false,
             });
         }
         let Some(agent_id) = provider_run.agent_instance_id() else {
             return Ok(crate::app::ProviderRunExitSessionSummary {
                 had_active_prompt: false,
+                cancelled_prompt: false,
                 started_next_prompt: false,
             });
         };
@@ -261,6 +272,7 @@ impl KernelRuntimeState {
         else {
             return Ok(crate::app::ProviderRunExitSessionSummary {
                 had_active_prompt: false,
+                cancelled_prompt: false,
                 started_next_prompt: false,
             });
         };
@@ -277,6 +289,7 @@ impl KernelRuntimeState {
                 ) {
                     return Ok(crate::app::ProviderRunExitSessionSummary {
                         had_active_prompt: true,
+                        cancelled_prompt: false,
                         started_next_prompt: false,
                     });
                 }

@@ -279,6 +279,7 @@ impl KernelRuntimeState {
                             },
                             RelayPeerRequest::SubmitLeasedPrompt {
                                 leased_agent_id: remote_execution.leased_agent_id.clone(),
+                                expected_profile: crate::transport::relay_peer::RelayAgentExecutionProfile::from(&app.agents().get_agent(target_agent_id)?),
                                 prompt: remote_prompt,
                                 hidden_system_context: started_next.hidden_system_context().to_string(),
                                 attachments,
@@ -302,6 +303,21 @@ impl KernelRuntimeState {
                 provider_run_id, ..
             } = submit_result
             {
+                owned
+                    .agent_store
+                    .set_remote_execution_active_worker_provider_run_id(
+                        target_agent_id,
+                        Some(provider_run_id.clone()),
+                    )?;
+                owned.mark_active_prompt_delivery(
+                    session_id,
+                    target_agent_id,
+                    started_next.id(),
+                    crate::session::DurablePromptDeliveryPhase::Delivered,
+                    Some(provider_run_id.clone()),
+                    None,
+                )?;
+                let _ = owned.session_snapshot(session_id)?;
                 owned.echo_promoted_queued_prompt_to_attachments(
                     session_id,
                     &provider_run_id,

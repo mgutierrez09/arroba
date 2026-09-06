@@ -90,6 +90,10 @@ function providerCatalogForAllowedProviders(
   for (const provider of allowedProviders) {
     const models = providerFamilyModels(catalog, provider)
     if (models) providers.set(provider, models)
+    if (provider === "opencode") {
+      const goModels = catalog.providers.get("opencode-go")
+      if (goModels) providers.set("opencode-go", goModels)
+    }
   }
   return { providers }
 }
@@ -173,6 +177,12 @@ function bindingForAgent(
 }
 
 function availableProviderProfile(catalog: ProviderCatalogIndex, profile: PublicationProviderModelProfile): PublicationProviderModelProfile | null {
+  if (profile.provider === "opencode" && profile.model?.startsWith("opencode-go/")) {
+    const models = catalog.providers.get("opencode-go")
+    if (!models) return null
+    const model = profile.model.slice("opencode-go/".length)
+    return models.size === 0 || models.has(model) ? profile : null
+  }
   const models = providerFamilyModels(catalog, profile.provider)
   if (!models) return null
   if (profile.model === "default" || profile.model === `${profile.provider}/default`) {

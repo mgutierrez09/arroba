@@ -17,6 +17,7 @@ export type CliStdinKeyControllerDeps = {
   handleManagedMachineDialogKey?: (event: CliStdinKeyEvent) => boolean
   handleSessionBrowserKey: (event: CliStdinKeyEvent) => boolean
   requestExit: () => void
+  focusedInteractionActive: () => boolean
   handleFocusedInteractionKey: (event: CliStdinKeyEvent) => boolean
   handleQueuedPromptKey: (event: CliStdinKeyEvent) => boolean
   promptFocused: () => boolean
@@ -65,6 +66,12 @@ export function createCliStdinKeyController(
       }
       if (event.eventType !== "release" && event.ctrl && event.name === "e") {
         deps.requestExit()
+        return true
+      }
+      // The focused textarea receives the same terminal key through its
+      // onKeyDown handler. Let it exclusively own an active interaction so a
+      // printable key is not appended once here and once by the textarea.
+      if (deps.promptFocused() && deps.focusedInteractionActive()) {
         return true
       }
       if (deps.handleFocusedInteractionKey(event)) {

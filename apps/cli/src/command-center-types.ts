@@ -4,5 +4,6 @@ export type CommandCenterItem = {
   description: string
   kind: "agent" | "command" | "group" | "provider" | "account" | "model" | "variant"
   value: string
+  tone?: "warning" | "danger" | undefined
   searchAliases?: string[] | undefined
 }

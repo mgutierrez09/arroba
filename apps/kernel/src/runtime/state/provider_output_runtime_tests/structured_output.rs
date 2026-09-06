@@ -395,7 +395,8 @@ async fn structured_output_usage_resolves_the_cloud_owners_local_account_authori
         user_id: cloud_owner_user_id.to_string(),
         ..Default::default()
     });
-    let mut app = DaemonApp::bootstrap(config).expect("daemon bootstrap should succeed");
+    let mut app = crate::test_support::bootstrap_authenticated_app(config)
+        .expect("daemon bootstrap should succeed");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(
             crate::session::CreateSessionRequest::new(
@@ -839,8 +840,9 @@ async fn structured_output_batch_persists_one_turn_id_for_all_chunks() {
 
 #[tokio::test]
 async fn active_turn_trace_metadata_uses_prompt_owner_when_session_mirror_is_stale() {
-    let mut app = DaemonApp::bootstrap(crate::config::DaemonConfig::for_tests())
-        .expect("daemon bootstrap should succeed");
+    let mut app =
+        crate::test_support::bootstrap_authenticated_app(crate::config::DaemonConfig::for_tests())
+            .expect("daemon bootstrap should succeed");
     let (session, agent) = crate::app::KernelSessionService::new(&mut app)
         .create_session(crate::session::CreateSessionRequest::new(
             "workspace-stale-active-turn",

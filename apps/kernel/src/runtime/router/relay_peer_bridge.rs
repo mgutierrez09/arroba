@@ -96,6 +96,8 @@ impl CommandRouter {
         relay_peer_runtime::destroy_relay_execution_lease(&self.runtime_state, lease_id).await
     }
 
+    // These transport adapters preserve the explicit relay request fields.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn relay_create_leased_agent(
         &self,
         lease_id: &str,
@@ -258,9 +260,11 @@ impl CommandRouter {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn relay_submit_leased_prompt(
         &self,
         leased_agent_id: &str,
+        expected_profile: crate::transport::relay_peer::RelayAgentExecutionProfile,
         prompt: &str,
         hidden_system_context: &str,
         attachments: Vec<crate::transport::relay_peer::RelayPromptAttachment>,
@@ -273,6 +277,7 @@ impl CommandRouter {
         relay_peer_runtime::submit_relay_leased_prompt(
             &self.runtime_state,
             leased_agent_id,
+            expected_profile,
             prompt,
             hidden_system_context,
             attachments,

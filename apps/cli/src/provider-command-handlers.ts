@@ -303,7 +303,8 @@ async function handleProviderAccountsCommand(
     }
     const profiles = await deps.listProviderAccountProfiles(provider ?? null)
     const lines = profiles.map((entry) => {
-      return `${entry.provider} ${entry.label}${entry.is_default ? " [default]" : ""} · ${credentialKindLabel(entry)} · ${entry.auth_state}${entry.plan ? ` · ${entry.plan}` : ""} · ${formatProviderAccountUsage(entry)}`
+      const services = formatProviderAccountServices(entry)
+      return `${entry.provider} ${entry.label}${entry.is_default ? " [default]" : ""} · ${credentialKindLabel(entry)} · ${entry.auth_state}${entry.plan ? ` · ${entry.plan}` : ""}${services ? ` · ${services}` : ""} · ${formatProviderAccountUsage(entry)}`
     })
     deps.appendNotice(lines.length > 0 ? lines.join("\n") : "No provider accounts registered")
     deps.flashFooter(`${profiles.length} provider account profile${profiles.length === 1 ? "" : "s"}`, "info")
@@ -364,6 +365,13 @@ async function handleProviderAccountsCommand(
   }
   deps.appendNotice(`${action}: ${result.provider} ${result.label}`)
   deps.flashFooter(`provider account ${action} complete`, "info")
+}
+
+function formatProviderAccountServices(profile: ProviderAccountProfile): string {
+  return (profile.services ?? []).map((service) => {
+    const billing = service.billing_kind ? `/${service.billing_kind.replaceAll("_", " ")}` : ""
+    return `${service.label} ${service.auth_state} (${service.credential_type.replaceAll("_", " ")}${billing})`
+  }).join(" | ")
 }
 
 export async function resolveProviderAccountAlias(

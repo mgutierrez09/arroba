@@ -693,6 +693,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn claude_session_limit_remains_substitutable_after_failure_projection() {
+        let failure = crate::provider::classify_provider_terminal_failure_output_text(
+            "claude",
+            "You've hit your session limit · resets 10:40pm (Europe/Madrid)",
+        )
+        .expect("the provider dialog should terminate the turn");
+        let notice = provider_prompt_dispatch_failure_notice(&failure);
+        assert!(
+            crate::provider::classify_provider_substitutable_failure_text("claude", &notice)
+                .is_some(),
+            "the failure passed to fail_owned_provider_prompt must retain substitute eligibility: {notice}"
+        );
+    }
+
+    #[test]
     fn representative_provider_exhaustion_envelopes_project_one_canonical_error() {
         let cases = [
             (

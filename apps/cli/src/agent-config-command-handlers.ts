@@ -194,7 +194,7 @@ async function agentAccountDisplayValue(
   if (!deps.listProviderAccountProfiles) return "Account unavailable"
   const profiles = await deps.listProviderAccountProfiles(agent.provider)
   const profile = selectedProviderAccount(profiles, agent.provider, profileId)
-  return profile ? providerAccountDisplayLabel(profile) : "Account unavailable"
+  return profile ? providerAccountDisplayLabel(profile, agent.model) : "Account unavailable"
 }
 
 async function updateAgentAccountProfile(
@@ -232,7 +232,7 @@ async function updateAgentAccountProfile(
     })
     deps.applySessionState(payload.session)
     await deps.refreshAgentPanes(payload.session)
-    deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} account: ${providerAccountDisplayLabel(profile)}`, "info")
+    deps.flashFooter(`${deps.formatAgentLabel(payload.agent)} account: ${providerAccountDisplayLabel(profile, payload.agent.model)}`, "info")
   } catch (error) {
     deps.flashFooter(deps.formatError(error), "error")
   }

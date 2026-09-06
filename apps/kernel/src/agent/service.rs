@@ -822,6 +822,29 @@ impl AgentService {
         Ok(agent.clone())
     }
 
+    pub fn move_agent_substitute(
+        &mut self,
+        agent_id: &str,
+        from_index: usize,
+        to_index: usize,
+    ) -> Result<AgentInstance, DaemonError> {
+        let agent = self
+            .store
+            .get_mut(agent_id)
+            .ok_or_else(|| DaemonError::AgentNotFound {
+                agent_id: agent_id.to_string(),
+            })?;
+        if !agent.move_substitute(from_index, to_index) {
+            return Err(DaemonError::LocalTransport {
+                operation: "move agent substitute",
+                message: format!(
+                    "agent `{agent_id}` cannot move substitute {from_index} to {to_index}"
+                ),
+            });
+        }
+        Ok(agent.clone())
+    }
+
     pub fn clear_agent_substitutes(
         &mut self,
         agent_id: &str,

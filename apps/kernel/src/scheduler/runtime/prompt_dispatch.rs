@@ -67,6 +67,10 @@ pub(super) fn dispatch_workflow_prompt(
                 },
                 RelayPeerRequest::SubmitLeasedPrompt {
                     leased_agent_id: remote_execution.leased_agent_id,
+                    expected_profile:
+                        crate::transport::relay_peer::RelayAgentExecutionProfile::from(
+                            &target_agent,
+                        ),
                     prompt: prompt.prompt().to_string(),
                     hidden_system_context: prompt.hidden_system_context().to_string(),
                     attachments: app.serialize_remote_prompt_attachments(prompt.attachments())?,

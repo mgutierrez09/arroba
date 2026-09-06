@@ -350,6 +350,8 @@ export type GatewayDeps = {
   invokeWorkflow?: (invocation: NormalizedInvocation) => Promise<WorkflowInvocationResult>
   getPublicationStatusDetails?: (publication: WorkflowPublicationConfig) => Promise<Record<string, unknown>>
   getProviderReadiness?: (publication: WorkflowPublicationConfig) => Promise<readonly PublicationProviderReadiness[]>
+  getProviderCliStatus?: (command: string) => Promise<PublicationProviderReadiness["cli"]>
+  createProviderReadinessClient?: (endpoint: string) => KernelLookupClient
 }
 
 export type PublicationInvocationOptions = {

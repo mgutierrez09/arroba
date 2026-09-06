@@ -22,7 +22,7 @@ impl KernelRuntimeState {
         self.clear_failed_provider_resume_state_from_message(&provider_run, message)?;
 
         if self
-            .forward_leased_workflow_provider_failure(provider_run_id, message)
+            .settle_leased_workflow_provider_failure(session_id, &agent_id, provider_run_id)
             .await?
         {
             self.retire_owned_provider_run_after_terminal_failure(session_id, provider_run_id)
@@ -55,22 +55,45 @@ impl KernelRuntimeState {
             Some(provider_run_id),
             message,
         );
-        let workflow_dispatches = if active_prompt.workflow_run_id().is_some() {
-            owned.workflow_fail_provider_prompt(
+        let workflow_failed = active_prompt.workflow_run_id().is_some();
+        if workflow_failed {
+            owned.workflow_fail_provider_prompt_without_queue_advance(
                 session_id,
                 &active_prompt,
                 Some(provider_run_id),
                 message,
-            )?
-        } else {
-            WorkflowPromptDispatches::default()
-        };
+            )?;
+        }
         let completion = owned.fail_local_prompt_without_advance(
             session_id,
             &agent_id,
             Some(provider_run_id),
         )?;
-        self.spawn_workflow_prompt_dispatches(workflow_dispatches);
+        // Settle the failed turn first, then choose its successor provider before
+        // preparing any queued work. Otherwise admission retries the exhausted
+        // account and can return before automatic substitution is reached.
+        let substituted = if let Some(reason) =
+            crate::provider::classify_provider_substitutable_failure_text(
+                provider_run.adapter_key(),
+                message,
+            ) {
+            self.activate_substitute_after_provider_failure(
+                session_id,
+                &agent_id,
+                provider_run_id,
+                &reason,
+                None,
+            )
+            .await
+        } else {
+            false
+        };
+        if workflow_failed {
+            let dispatches = owned.workflow_maybe_start_next_queued_prompt(session_id);
+            owned
+                .persist_workflow_runtime_session(session_id, "workflow_provider_prompt_failed")?;
+            self.spawn_workflow_prompt_dispatches(dispatches);
+        }
         if completion
             .as_ref()
             .is_some_and(|completion| completion.released_claim)
@@ -82,23 +105,11 @@ impl KernelRuntimeState {
             .prompt_state_owner
             .peek_next_queued_prompt(&owned.session_store.get_session(session_id)?, &agent_id)
             .is_some();
-        if queued_prompt_pending {
+        if queued_prompt_pending && !substituted {
             self.with_app_side_effect(|app| {
                 app.ensure_prompt_provider_run_for_agent(session_id, &agent_id)
             })
             .await?;
-        }
-        if let Some(reason) = crate::provider::classify_provider_substitutable_failure_text(
-            provider_run.adapter_key(),
-            message,
-        ) {
-            self.activate_substitute_after_provider_failure(
-                session_id,
-                &agent_id,
-                provider_run_id,
-                &reason,
-            )
-            .await;
         }
         Ok(())
     }
@@ -232,10 +243,11 @@ impl KernelRuntimeState {
             .await;
     }
 
-    async fn forward_leased_workflow_provider_failure(
+    pub(super) async fn settle_leased_workflow_provider_failure(
         &self,
+        session_id: &str,
+        agent_id: &str,
         provider_run_id: &str,
-        message: &str,
     ) -> Result<bool, DaemonError> {
         let leased_context = self
             .with_app_side_effect(|app| {
@@ -243,65 +255,55 @@ impl KernelRuntimeState {
                     .leased_workflow_turn_context_for_provider_run(provider_run_id)
             })
             .await;
-        let Some(context) = leased_context else {
+        let Some(_) = leased_context else {
             return Ok(false);
         };
-        let response = self
-            .with_app_side_effect(|app| {
-                app.block_on_relay_future(
-                    crate::transport::relay_client::send_peer_request_via_temporary_connection(
-                        app.config(),
-                        chariox_relay::protocol::ClientTarget {
-                            daemon_id: Some(context.home_kernel_id.clone()),
-                            daemon_alias: None,
-                        },
-                        crate::transport::relay_peer::RelayPeerRequest::ForwardWorkflowProviderFailure {
-                            context,
-                            message: message.to_string(),
-                        },
-                    ),
-                )
-            })
-            .await?;
-        if !matches!(
-            response,
-            crate::transport::relay_peer::RelayPeerResponse::WorkflowProviderFailureHandled
-        ) {
-            return Err(DaemonError::LocalTransport {
-                operation: "forward workflow provider failure",
-                message: format!("unexpected workflow provider failure response: {response:?}"),
-            });
-        }
-        let _ = self
-            .with_app_side_effect(|app| {
-                crate::app::RemoteLeaseRuntime::new(app)
-                    .complete_leased_workflow_prompt_for_provider_run(provider_run_id)
-            })
-            .await?;
+        // The home learns failure through the same correlated, replayable runtime
+        // projection as completion. Worker settlement must not wait for the home
+        // to be reachable or admit another turn on this failed provider.
+        self.owned.fail_local_prompt_without_advance(
+            session_id,
+            agent_id,
+            Some(provider_run_id),
+        )?;
         Ok(true)
     }
 
-    async fn activate_substitute_after_provider_failure(
+    pub(super) async fn activate_substitute_after_provider_failure(
         &self,
         session_id: &str,
         agent_id: &str,
         provider_run_id: &str,
         reason: &str,
-    ) {
-        if let Err(error) = self
-            .activate_next_agent_substitute_after_failure(session_id, agent_id, reason)
-            .await
+        profile_transition: Option<crate::runtime::prompt_state::AgentProfileTransitionClaim>,
+    ) -> bool {
+        // Failure reconciliation is nested inside output/liveness/restart
+        // polling. Keep the account-transfer and worker-confirmation future
+        // off those callers' stacks, including when this branch is not taken.
+        match Box::pin(
+            self.activate_next_agent_substitute_after_failure_with_claim(
+                session_id,
+                agent_id,
+                reason,
+                profile_transition,
+            ),
+        )
+        .await
         {
-            crate::logging::warn_with_fields(
-                "daemon.provider",
-                "automatic substitute activation after provider failure failed",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "provider_run_id": provider_run_id,
-                    "error": error.to_string(),
-                }),
-            );
+            Ok(activated) => activated,
+            Err(error) => {
+                crate::logging::warn_with_fields(
+                    "daemon.provider",
+                    "automatic substitute activation after provider failure failed",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "agent_id": agent_id,
+                        "provider_run_id": provider_run_id,
+                        "error": error.to_string(),
+                    }),
+                );
+                false
+            }
         }
     }
 }

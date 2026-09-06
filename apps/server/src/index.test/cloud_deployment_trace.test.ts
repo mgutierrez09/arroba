@@ -241,6 +241,51 @@ test("publication gateway can register Cloud backend from env profile", async ()
   }
 })
 
+test("publication gateway registers Cloud backend from canonical daemon profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chariox-publication-cloud-profile-"))
+  const previous = {
+    charioxHome: process.env.CHARIOX_HOME,
+    apiUrl: process.env.CHARIOX_PUBLICATION_CLOUD_API_URL,
+    accountId: process.env.CHARIOX_PUBLICATION_CLOUD_ACCOUNT_ID,
+    token: process.env.CHARIOX_PUBLICATION_CLOUD_SESSION_TOKEN,
+  }
+  await mkdir(join(root, "daemon"), { recursive: true })
+  await writeFile(join(root, "daemon", "config.json"), JSON.stringify({
+    cloud_relay: {
+      api_url: "https://cloud-daemon.example.test/",
+      account_id: "account-daemon",
+      cloud_session_token: "token-daemon",
+    },
+  }))
+  process.env.CHARIOX_HOME = root
+  delete process.env.CHARIOX_PUBLICATION_CLOUD_API_URL
+  delete process.env.CHARIOX_PUBLICATION_CLOUD_ACCOUNT_ID
+  delete process.env.CHARIOX_PUBLICATION_CLOUD_SESSION_TOKEN
+  try {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    const registered = await registerCloudPublicationDeploymentBackend({
+      deploymentId: "deployment-daemon",
+      publication: baseConfig,
+      localUrl: "http://127.0.0.1:4569/",
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} })
+        return new Response(JSON.stringify({ deployment: { id: "deployment-daemon" } }), { status: 200 })
+      },
+    })
+
+    assert.equal(registered, true)
+    assert.equal(calls[0]?.url, "https://cloud-daemon.example.test/publication-deployments/deployment-daemon/local-backend")
+    assert.equal((calls[0]?.init.headers as Record<string, string>).authorization, "Bearer token-daemon")
+    assert.equal(JSON.parse(String(calls[0]?.init.body)).accountId, "account-daemon")
+  } finally {
+    setOptionalEnv("CHARIOX_HOME", previous.charioxHome)
+    setOptionalEnv("CHARIOX_PUBLICATION_CLOUD_API_URL", previous.apiUrl)
+    setOptionalEnv("CHARIOX_PUBLICATION_CLOUD_ACCOUNT_ID", previous.accountId)
+    setOptionalEnv("CHARIOX_PUBLICATION_CLOUD_SESSION_TOKEN", previous.token)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("hosted publication container skips local runtime Cloud backend registration", () => {
   assert.deepEqual(publicationCloudBackendIngress({
     cloudDeploymentId: "deployment-hosted",

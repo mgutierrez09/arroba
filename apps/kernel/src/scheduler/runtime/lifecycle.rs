@@ -373,15 +373,25 @@ pub fn on_workflow_prompt_cancelled(
     else {
         return Ok(());
     };
-    let paused = app
+    let already_interrupted = app
         .sessions()
         .resolve_workflow_run_ref(session_id, workflow_run_id)
-        .is_ok_and(|run| run.status() == crate::session::WorkflowRunStatus::Paused);
-    if paused {
+        .is_ok_and(|run| {
+            matches!(
+                run.status(),
+                crate::session::WorkflowRunStatus::Paused
+                    | crate::session::WorkflowRunStatus::Stopped
+            )
+        });
+    if already_interrupted {
         if release_settled_workflow_claims(app, session_id, prompt, None) {
             let _ = retry_blocked_workflow_claims(app);
         }
-        persist_workflow_session_state(app, session_id, "workflow_prompt_paused")?;
+        persist_workflow_session_state(
+            app,
+            session_id,
+            "workflow_prompt_interruption_acknowledged",
+        )?;
         return Ok(());
     }
     let workflow_run = app.sessions_mut().stop_workflow_node_run(

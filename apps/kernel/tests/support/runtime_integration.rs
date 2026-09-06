@@ -23,10 +23,11 @@ use serde_json::{json, Value};
 
 static OPENCODE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn opencode_env_guard() -> std::sync::MutexGuard<'static, ()> {
-    OPENCODE_ENV_LOCK
+pub fn opencode_env_guard() -> fixtures::OpenCodeFixtureEnvironment {
+    let lock = OPENCODE_ENV_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(|poison| poison.into_inner());
+    fixtures::OpenCodeFixtureEnvironment::new(lock)
 }
 
 mod fixtures;

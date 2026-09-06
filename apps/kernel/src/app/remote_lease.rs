@@ -20,6 +20,7 @@ mod provider_run;
 mod relay_context;
 mod skill_sync;
 
+pub(crate) use projection::RemoteProviderFailure;
 pub(crate) use prompt_lifecycle::PreparedLeasedProviderRun;
 
 pub(crate) struct RemoteLeaseRuntime<'a> {
@@ -231,9 +232,9 @@ impl<'a> RemoteLeaseRuntime<'a> {
             let mut request = CreateAgentRequest::new(session.id(), provider)
                 .with_owner_user_id(lease.owner_user_id.clone())
                 .with_account_profile(account_profile.to_string())
-                .with_worktree(session.worktree_id())
-                .with_model(model.clone().unwrap_or_else(|| "default".to_string()))
-                .with_effort(effort.clone().unwrap_or_else(|| "medium".to_string()));
+                .with_worktree(session.worktree_id());
+            request.model = model.clone();
+            request.effort = effort.clone();
             if let Some(execution_mode) = execution_mode {
                 request = request.with_execution_mode_override(execution_mode);
             }
@@ -498,6 +499,28 @@ impl<'a> RemoteLeaseRuntime<'a> {
             .ok_or_else(|| DaemonError::LeasedAgentNotFound {
                 leased_agent_id: leased_agent_id.to_string(),
             })?;
+        let account_profile =
+            self.resolve_leased_profile_account(&leased_agent, &provider, &account_profile)?;
+        let profile_changed = leased_agent.provider != provider
+            || leased_agent.account_profile != account_profile
+            || leased_agent.model != model
+            || leased_agent.effort != effort;
+        // A delivery retry may confirm its profile after the original prompt started.
+        // Confirmation is read-only; an actual change still requires an idle agent.
+        if !profile_changed {
+            let backing = self.app.agents.get_agent(&leased_agent.backing_agent_id)?;
+            if backing.provider() != provider
+                || backing.provider_account_profile() != account_profile
+                || backing.model() != model.as_deref()
+                || backing.effort() != effort.as_deref()
+            {
+                return Err(DaemonError::LocalTransport {
+                    operation: "confirm leased agent profile",
+                    message: "leased profile differs from the backing agent; rebind the remote agent before dispatch".to_string(),
+                });
+            }
+            return Ok(leased_agent);
+        }
         if self
             .app
             .prompt_owner_active_prompt_for_agent(
@@ -505,37 +528,38 @@ impl<'a> RemoteLeaseRuntime<'a> {
                 &leased_agent.backing_agent_id,
             )?
             .is_some()
+            || self
+                .app
+                .prompt_owner_peek_next_queued_prompt(
+                    &leased_agent.backing_session_id,
+                    &leased_agent.backing_agent_id,
+                )?
+                .is_some()
         {
             return Err(DaemonError::LocalTransport {
                 operation: "update leased agent profile",
                 message: format!(
-                    "leased agent `{leased_agent_id}` has an active turn; update the profile after it finishes"
+                    "leased agent `{leased_agent_id}` has an active turn or queued prompt; update the profile after pending work finishes"
                 ),
             });
         }
 
-        let profile_changed = leased_agent.provider != provider
-            || leased_agent.account_profile != account_profile
-            || leased_agent.model != model
-            || leased_agent.effort != effort;
-        if profile_changed {
-            self.terminate_backing_provider_runtime(&leased_agent);
-            let backing_agent = self.app.agents.get_agent(&leased_agent.backing_agent_id)?;
-            let resume_state = backing_agent
-                .provider_resume_state()
-                .without_provider_session_id(backing_agent.provider())
-                .without_provider_session_id(&provider);
-            self.app
-                .agents
-                .set_agent_runtime_profile_with_account_profile(
-                    &leased_agent.backing_agent_id,
-                    &provider,
-                    model.clone(),
-                    effort.clone(),
-                    Some(account_profile.clone()),
-                    resume_state,
-                )?;
-        }
+        self.terminate_backing_provider_runtime(&leased_agent);
+        let backing_agent = self.app.agents.get_agent(&leased_agent.backing_agent_id)?;
+        let resume_state = backing_agent
+            .provider_resume_state()
+            .without_provider_session_id(backing_agent.provider())
+            .without_provider_session_id(&provider);
+        self.app
+            .agents
+            .set_agent_runtime_profile_with_account_profile(
+                &leased_agent.backing_agent_id,
+                &provider,
+                model.clone(),
+                effort.clone(),
+                Some(account_profile.clone()),
+                resume_state,
+            )?;
         let updated = self
             .app
             .leased_agents
@@ -743,6 +767,226 @@ impl<'a> RemoteLeaseRuntime<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod profile_admission;
+
+    #[test]
+    fn leased_profile_update_rejects_missing_account_without_retiring_provider() {
+        assert_leased_profile_account_rejection(false);
+    }
+
+    #[test]
+    fn leased_profile_update_rejects_another_owners_account_without_retiring_provider() {
+        assert_leased_profile_account_rejection(true);
+    }
+
+    fn assert_leased_profile_account_rejection(wrong_owner: bool) {
+        let (mut app, leased_agent) = leased_agent_fixture(false);
+        let requested_account = if wrong_owner {
+            app.provider_account_profile_registry()
+                .create_managed("unrelated-owner", "codex", "Unrelated")
+                .unwrap()
+                .profile_id
+        } else {
+            "missing-worker-account".into()
+        };
+        let run = app
+            .providers_mut()
+            .launch_run_detached(
+                crate::provider::LaunchProviderRequest::new(
+                    &leased_agent.backing_session_id,
+                    "dev-stub",
+                    "dev-stub",
+                    "default",
+                    "old-model",
+                )
+                .with_agent_id(&leased_agent.backing_agent_id),
+            )
+            .unwrap();
+        let before = serde_json::to_value(
+            app.agents()
+                .get_agent(&leased_agent.backing_agent_id)
+                .unwrap(),
+        )
+        .unwrap();
+        let result = RemoteLeaseRuntime::new(&mut app).update_leased_agent_profile(
+            &leased_agent.id,
+            "codex".into(),
+            requested_account.clone(),
+            Some("new-model".into()),
+            Some("low".into()),
+        );
+        assert!(
+            result.is_err(),
+            "worker must validate its account before accepting a profile change"
+        );
+        assert!(!result.unwrap_err().to_string().contains(&requested_account));
+        assert_eq!(
+            serde_json::to_value(
+                app.agents()
+                    .get_agent(&leased_agent.backing_agent_id)
+                    .unwrap()
+            )
+            .unwrap(),
+            before
+        );
+        assert_eq!(
+            app.providers().get_run(run.id()).unwrap().state(),
+            ProviderRunState::Running
+        );
+        assert_eq!(
+            app.leased_agents
+                .get(&leased_agent.id)
+                .unwrap()
+                .account_profile,
+            leased_agent.account_profile
+        );
+    }
+
+    #[test]
+    fn leased_profile_update_resolves_default_to_lease_owners_stable_account() {
+        let (mut app, leased_agent) = leased_agent_fixture(false);
+        let profile = app
+            .provider_account_profile_registry()
+            .get(crate::session::DEFAULT_LOCAL_USER_ID, "codex", "default")
+            .unwrap();
+        let updated = RemoteLeaseRuntime::new(&mut app)
+            .update_leased_agent_profile(
+                &leased_agent.id,
+                "codex".into(),
+                "default".into(),
+                Some("new-model".into()),
+                Some("low".into()),
+            )
+            .unwrap();
+        assert_ne!(updated.account_profile, "default");
+        assert_eq!(updated.account_profile, profile.profile_id);
+        assert_eq!(
+            app.agents()
+                .get_agent(&leased_agent.backing_agent_id)
+                .unwrap()
+                .provider_account_profile(),
+            profile.profile_id
+        );
+    }
+
+    #[test]
+    fn leased_profile_confirmation_is_idempotent_during_an_active_prompt() {
+        let (mut app, leased_agent) = leased_agent_fixture(false);
+        let run = app
+            .providers_mut()
+            .launch_run_detached(
+                crate::provider::LaunchProviderRequest::new(
+                    &leased_agent.backing_session_id,
+                    "dev-stub",
+                    &leased_agent.provider,
+                    &leased_agent.account_profile,
+                    leased_agent.model.as_deref().unwrap(),
+                )
+                .with_agent_id(&leased_agent.backing_agent_id),
+            )
+            .unwrap();
+        sync_active_prompt(&mut app, &leased_agent);
+        let before = serde_json::to_value(&leased_agent).unwrap();
+        let confirmed = RemoteLeaseRuntime::new(&mut app)
+            .update_leased_agent_profile(
+                &leased_agent.id,
+                leased_agent.provider.clone(),
+                leased_agent.account_profile.clone(),
+                leased_agent.model.clone(),
+                leased_agent.effort.clone(),
+            )
+            .expect("a retry may confirm the exact profile without interrupting its active turn");
+        assert_eq!(serde_json::to_value(confirmed).unwrap(), before);
+        assert_eq!(
+            app.providers().get_run(run.id()).unwrap().state(),
+            ProviderRunState::Running
+        );
+        assert_eq!(
+            app.prompt_owner_active_prompt_for_agent(
+                &leased_agent.backing_session_id,
+                &leased_agent.backing_agent_id,
+            )
+            .unwrap()
+            .unwrap()
+            .id(),
+            "active-prompt"
+        );
+        for (provider, account, model, effort) in [
+            (
+                "other-provider".to_string(),
+                leased_agent.account_profile.clone(),
+                leased_agent.model.clone(),
+                leased_agent.effort.clone(),
+            ),
+            (
+                leased_agent.provider.clone(),
+                "other-account".to_string(),
+                leased_agent.model.clone(),
+                leased_agent.effort.clone(),
+            ),
+            (
+                leased_agent.provider.clone(),
+                leased_agent.account_profile.clone(),
+                Some("other-model".into()),
+                leased_agent.effort.clone(),
+            ),
+            (
+                leased_agent.provider.clone(),
+                leased_agent.account_profile.clone(),
+                leased_agent.model.clone(),
+                Some("high".into()),
+            ),
+        ] {
+            assert!(RemoteLeaseRuntime::new(&mut app).update_leased_agent_profile(
+                &leased_agent.id, provider, account, model, effort,
+            ).is_err(), "confirmation must never permit a changed profile during a turn");
+            assert_eq!(
+                serde_json::to_value(app.leased_agents.get(&leased_agent.id).unwrap()).unwrap(),
+                before
+            );
+            assert_eq!(
+                app.providers().get_run(run.id()).unwrap().state(),
+                ProviderRunState::Running
+            );
+        }
+    }
+
+    #[test]
+    fn leased_profile_confirmation_rejects_backing_agent_profile_drift() {
+        let (mut app, leased_agent) = leased_agent_fixture(false);
+        let backing = app
+            .agents()
+            .get_agent(&leased_agent.backing_agent_id)
+            .unwrap();
+        app.agents_mut()
+            .set_agent_runtime_profile_with_account_profile(
+                &leased_agent.backing_agent_id,
+                &leased_agent.provider,
+                leased_agent.model.clone(),
+                leased_agent.effort.clone(),
+                Some("different-account".into()),
+                backing.provider_resume_state().clone(),
+            )
+            .unwrap();
+        let result = RemoteLeaseRuntime::new(&mut app).update_leased_agent_profile(
+            &leased_agent.id,
+            leased_agent.provider.clone(),
+            leased_agent.account_profile.clone(),
+            leased_agent.model.clone(),
+            leased_agent.effort.clone(),
+        );
+        assert!(
+            result.is_err(),
+            "confirmation must check the backing agent, not only the lease record"
+        );
+        assert_eq!(
+            app.agents()
+                .get_agent(&leased_agent.backing_agent_id)
+                .unwrap()
+                .provider_account_profile(),
+            "different-account"
+        );
+    }
 
     #[test]
     fn leased_agent_config_update_ignores_legacy_processing_without_active_prompt() {
@@ -805,7 +1049,16 @@ mod tests {
     }
 
     fn leased_agent_fixture(home_agent_metaagent: bool) -> (DaemonApp, LeasedAgent) {
-        let mut config = crate::config::DaemonConfig::for_tests();
+        leased_agent_fixture_with_config(
+            home_agent_metaagent,
+            crate::config::DaemonConfig::for_tests(),
+        )
+    }
+
+    fn leased_agent_fixture_with_config(
+        home_agent_metaagent: bool,
+        mut config: crate::config::DaemonConfig,
+    ) -> (DaemonApp, LeasedAgent) {
         config.accept_remote_leases = true;
         let mut app = DaemonApp::bootstrap(config).expect("daemon bootstrap should succeed");
         let lease = RemoteLeaseRuntime::new(&mut app)

@@ -2,10 +2,18 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  clippyComparisonBase,
   findWarningRegressions,
   warningFromCompilerEvent,
   warningIdentity,
 } from "./clippy-changed-lines-gate.mjs"
+
+test("final-head manual CI compares the complete branch, not just its last commit", () => {
+  assert.equal(clippyComparisonBase(undefined, { GITHUB_EVENT_NAME: "workflow_dispatch" }), "origin/main")
+  assert.equal(clippyComparisonBase(undefined, { GITHUB_BASE_REF: "release" }), "origin/release")
+  assert.equal(clippyComparisonBase("reviewed-sha", { GITHUB_EVENT_NAME: "workflow_dispatch" }), "reviewed-sha")
+  assert.equal(clippyComparisonBase(undefined, {}), "HEAD^")
+})
 
 function warning(file, line, code, message) {
   return { file, line, column: 1, code, message }

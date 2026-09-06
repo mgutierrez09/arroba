@@ -80,7 +80,7 @@
     "terminal-output-record-id:drill": "node scripts/terminal-output-record-id-drill.mjs",
     "outline:drills": "pnpm run build && node scripts/workflow-outline-drills.mjs",
     "lint": "pnpm --workspace-root run build:kernel-client && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run lint && pnpm run build && node --test dist/*.test.js && bun test ./src/cli-dialog-overlay.bun-test.ts",
+    "test": "pnpm run lint && pnpm run build && node --test dist/*.test.js scripts/live-multi-account-turns.test.mjs && bun test ./src/cli-dialog-overlay.bun-test.ts",
     "start": "bun dist/index.js",
     "dev": "pnpm run build && bun dist/index.js",
     "embedded-shell:drill": "pnpm run build && node scripts/live-embedded-shell-automation-drill.mjs",

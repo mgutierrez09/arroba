@@ -1205,7 +1205,7 @@ provisioning: received -> verified -> applied | ignored | retrying | failed</pre
           <ul>
             <li>Archive extraction is bounded and structured; Cloud verifies archive size, file safety, package digest, contract schema, contract/package identity and immutable release metadata before promotion.</li>
             <li>The v3 compatibility block carries the minimum local daemon protocol. Runners advertise the probed protocol of an immutable Docker image ID, and incompatible jobs are not claimable or recoverable on that image.</li>
-            <li>The publication image pins and build-verifies Codex CLI <code>0.144.0</code>, OpenCode <code>1.18.23</code> and Claude Code <code>2.1.207</code>. The contract maps provider slots to stable official bundle IDs so an environment can tighten, never substitute or broaden, the declared provider ceiling.</li>
+            <li>The publication image pins and build-verifies Codex CLI <code>0.144.0</code>, OpenCode <code>1.18.23</code> and Claude Code <code>2.1.212</code>. The contract maps provider slots to stable official bundle IDs so an environment can tighten, never substitute or broaden, the declared provider ceiling.</li>
             <li>Hosted activation requires package v3, an enforced network policy snapshot and supported provider bundle references. The Cloud egress-policy compiler, lifecycle admission, aligned API-to-worker policy snapshot, runner orchestration, recovery and cleanup are committed and pass local and designated-Hetzner fail-closed acceptance.</li>
           </ul>
 

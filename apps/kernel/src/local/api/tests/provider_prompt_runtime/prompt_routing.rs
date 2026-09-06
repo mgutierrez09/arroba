@@ -444,6 +444,390 @@ fn local_request_api_auto_launches_provider_run_for_prompt() {
 }
 
 #[test]
+fn local_request_api_rejects_prompt_for_unavailable_provider_account() {
+    let harness = LocalRouterTestHarness::new();
+    let (session, agent) = match harness
+        .dispatch(LocalDaemonRequest::CreateSession(
+            CreateSessionRequest::new("workspace-1", "worktree-1"),
+        ))
+        .expect("session create should succeed")
+    {
+        LocalDaemonResponse::SessionCreated { session, agent } => (session, agent),
+        _ => panic!("unexpected local response"),
+    };
+    let unavailable_account = harness.with_app(|app| {
+        app.provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "codex",
+                "Unavailable account",
+            )
+            .expect("unavailable account profile should register")
+    });
+    assert_eq!(
+        unavailable_account.auth_state,
+        crate::account_profile::ProviderAccountAuthState::Unknown
+    );
+
+    harness
+        .dispatch(LocalDaemonRequest::UpdateAgentProfile(
+            UpdateAgentProfileRequest {
+                session_id: session.id().to_string(),
+                agent_id: agent.id().to_string(),
+                provider: Some("codex".to_string()),
+                account_profile: Some(unavailable_account.profile_id.clone()),
+                model: Some("gpt-5.4".to_string()),
+                effort: Some("low".to_string()),
+                clear_effort: false,
+            },
+        ))
+        .expect("the unavailable account should remain assignable for reauthentication");
+    let attachment = match harness
+        .dispatch(LocalDaemonRequest::AttachToSession(
+            AttachToSessionRequest {
+                session_id: session.id().to_string(),
+                client_id: "client-1".to_string(),
+                capability_level: ClientCapabilityLevel::FullTerminal,
+            },
+        ))
+        .expect("attach should succeed")
+    {
+        LocalDaemonResponse::SessionAttached { attachment } => attachment,
+        _ => panic!("unexpected local response"),
+    };
+
+    let error = harness
+        .dispatch(LocalDaemonRequest::SubmitPrompt(SubmitPromptRequest {
+            session_id: session.id().to_string(),
+            attachment_id: attachment.id().to_string(),
+            target_agent_id: Some(agent.id().to_string()),
+            prompt: "must not silently fall back".to_string(),
+            attachments: Vec::new(),
+        }))
+        .expect_err("an unavailable bound account must block a new prompt");
+    let message = error.to_string();
+    assert!(message.contains("Unavailable account"), "{message}");
+    assert!(message.contains("codex"), "{message}");
+    assert!(message.contains("authenticate"), "{message}");
+    assert!(
+        !message.contains(&unavailable_account.profile_id),
+        "the public error must not expose the stable internal account id: {message}"
+    );
+
+    let session_state = harness.with_app(|app| {
+        app.sessions()
+            .get_session(session.id())
+            .expect("session should still exist")
+            .clone()
+    });
+    assert!(session_state.active_prompt_for_agent(agent.id()).is_none());
+    assert!(
+        harness
+            .with_app(|app| app
+                .providers()
+                .get_latest_run_for_agent(session.id(), agent.id()))
+            .is_none(),
+        "prompt rejection must happen before provider launch"
+    );
+}
+
+#[test]
+fn local_request_api_rejects_prompt_for_fresh_exhausted_provider_account() {
+    let harness = LocalRouterTestHarness::new();
+    let (session, agent) = match harness
+        .dispatch(LocalDaemonRequest::CreateSession(
+            CreateSessionRequest::new("workspace-1", "worktree-1"),
+        ))
+        .expect("session create should succeed")
+    {
+        LocalDaemonResponse::SessionCreated { session, agent } => (session, agent),
+        _ => panic!("unexpected local response"),
+    };
+    let exhausted_account = harness.with_app(|app| {
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "opencode",
+                "Exhausted Go account",
+            )
+            .expect("exhausted account profile should register");
+        let now_ms = crate::session::unix_epoch_ms();
+        app.provider_account_profile_registry()
+            .update_observation(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "opencode",
+                &profile.profile_id,
+                crate::account_profile::ProviderAccountAuthState::Authenticated,
+                None,
+                None,
+                None,
+                Some(crate::account_profile::ProviderAccountUsageSnapshot {
+                    profile_id: profile.profile_id.clone(),
+                    provider: "opencode".to_string(),
+                    availability:
+                        crate::account_profile::ProviderAccountUsageAvailability::Available,
+                    meters: vec![crate::account_profile::ProviderAccountUsageMeter {
+                        meter_id: "go/monthly".to_string(),
+                        label: "Monthly".to_string(),
+                        service_id: Some("opencode-go".to_string()),
+                        kind: crate::account_profile::ProviderAccountUsageMeterKind::RollingLimit,
+                        scope: crate::account_profile::ProviderAccountUsageMeterScope::Plan,
+                        used_percent: Some(100.0),
+                        used: None,
+                        remaining: None,
+                        total: None,
+                        unit: None,
+                        window_duration_minutes: None,
+                        resets_at_ms: Some(now_ms + 60_000),
+                        state: crate::account_profile::ProviderAccountUsageMeterState::Exhausted,
+                        source: "test".to_string(),
+                        observed_at_ms: now_ms,
+                    }],
+                    observed_at_ms: Some(now_ms),
+                    source: "test".to_string(),
+                    management_url: None,
+                }),
+            )
+            .expect("exhausted account observation should persist")
+    });
+
+    harness
+        .dispatch(LocalDaemonRequest::UpdateAgentProfile(
+            UpdateAgentProfileRequest {
+                session_id: session.id().to_string(),
+                agent_id: agent.id().to_string(),
+                provider: Some("opencode".to_string()),
+                account_profile: Some(exhausted_account.profile_id.clone()),
+                model: Some("opencode-go/deepseek-v4-pro".to_string()),
+                effort: Some("high".to_string()),
+                clear_effort: false,
+            },
+        ))
+        .expect("an exhausted account should remain assignable for later refresh");
+    let attachment = match harness
+        .dispatch(LocalDaemonRequest::AttachToSession(
+            AttachToSessionRequest {
+                session_id: session.id().to_string(),
+                client_id: "client-1".to_string(),
+                capability_level: ClientCapabilityLevel::FullTerminal,
+            },
+        ))
+        .expect("attach should succeed")
+    {
+        LocalDaemonResponse::SessionAttached { attachment } => attachment,
+        _ => panic!("unexpected local response"),
+    };
+
+    let error = harness
+        .dispatch(LocalDaemonRequest::SubmitPrompt(SubmitPromptRequest {
+            session_id: session.id().to_string(),
+            attachment_id: attachment.id().to_string(),
+            target_agent_id: Some(agent.id().to_string()),
+            prompt: "must not launch an exhausted provider".to_string(),
+            attachments: Vec::new(),
+        }))
+        .expect_err("a fresh exhausted account must block a new prompt");
+    let message = error.to_string();
+    assert!(message.contains("Exhausted Go account"), "{message}");
+    assert!(message.contains("usage is exhausted"), "{message}");
+    assert!(message.contains("refresh"), "{message}");
+    assert!(
+        !message.contains(&exhausted_account.profile_id),
+        "the public error must not expose the stable internal account id: {message}"
+    );
+    assert!(
+        harness
+            .with_app(|app| app
+                .providers()
+                .get_latest_run_for_agent(session.id(), agent.id()))
+            .is_none(),
+        "usage rejection must happen before provider launch"
+    );
+}
+
+#[test]
+fn local_request_api_rejects_new_prompt_when_busy_agent_account_becomes_unavailable() {
+    let harness = LocalRouterTestHarness::new();
+    let (session, agent) = match harness
+        .dispatch(LocalDaemonRequest::CreateSession(
+            CreateSessionRequest::new("workspace-1", "worktree-1"),
+        ))
+        .expect("session create should succeed")
+    {
+        LocalDaemonResponse::SessionCreated { session, agent } => (session, agent),
+        _ => panic!("unexpected local response"),
+    };
+    let account = harness.with_app(|app| {
+        let registry = app.provider_account_profile_registry();
+        let account = registry
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "codex",
+                "Busy account",
+            )
+            .expect("account profile should register");
+        crate::test_support::authenticate_provider_account(
+            &registry,
+            crate::session::DEFAULT_LOCAL_USER_ID,
+            "codex",
+            &account.profile_id,
+        )
+        .expect("account should become authenticated")
+    });
+    harness
+        .dispatch(LocalDaemonRequest::UpdateAgentProfile(
+            UpdateAgentProfileRequest {
+                session_id: session.id().to_string(),
+                agent_id: agent.id().to_string(),
+                provider: Some("codex".to_string()),
+                account_profile: Some(account.profile_id.clone()),
+                model: Some("gpt-5.4".to_string()),
+                effort: Some("low".to_string()),
+                clear_effort: false,
+            },
+        ))
+        .expect("authenticated account should be assigned");
+    harness.with_app_mut(|app| {
+        app.launch_provider(
+            LaunchProviderRequest::new(
+                session.id(),
+                "dev-stub",
+                "codex",
+                &account.profile_id,
+                "gpt-5.4",
+            )
+            .with_agent_id(agent.id()),
+        )
+        .expect("deterministic provider fixture should launch")
+    });
+    let attachment = match harness
+        .dispatch(LocalDaemonRequest::AttachToSession(
+            AttachToSessionRequest {
+                session_id: session.id().to_string(),
+                client_id: "client-1".to_string(),
+                capability_level: ClientCapabilityLevel::FullTerminal,
+            },
+        ))
+        .expect("attach should succeed")
+    {
+        LocalDaemonResponse::SessionAttached { attachment } => attachment,
+        _ => panic!("unexpected local response"),
+    };
+    let first_prompt_id = match harness
+        .dispatch(LocalDaemonRequest::SubmitPrompt(SubmitPromptRequest {
+            session_id: session.id().to_string(),
+            attachment_id: attachment.id().to_string(),
+            target_agent_id: Some(agent.id().to_string()),
+            prompt: "existing work".to_string(),
+            attachments: Vec::new(),
+        }))
+        .expect("authenticated account should accept the first prompt")
+    {
+        LocalDaemonResponse::PromptSubmitted {
+            outcome: PromptSubmissionOutcome::Started { prompt },
+            ..
+        } => prompt.id().to_string(),
+        other => panic!("unexpected local response: {other:?}"),
+    };
+    let queued_prompt_id = match harness
+        .dispatch(LocalDaemonRequest::SubmitPrompt(SubmitPromptRequest {
+            session_id: session.id().to_string(),
+            attachment_id: attachment.id().to_string(),
+            target_agent_id: Some(agent.id().to_string()),
+            prompt: "already-queued work".to_string(),
+            attachments: Vec::new(),
+        }))
+        .expect("authenticated account should accept queued work")
+    {
+        LocalDaemonResponse::PromptSubmitted {
+            outcome: PromptSubmissionOutcome::Queued { prompt },
+            ..
+        } => prompt.id().to_string(),
+        other => panic!("unexpected local response: {other:?}"),
+    };
+    harness.with_app(|app| {
+        app.provider_account_profile_registry()
+            .update_observation(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "codex",
+                &account.profile_id,
+                crate::account_profile::ProviderAccountAuthState::Expired,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("account should become expired")
+    });
+
+    let error = harness
+        .dispatch(LocalDaemonRequest::SubmitPrompt(SubmitPromptRequest {
+            session_id: session.id().to_string(),
+            attachment_id: attachment.id().to_string(),
+            target_agent_id: Some(agent.id().to_string()),
+            prompt: "new work must be rejected".to_string(),
+            attachments: Vec::new(),
+        }))
+        .expect_err("an expired account must block a new queued prompt");
+    let message = error.to_string();
+    assert!(message.contains("Busy account"), "{message}");
+    assert!(message.contains("reconnect"), "{message}");
+
+    let session_state = harness.with_app(|app| {
+        app.sessions()
+            .get_session(session.id())
+            .expect("session should still exist")
+            .clone()
+    });
+    assert_eq!(
+        session_state
+            .active_prompt_for_agent(agent.id())
+            .map(|prompt| prompt.id()),
+        Some(first_prompt_id.as_str()),
+        "the already-running prompt must remain intact"
+    );
+    let queued_prompts = session_state
+        .queued_prompts_for_agent(agent.id())
+        .expect("previously admitted queued work must remain durable");
+    assert_eq!(queued_prompts.len(), 1);
+    assert_eq!(queued_prompts[0].id(), queued_prompt_id);
+
+    match harness
+        .dispatch(LocalDaemonRequest::CompletePrompt(CompletePromptRequest {
+            session_id: session.id().to_string(),
+        }))
+        .expect("the already-running prompt should still complete")
+    {
+        LocalDaemonResponse::PromptCompleted { completion } => {
+            assert_eq!(completion.completed.id(), first_prompt_id);
+            assert!(
+                completion.started_next.is_none(),
+                "queued work must not start with an expired account"
+            );
+        }
+        other => panic!("unexpected local response: {other:?}"),
+    }
+
+    let session_state = harness.with_app(|app| {
+        app.sessions()
+            .get_session(session.id())
+            .expect("session should still exist")
+            .clone()
+    });
+    assert!(session_state.active_prompt_for_agent(agent.id()).is_none());
+    let queued_prompts = session_state
+        .queued_prompts_for_agent(agent.id())
+        .expect("deferred queued work must remain durable");
+    assert_eq!(queued_prompts.len(), 1);
+    assert_eq!(
+        queued_prompts[0].id(),
+        queued_prompt_id,
+        "account failure must neither drop nor duplicate the queued prompt"
+    );
+}
+
+#[test]
 fn direct_prompt_completion_resolves_unfocused_single_active_agent() {
     let harness = LocalRouterTestHarness::new();
     let (session, default_agent) = match harness

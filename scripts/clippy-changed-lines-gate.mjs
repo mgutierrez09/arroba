@@ -96,9 +96,15 @@ function runGit(args, options = {}) {
   return result.stdout.trim()
 }
 
+export function clippyComparisonBase(explicitBase, env) {
+  if (explicitBase?.trim()) return explicitBase.trim()
+  if (env.GITHUB_BASE_REF) return `origin/${env.GITHUB_BASE_REF}`
+  return env.GITHUB_EVENT_NAME === "workflow_dispatch" ? "origin/main" : "HEAD^"
+}
+
 async function main() {
   const explicitBase = process.argv[2]?.trim()
-  const base = explicitBase || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "HEAD^")
+  const base = clippyComparisonBase(explicitBase, process.env)
   const repositoryRoot = runGit(["rev-parse", "--show-toplevel"])
   const targetDir = process.env.CARGO_TARGET_DIR || join(repositoryRoot, "target")
   const temporaryRoot = await mkdtemp(join(tmpdir(), "chariox-clippy-base-"))

@@ -99,7 +99,21 @@ impl KernelRuntimeOwnedState {
                     prompt.prompt()
                         == crate::scheduler::prompt_injection::METAAGENT_EVENT_VISIBLE_PROMPT
                 });
-        let started_next = if !hold_queued_prompts
+        let provider_account_available = if self
+            .prompt_state_owner
+            .peek_next_queued_prompt(&current_session, agent_id)
+            .is_none()
+        {
+            true
+        } else {
+            self.provider_account_allows_queued_prompt_advance(
+                session_id,
+                &agent,
+                "advance queued prompt after cancellation",
+            )
+        };
+        let started_next = if provider_account_available
+            && !hold_queued_prompts
             && self
                 .prompt_state_owner
                 .active_prompt_for_agent(&self.session_store.get_session(session_id)?, agent_id)

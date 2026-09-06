@@ -93,11 +93,7 @@ impl PendingAgentContextHandoff {
 }
 
 pub(super) fn inject_context_handoff(prompt: &str, handoff: &PendingAgentContextHandoff) -> String {
-    format!(
-        "{}\n\n<user_request>\n{}\n</user_request>",
-        context_handoff_for_provider(handoff),
-        prompt
-    )
+    crate::provider::encode_account_handoff(&context_handoff_for_provider(handoff), prompt)
 }
 
 impl super::KernelRuntimeOwnedState {
@@ -442,6 +438,10 @@ mod tests {
         let injected = inject_context_handoff("next request", &first.unwrap());
         assert!(injected.contains("prior context"));
         assert!(injected.contains("<user_request>\nnext request\n</user_request>"));
+        assert_eq!(
+            crate::provider::normalized_observed_prompt_text(&injected),
+            Some("next request".to_string())
+        );
     }
 
     #[test]

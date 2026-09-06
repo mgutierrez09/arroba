@@ -133,6 +133,7 @@ fn status_line_meter(
     Some(ProviderAccountUsageMeter {
         meter_id: format!("rate_limit/{meter_id}"),
         label: label.to_string(),
+        service_id: None,
         kind: ProviderAccountUsageMeterKind::RollingLimit,
         scope: ProviderAccountUsageMeterScope::Account,
         used_percent: Some(used_percent),

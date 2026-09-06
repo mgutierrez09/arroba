@@ -7,6 +7,35 @@ import { describeCliError } from "./runtime.js"
 
 export type CreateCliProcessLogger = (processKind: string, component?: string) => CharioxLogger
 
+const SECRET_VALUE_OPTIONS = new Set([
+  "--relay-token",
+  "--terminal-pairing-link",
+  "--pairing-link",
+])
+
+export function redactCliStartupArgs(argv: readonly string[]): string[] {
+  let redactNext = false
+  return argv.map((arg) => {
+    if (redactNext) {
+      redactNext = false
+      return "[redacted]"
+    }
+    if (SECRET_VALUE_OPTIONS.has(arg)) {
+      redactNext = true
+      return arg
+    }
+    const inlineSecretOption = [...SECRET_VALUE_OPTIONS]
+      .find((option) => arg.startsWith(`${option}=`))
+    if (inlineSecretOption) {
+      return `${inlineSecretOption}=[redacted]`
+    }
+    if (arg.startsWith("chariox-terminal-pair-v1.")) {
+      return "[redacted-terminal-pairing-link]"
+    }
+    return arg
+  })
+}
+
 export function createCliProcessLoggerRegistry(options: {
   createLogger?: CreateCliProcessLogger
 } = {}) {

@@ -171,21 +171,19 @@ export async function appendCloudPublicationDeploymentLogs(
 async function loadCloudPublicationProfile(): Promise<PublicationCloudProfile | null> {
   const envProfile = loadCloudPublicationProfileFromEnv()
   if (envProfile) return envProfile
-  const preferences = JSON.parse(await readFile(preferencesPath(), "utf8").catch(() => "{}")) as {
-    relay?: {
-      cloud?: {
-        apiUrl?: string
-        accountId?: string
-        cloudSessionToken?: string
-      } | null
-    }
+  const config = JSON.parse(await readFile(cloudProfilePath(), "utf8").catch(() => "{}")) as {
+    cloud_relay?: {
+      api_url?: string
+      account_id?: string
+      cloud_session_token?: string
+    } | null
   }
-  const cloud = preferences.relay?.cloud
-  if (!cloud?.apiUrl || !cloud.accountId) return null
+  const cloud = config.cloud_relay
+  if (!cloud?.api_url || !cloud.account_id) return null
   return {
-    apiUrl: cloud.apiUrl,
-    accountId: cloud.accountId,
-    ...(cloud.cloudSessionToken ? { cloudSessionToken: cloud.cloudSessionToken } : {}),
+    apiUrl: cloud.api_url,
+    accountId: cloud.account_id,
+    ...(cloud.cloud_session_token ? { cloudSessionToken: cloud.cloud_session_token } : {}),
   }
 }
 
@@ -201,10 +199,12 @@ function loadCloudPublicationProfileFromEnv(): PublicationCloudProfile | null {
   }
 }
 
-function preferencesPath(): string {
+function cloudProfilePath(): string {
+  const charioxHome = process.env.CHARIOX_HOME?.trim()
+  if (charioxHome) return path.join(charioxHome, "daemon", "config.json")
   const xdg = process.env.XDG_CONFIG_HOME?.trim()
-  if (xdg) return path.join(xdg, "chariox", "config.json")
-  return path.join(os.homedir(), ".chariox", "config.json")
+  if (xdg) return path.join(xdg, "chariox", "daemon", "config.json")
+  return path.join(os.homedir(), ".chariox", "daemon", "config.json")
 }
 
 function normalizeApiUrl(apiUrl: string): string {

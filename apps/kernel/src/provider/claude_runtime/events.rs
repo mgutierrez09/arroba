@@ -214,6 +214,7 @@ fn apply_rate_limit_event(value: &Value, batch: &mut ProviderPromptSignalBatch) 
                 "seven_day" | "seven-day" => "Weekly".to_string(),
                 _ => limit_type.replace(['_', '-'], " "),
             },
+            service_id: None,
             kind: ProviderAccountUsageMeterKind::RollingLimit,
             scope,
             used_percent: utilization,

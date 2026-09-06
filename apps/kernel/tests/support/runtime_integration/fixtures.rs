@@ -1,5 +1,70 @@
 use super::*;
 
+pub struct OpenCodeFixtureEnvironment {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    root: PathBuf,
+}
+
+impl OpenCodeFixtureEnvironment {
+    pub(super) fn new(lock: std::sync::MutexGuard<'static, ()>) -> Self {
+        let root = env::temp_dir().join(format!(
+            "chariox-opencode-account-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("fixture clock should follow the epoch")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create unique fixture account root");
+        fs::create_dir_all(root.join("data/opencode")).expect("create fixture account directory");
+        #[cfg(unix)]
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .expect("protect fixture account directory");
+        let auth_path = root.join("data/opencode/auth.json");
+        fs::write(
+            &auth_path,
+            r#"{"fixture":{"type":"api","key":"chariox-integration-test-only"}}"#,
+        )
+        .expect("seed fake provider credential");
+        #[cfg(unix)]
+        fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600))
+            .expect("protect fake provider credential");
+        let mut previous = Vec::new();
+        for (key, relative) in [
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_CONFIG_HOME", "config"),
+            ("XDG_STATE_HOME", "state"),
+            ("XDG_CACHE_HOME", "cache"),
+            ("OPENCODE_CONFIG_DIR", "config/opencode"),
+        ] {
+            previous.push((key, env::var_os(key)));
+            env::set_var(key, root.join(relative));
+        }
+        // Restore these too if a test panics before its normal cleanup.
+        for key in ["CHARIOX_OPENCODE_BIN", "CHARIOX_OPENCODE_PORT"] {
+            previous.push((key, env::var_os(key)));
+        }
+        Self {
+            _lock: lock,
+            previous,
+            root,
+        }
+    }
+}
+
+impl Drop for OpenCodeFixtureEnvironment {
+    fn drop(&mut self) {
+        for (key, value) in &self.previous {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 pub fn create_opencode_fixture_script() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "chariox-opencode-fixture-{}-{}.sh",
@@ -23,6 +88,10 @@ pub fn create_opencode_fixture_script() -> PathBuf {
 
 fn fixture_script_contents() -> String {
     r#"#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "list" ]; then
+  echo 'fixture account'
+  exit 0
+fi
 PORT=""
 while [ "$#" -gt 0 ]; do
   case "$1" in

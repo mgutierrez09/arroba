@@ -15,6 +15,7 @@ import { mapNodeToItem, type CommandNode } from "./command-center-tree-projectio
 import type { CommandCenterDynamicContext } from "./command-center-context.js"
 import type { CommandCenterItem } from "./command-center-types.js"
 import {
+  providerAccountCapacity,
   providerAccountDisplayLabel,
   providerAccountsForProvider,
 } from "./waiting-room-provider-accounts.js"
@@ -193,15 +194,23 @@ export function buildModelItems(input: string, context: CommandCenterDynamicCont
 export function buildAccountItems(input: string, context: CommandCenterDynamicContext) {
   const query = input.slice("/account ".length).trim().toLowerCase()
   return filterCommandCenterItems(
-    providerAccountsForProvider(context.providerAccounts ?? [], context.currentProvider).map((profile) => ({
-      id: `account-${profile.provider}-${profile.profile_id}`,
-      label: providerAccountDisplayLabel(profile),
-      description: profile.profile_id === (context.currentAccount ?? "default")
-        ? "current account"
-        : profile.auth_state,
-      kind: "account" as const,
-      value: profile.profile_id,
-    })),
+    providerAccountsForProvider(context.providerAccounts ?? [], context.currentProvider).map((profile) => {
+      const capacity = providerAccountCapacity(profile, Date.now(), context.currentModel)
+      return {
+        id: `account-${profile.provider}-${profile.profile_id}`,
+        label: providerAccountDisplayLabel(profile, context.currentModel),
+        description: profile.profile_id === (context.currentAccount ?? "default")
+          ? `current account · ${capacity.detail}`
+          : capacity.detail,
+        kind: "account" as const,
+        value: profile.profile_id,
+        ...(capacity.state === "exhausted"
+          ? { tone: "danger" as const }
+          : capacity.state === "warning"
+            ? { tone: "warning" as const }
+            : {}),
+      }
+    }),
     query,
   )
 }

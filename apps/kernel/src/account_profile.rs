@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 use base64::Engine as _;
 use rand::{distributions::Alphanumeric, Rng};
@@ -224,6 +224,10 @@ pub struct ProviderAccountMaterializationStatus {
 pub struct ProviderAccountUsageMeter {
     pub meter_id: String,
     pub label: String,
+    /// OpenCode child service that owns this meter, for example
+    /// `opencode-go`. Absent for provider-wide meters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
     pub kind: ProviderAccountUsageMeterKind,
     pub scope: ProviderAccountUsageMeterScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -316,6 +320,136 @@ impl ProviderAccountUsageSnapshot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderAccountUsageBlock {
+    exhausted_labels: Vec<String>,
+    requires_exhausted_credits: bool,
+}
+
+fn provider_account_usage_block(
+    provider: &str,
+    model: Option<&str>,
+    usage: &ProviderAccountUsageSnapshot,
+    now_ms: u64,
+) -> Option<ProviderAccountUsageBlock> {
+    let usage = usage.clone().reconciled_freshness(now_ms);
+    if !matches!(
+        usage.availability,
+        ProviderAccountUsageAvailability::Available | ProviderAccountUsageAvailability::Partial
+    ) {
+        return None;
+    }
+
+    let is_currently_exhausted = |meter: &&ProviderAccountUsageMeter| {
+        usage_meter_is_fresh(meter, now_ms)
+            && meter.state == ProviderAccountUsageMeterState::Exhausted
+            && meter
+                .resets_at_ms
+                .is_none_or(|resets_at_ms| resets_at_ms > now_ms)
+    };
+    let provider = crate::provider::canonical_provider_family(provider).unwrap_or(provider);
+    let selected_opencode_service = (provider == "opencode")
+        .then(|| model.and_then(opencode_service_from_model))
+        .flatten();
+    let relevant_meters = usage.meters.iter().filter(|meter| {
+        if provider == "codex" && meter.meter_id.starts_with("rolling/") {
+            if let Some(model) = model
+                .map(str::trim)
+                .map(|model| model.strip_prefix("codex/").unwrap_or(model))
+                .filter(|model| !model.is_empty() && *model != "default")
+            {
+                let selected = if model == "gpt-5.3-codex-spark" {
+                    "codex_bengalfox"
+                } else {
+                    "codex"
+                };
+                if let Some((_, bucket)) = meter.meter_id.rsplit_once('/') {
+                    if matches!(bucket, "codex" | "codex_bengalfox") {
+                        return bucket == selected;
+                    }
+                }
+            }
+        }
+        if provider != "opencode" {
+            return true;
+        }
+        let meter_service = meter
+            .service_id
+            .as_deref()
+            .or_else(|| meter.meter_id.starts_with("go/").then_some("opencode-go"));
+        selected_opencode_service.is_some_and(|service| meter_service == Some(service))
+    });
+    let exhausted = relevant_meters
+        .filter(is_currently_exhausted)
+        .collect::<Vec<_>>();
+    if exhausted.is_empty() {
+        return None;
+    }
+
+    if matches!(provider, "codex" | "claude") {
+        let exhausted_usage = exhausted
+            .iter()
+            .copied()
+            .filter(|meter| {
+                !matches!(
+                    meter.kind,
+                    ProviderAccountUsageMeterKind::CreditBalance
+                        | ProviderAccountUsageMeterKind::SpendLimit
+                )
+            })
+            .collect::<Vec<_>>();
+        let credit_capacity = usage
+            .meters
+            .iter()
+            .filter(|meter| {
+                matches!(
+                    meter.kind,
+                    ProviderAccountUsageMeterKind::CreditBalance
+                        | ProviderAccountUsageMeterKind::SpendLimit
+                )
+            })
+            .collect::<Vec<_>>();
+        let all_reported_credit_capacity_exhausted =
+            !credit_capacity.is_empty() && credit_capacity.iter().all(is_currently_exhausted);
+        if exhausted_usage.is_empty() || !all_reported_credit_capacity_exhausted {
+            return None;
+        }
+        return Some(ProviderAccountUsageBlock {
+            exhausted_labels: exhausted_usage
+                .into_iter()
+                .chain(credit_capacity)
+                .map(|meter| meter.label.clone())
+                .collect(),
+            requires_exhausted_credits: true,
+        });
+    }
+
+    Some(ProviderAccountUsageBlock {
+        exhausted_labels: exhausted
+            .into_iter()
+            .map(|meter| meter.label.clone())
+            .collect(),
+        requires_exhausted_credits: false,
+    })
+}
+
+fn usage_meter_is_fresh(meter: &ProviderAccountUsageMeter, now_ms: u64) -> bool {
+    now_ms.saturating_sub(meter.observed_at_ms) <= PROVIDER_USAGE_STALE_AFTER_MS
+}
+
+fn opencode_service_from_model(model: &str) -> Option<&str> {
+    let model = model.trim();
+    if model.is_empty() || model == "default" {
+        return None;
+    }
+    let Some((service, model_id)) = model.split_once('/') else {
+        // OpenCode's runtime parser treats an unqualified model as a Zen
+        // model. Capacity admission must resolve it the same way.
+        return Some("opencode");
+    };
+    (!service.is_empty() && !model_id.is_empty()).then_some(service)
+}
+
 /// Read-side projection so list/get responses report honest freshness for
 /// run-gated usage without mutating persisted state.
 fn project_usage_freshness(mut profile: ProviderAccountProfile) -> ProviderAccountProfile {
@@ -335,7 +469,7 @@ pub const PROVIDER_CREDENTIAL_KIND_CONTRACT_VERSION: u32 = 1;
 /// imported/linked profile may carry any of these classes, so the kind stays
 /// explicitly unknown (no value + a not-reported reason) until the
 /// provider-native adapter actually reports it. Never secret.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderCredentialKind {
     /// Subscription-backed access confirmed by the provider-native flow.
@@ -346,6 +480,27 @@ pub enum ProviderCredentialKind {
     Prepaid,
     /// More than one of the above on one account.
     Mixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccountServiceCredentialType {
+    ApiKey,
+    Oauth,
+    Unknown,
+}
+
+/// One provider service configured inside a parent account profile. OpenCode
+/// can hold several independent upstream credentials in one isolated store.
+/// This projection contains no credential material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderAccountService {
+    pub service_id: String,
+    pub label: String,
+    pub auth_state: ProviderAccountAuthState,
+    pub credential_type: ProviderAccountServiceCredentialType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing_kind: Option<ProviderCredentialKind>,
 }
 
 /// Enrollment methods a provider adapter can run through its own native CLI /
@@ -416,9 +571,21 @@ pub struct ProviderAccountProfile {
     pub detected_provider_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_validated_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ProviderAccountService>,
     pub usage: ProviderAccountUsageSnapshot,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materializations: Vec<ProviderAccountMaterializationStatus>,
+}
+
+impl ProviderAccountProfile {
+    /// Reuse prompt admission's plan/model and freshness policy. Missing
+    /// reporting and authentication failures are not evidence of exhaustion.
+    pub(crate) fn has_confirmed_exhaustion(&self, model: &str, now_ms: u64) -> bool {
+        self.auth_state == ProviderAccountAuthState::Authenticated
+            && provider_account_usage_block(&self.provider, Some(model), &self.usage, now_ms)
+                .is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -651,6 +818,40 @@ impl Default for RegistryDocument {
 pub struct ProviderAccountProfileRegistry {
     path: PathBuf,
     document: Arc<RwLock<RegistryDocument>>,
+    usage_refresh_attempts: Arc<ProviderAccountUsageRefreshCoordinator>,
+}
+
+type ProviderAccountUsageRefreshKey = (String, String, String);
+
+struct ProviderAccountUsageRefreshAttempt {
+    attempted_at_ms: u64,
+    in_flight: bool,
+}
+
+#[derive(Default)]
+struct ProviderAccountUsageRefreshCoordinator {
+    attempts: Mutex<BTreeMap<ProviderAccountUsageRefreshKey, ProviderAccountUsageRefreshAttempt>>,
+    completed: Condvar,
+}
+
+pub(crate) struct ProviderAccountUsageRefreshLease {
+    coordinator: Arc<ProviderAccountUsageRefreshCoordinator>,
+    key: ProviderAccountUsageRefreshKey,
+}
+
+impl Drop for ProviderAccountUsageRefreshLease {
+    fn drop(&mut self) {
+        let mut attempts = self
+            .coordinator
+            .attempts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(attempt) = attempts.get_mut(&self.key) {
+            attempt.attempted_at_ms = crate::session::unix_epoch_ms();
+            attempt.in_flight = false;
+        }
+        self.coordinator.completed.notify_all();
+    }
 }
 
 impl ProviderAccountProfileRegistry {
@@ -679,6 +880,7 @@ impl ProviderAccountProfileRegistry {
         let registry = Self {
             path,
             document: Arc::new(RwLock::new(document)),
+            usage_refresh_attempts: Arc::new(ProviderAccountUsageRefreshCoordinator::default()),
         };
         if changed {
             let document = registry.read_document()?;
@@ -787,10 +989,101 @@ impl ProviderAccountProfileRegistry {
         provider: &str,
         profile_id: &str,
     ) -> Result<ProviderAccountProfile, DaemonError> {
+        self.find(owner_user_id, provider, profile_id)?
+            .ok_or_else(|| {
+                registry_error(
+                    "resolve account profile",
+                    format!(
+                        "account profile `{}` is not registered for {}",
+                        profile_id.trim(),
+                        provider.trim()
+                    ),
+                )
+            })
+    }
+
+    pub(crate) fn find(
+        &self,
+        owner_user_id: &str,
+        provider: &str,
+        profile_id: &str,
+    ) -> Result<Option<ProviderAccountProfile>, DaemonError> {
         let provider = normalize_provider(provider)?;
         let document = self.read_document()?;
-        resolve_stored_profile(&document, owner_user_id, provider, profile_id)
-            .map(|profile| project_usage_freshness(profile.public.clone()))
+        Ok(
+            find_stored_profile(&document, owner_user_id, provider, profile_id)
+                .map(|profile| project_usage_freshness(profile.public.clone())),
+        )
+    }
+
+    pub(crate) fn require_authenticated(
+        &self,
+        owner_user_id: &str,
+        provider: &str,
+        profile_id: &str,
+        model: Option<&str>,
+        operation: &'static str,
+    ) -> Result<ProviderAccountProfile, DaemonError> {
+        let profile = self.get(owner_user_id, provider, profile_id)?;
+        if profile.auth_state == ProviderAccountAuthState::Authenticated {
+            if let Some(block) = provider_account_usage_block(
+                &profile.provider,
+                model,
+                &profile.usage,
+                crate::session::unix_epoch_ms(),
+            ) {
+                let capacity = if block.requires_exhausted_credits {
+                    "usage allowance and credits are exhausted"
+                } else {
+                    "usage is exhausted"
+                };
+                return Err(DaemonError::LocalTransport {
+                    operation,
+                    message: format!(
+                        "selected {} account `{}` cannot start new work because its {capacity} ({}); refresh usage or select another account",
+                        profile.provider,
+                        profile.label,
+                        block.exhausted_labels.join(", ")
+                    ),
+                });
+            }
+            return Ok(profile);
+        }
+        let action = match profile.auth_state {
+            ProviderAccountAuthState::Expired => "reconnect",
+            ProviderAccountAuthState::Error => "test or reconnect",
+            ProviderAccountAuthState::Unknown | ProviderAccountAuthState::NotConfigured => {
+                "authenticate"
+            }
+            ProviderAccountAuthState::Authenticated => unreachable!(),
+        };
+        Err(DaemonError::LocalTransport {
+            operation,
+            message: format!(
+                "selected {} account `{}` is not authenticated; {action} it in Provider Accounts before starting new work",
+                profile.provider, profile.label
+            ),
+        })
+    }
+
+    pub(crate) fn require_agent_authenticated(
+        &self,
+        config: &crate::config::DaemonConfig,
+        agent: &crate::agent::AgentInstance,
+        operation: &'static str,
+    ) -> Result<(), DaemonError> {
+        let Some(provider) = crate::provider::canonical_provider_family(agent.provider()) else {
+            return Ok(());
+        };
+        let owner_user_id = provider_account_authority_owner_user_id(config, agent.owner_user_id());
+        self.require_authenticated(
+            &owner_user_id,
+            provider,
+            agent.provider_account_profile(),
+            agent.model(),
+            operation,
+        )?;
+        Ok(())
     }
 
     /// Test-only view of the stored (unprojected) profile.
@@ -906,6 +1199,7 @@ impl ProviderAccountProfileRegistry {
         profile.public.auth_state = ProviderAccountAuthState::NotConfigured;
         profile.public.identity_summary = None;
         profile.public.plan = None;
+        profile.public.services.clear();
         profile.public.last_validated_at_ms = Some(crate::session::unix_epoch_ms());
         profile.public.usage = ProviderAccountUsageSnapshot::unavailable(profile_id, provider);
         mark_profile_materializations_stale(&mut profile.public);
@@ -942,6 +1236,72 @@ impl ProviderAccountProfileRegistry {
             usage.meters = merged;
         }
         profile.public.usage = usage;
+        let result = profile.public.clone();
+        self.persist_locked(&document)?;
+        Ok(result)
+    }
+
+    pub(crate) fn acquire_usage_refresh_attempt(
+        &self,
+        owner_user_id: &str,
+        provider: &str,
+        profile_id: &str,
+        now_ms: u64,
+        retry_after_ms: u64,
+    ) -> Result<Option<ProviderAccountUsageRefreshLease>, DaemonError> {
+        let profile = self.get(owner_user_id, provider, profile_id)?;
+        let key = (profile.owner_user_id, profile.provider, profile.profile_id);
+        let mut attempts = self
+            .usage_refresh_attempts
+            .attempts
+            .lock()
+            .map_err(|error| registry_error("acquire account usage refresh", error.to_string()))?;
+        attempts.retain(|_, attempt| {
+            attempt.in_flight || now_ms.saturating_sub(attempt.attempted_at_ms) < retry_after_ms
+        });
+        loop {
+            match attempts.get(&key) {
+                Some(attempt) if attempt.in_flight => {
+                    attempts = self
+                        .usage_refresh_attempts
+                        .completed
+                        .wait(attempts)
+                        .map_err(|error| {
+                            registry_error("wait for account usage refresh", error.to_string())
+                        })?;
+                }
+                Some(_) => return Ok(None),
+                None => {
+                    attempts.insert(
+                        key.clone(),
+                        ProviderAccountUsageRefreshAttempt {
+                            attempted_at_ms: now_ms,
+                            in_flight: true,
+                        },
+                    );
+                    return Ok(Some(ProviderAccountUsageRefreshLease {
+                        coordinator: self.usage_refresh_attempts.clone(),
+                        key,
+                    }));
+                }
+            }
+        }
+    }
+
+    pub fn update_services(
+        &self,
+        owner_user_id: &str,
+        provider: &str,
+        profile_id: &str,
+        mut services: Vec<ProviderAccountService>,
+    ) -> Result<ProviderAccountProfile, DaemonError> {
+        let provider = normalize_provider(provider)?;
+        let mut document = self.write_document()?;
+        let profile =
+            resolve_stored_profile_mut(&mut document, owner_user_id, provider, profile_id)?;
+        services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
+        services.dedup_by(|left, right| left.service_id == right.service_id);
+        profile.public.services = services;
         let result = profile.public.clone();
         self.persist_locked(&document)?;
         Ok(result)
@@ -2237,6 +2597,7 @@ fn new_public_profile(
         plan: None,
         detected_provider_version: None,
         last_validated_at_ms: None,
+        services: Vec::new(),
         usage: ProviderAccountUsageSnapshot::unavailable(profile_id, provider),
         materializations: Vec::new(),
     }
@@ -2441,8 +2802,25 @@ fn resolve_stored_profile<'a>(
     provider: &str,
     profile_id: &str,
 ) -> Result<&'a StoredProviderAccountProfile, DaemonError> {
+    find_stored_profile(document, owner_user_id, provider, profile_id).ok_or_else(|| {
+        registry_error(
+            "resolve account profile",
+            format!(
+                "account profile `{}` is not registered for {provider}",
+                profile_id.trim()
+            ),
+        )
+    })
+}
+
+fn find_stored_profile<'a>(
+    document: &'a RegistryDocument,
+    owner_user_id: &str,
+    provider: &str,
+    profile_id: &str,
+) -> Option<&'a StoredProviderAccountProfile> {
     let profile_id = profile_id.trim();
-    let profile = if profile_id == "default" {
+    if profile_id == "default" {
         document.profiles.iter().find(|profile| {
             profile.public.owner_user_id == owner_user_id
                 && profile.public.provider == provider
@@ -2454,13 +2832,7 @@ fn resolve_stored_profile<'a>(
                 && profile.public.provider == provider
                 && profile.public.profile_id == profile_id
         })
-    };
-    profile.ok_or_else(|| {
-        registry_error(
-            "resolve account profile",
-            format!("account profile `{profile_id}` is not registered for {provider}"),
-        )
-    })
+    }
 }
 
 fn resolve_stored_profile_mut<'a>(
@@ -3152,6 +3524,79 @@ fn unsupported_provider(provider: &str) -> DaemonError {
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    struct CapacityPolicyFixture {
+        name: String,
+        provider: String,
+        model: String,
+        now_ms: u64,
+        meters: Vec<CapacityPolicyFixtureMeter>,
+        expected_blocked: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct CapacityPolicyFixtureMeter {
+        meter_id: String,
+        label: String,
+        #[serde(default)]
+        service_id: Option<String>,
+        kind: ProviderAccountUsageMeterKind,
+        state: ProviderAccountUsageMeterState,
+        observed_at_ms: u64,
+        #[serde(default)]
+        resets_at_ms: Option<u64>,
+    }
+
+    #[test]
+    fn admission_capacity_matches_the_shared_client_projection_fixtures() {
+        let fixtures: Vec<CapacityPolicyFixture> = serde_json::from_str(include_str!(
+            "../../../fixtures/provider-account-capacity.json"
+        ))
+        .expect("shared capacity fixtures must remain valid");
+
+        for fixture in fixtures {
+            let meters = fixture
+                .meters
+                .into_iter()
+                .map(|meter| ProviderAccountUsageMeter {
+                    meter_id: meter.meter_id,
+                    label: meter.label,
+                    service_id: meter.service_id,
+                    kind: meter.kind,
+                    scope: ProviderAccountUsageMeterScope::Account,
+                    used_percent: None,
+                    used: None,
+                    remaining: None,
+                    total: None,
+                    unit: None,
+                    window_duration_minutes: None,
+                    resets_at_ms: meter.resets_at_ms,
+                    state: meter.state,
+                    source: "shared_fixture".to_string(),
+                    observed_at_ms: meter.observed_at_ms,
+                })
+                .collect();
+            let usage = capacity_snapshot(
+                &fixture.provider,
+                ProviderAccountUsageAvailability::Available,
+                meters,
+                fixture.now_ms,
+            );
+            assert_eq!(
+                provider_account_usage_block(
+                    &fixture.provider,
+                    Some(&fixture.model),
+                    &usage,
+                    fixture.now_ms,
+                )
+                .is_some(),
+                fixture.expected_blocked,
+                "{}",
+                fixture.name,
+            );
+        }
+    }
+
     #[test]
     fn cloud_owner_aliases_local_accounts_without_aliasing_collaborators() {
         let mut config = crate::config::DaemonConfig::for_tests();
@@ -3192,6 +3637,7 @@ mod tests {
         ProviderAccountUsageMeter {
             meter_id: "rate_limit/five_hour".to_string(),
             label: "5-hour".to_string(),
+            service_id: None,
             kind: ProviderAccountUsageMeterKind::RollingLimit,
             scope: ProviderAccountUsageMeterScope::Account,
             used_percent: Some(21.0),
@@ -3204,6 +3650,373 @@ mod tests {
             state: ProviderAccountUsageMeterState::Healthy,
             source: "claude.status_line".to_string(),
             observed_at_ms,
+        }
+    }
+
+    fn capacity_meter(
+        label: &str,
+        kind: ProviderAccountUsageMeterKind,
+        state: ProviderAccountUsageMeterState,
+        observed_at_ms: u64,
+        resets_at_ms: Option<u64>,
+    ) -> ProviderAccountUsageMeter {
+        ProviderAccountUsageMeter {
+            meter_id: label.to_ascii_lowercase().replace(' ', "_"),
+            label: label.to_string(),
+            service_id: None,
+            kind,
+            scope: ProviderAccountUsageMeterScope::Account,
+            used_percent: None,
+            used: None,
+            remaining: None,
+            total: None,
+            unit: None,
+            window_duration_minutes: None,
+            resets_at_ms,
+            state,
+            source: "test".to_string(),
+            observed_at_ms,
+        }
+    }
+
+    fn capacity_snapshot(
+        provider: &str,
+        availability: ProviderAccountUsageAvailability,
+        meters: Vec<ProviderAccountUsageMeter>,
+        observed_at_ms: u64,
+    ) -> ProviderAccountUsageSnapshot {
+        ProviderAccountUsageSnapshot {
+            profile_id: "profile-a".to_string(),
+            provider: provider.to_string(),
+            availability,
+            meters,
+            observed_at_ms: Some(observed_at_ms),
+            source: "test".to_string(),
+            management_url: None,
+        }
+    }
+
+    #[test]
+    fn codex_usage_admission_separates_general_and_spark_allowances() {
+        let now = PROVIDER_USAGE_STALE_AFTER_MS * 2;
+        let general = ProviderAccountUsageMeter {
+            meter_id: "rolling/10080/codex".to_string(),
+            ..capacity_meter(
+                "Weekly",
+                ProviderAccountUsageMeterKind::RollingLimit,
+                ProviderAccountUsageMeterState::Exhausted,
+                now,
+                Some(now + 60_000),
+            )
+        };
+        let spark = ProviderAccountUsageMeter {
+            meter_id: "rolling/300/codex_bengalfox".to_string(),
+            ..capacity_meter(
+                "Spark",
+                ProviderAccountUsageMeterKind::RollingLimit,
+                ProviderAccountUsageMeterState::Healthy,
+                now,
+                Some(now + 60_000),
+            )
+        };
+        let credits = capacity_meter(
+            "Credits",
+            ProviderAccountUsageMeterKind::CreditBalance,
+            ProviderAccountUsageMeterState::Exhausted,
+            now,
+            None,
+        );
+        let usage = capacity_snapshot(
+            "codex",
+            ProviderAccountUsageAvailability::Available,
+            vec![general.clone(), spark.clone(), credits.clone()],
+            now,
+        );
+        assert!(provider_account_usage_block("codex", Some("gpt-5.6-luna"), &usage, now).is_some());
+        assert!(
+            provider_account_usage_block("codex", Some("gpt-5.3-codex-spark"), &usage, now)
+                .is_none()
+        );
+        assert!(provider_account_usage_block(
+            "codex",
+            Some("codex/gpt-5.3-codex-spark"),
+            &usage,
+            now
+        )
+        .is_none());
+        let reverse = capacity_snapshot(
+            "codex",
+            ProviderAccountUsageAvailability::Available,
+            vec![
+                ProviderAccountUsageMeter {
+                    state: ProviderAccountUsageMeterState::Healthy,
+                    ..general
+                },
+                ProviderAccountUsageMeter {
+                    state: ProviderAccountUsageMeterState::Exhausted,
+                    ..spark
+                },
+                credits,
+            ],
+            now,
+        );
+        assert!(
+            provider_account_usage_block("codex", Some("gpt-5.6-luna"), &reverse, now).is_none()
+        );
+        assert!(
+            provider_account_usage_block("codex", Some("gpt-5.3-codex-spark"), &reverse, now)
+                .is_some()
+        );
+        assert!(provider_account_usage_block(
+            "codex",
+            Some("codex/gpt-5.3-codex-spark"),
+            &reverse,
+            now
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn usage_admission_blocks_fresh_exhaustion_but_not_expired_or_stale_meters() {
+        let now_ms = PROVIDER_USAGE_STALE_AFTER_MS * 2;
+        let mut exhausted = capacity_meter(
+            "Monthly",
+            ProviderAccountUsageMeterKind::RollingLimit,
+            ProviderAccountUsageMeterState::Exhausted,
+            now_ms,
+            Some(now_ms + 60_000),
+        );
+        exhausted.service_id = Some("opencode-go".to_string());
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode-go/deepseek-v4-pro"),
+            &capacity_snapshot(
+                "opencode",
+                ProviderAccountUsageAvailability::Available,
+                vec![exhausted.clone()],
+                now_ms,
+            ),
+            now_ms,
+        )
+        .is_some());
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode-go/deepseek-v4-pro"),
+            &capacity_snapshot(
+                "opencode",
+                ProviderAccountUsageAvailability::Available,
+                vec![ProviderAccountUsageMeter {
+                    resets_at_ms: Some(now_ms),
+                    ..exhausted.clone()
+                }],
+                now_ms,
+            ),
+            now_ms,
+        )
+        .is_none());
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode-go/deepseek-v4-pro"),
+            &capacity_snapshot(
+                "opencode",
+                ProviderAccountUsageAvailability::Available,
+                vec![ProviderAccountUsageMeter {
+                    observed_at_ms: now_ms.saturating_sub(PROVIDER_USAGE_STALE_AFTER_MS + 1),
+                    ..exhausted.clone()
+                }],
+                now_ms.saturating_sub(PROVIDER_USAGE_STALE_AFTER_MS + 1),
+            ),
+            now_ms,
+        )
+        .is_none());
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode-go/deepseek-v4-pro"),
+            &capacity_snapshot(
+                "opencode",
+                ProviderAccountUsageAvailability::Stale,
+                vec![exhausted],
+                now_ms,
+            ),
+            now_ms,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn usage_admission_does_not_refresh_one_service_from_another_service_observation() {
+        let now_ms = PROVIDER_USAGE_STALE_AFTER_MS * 2;
+        let stale_zen = ProviderAccountUsageMeter {
+            service_id: Some("opencode".to_string()),
+            ..capacity_meter(
+                "Zen credits",
+                ProviderAccountUsageMeterKind::CreditBalance,
+                ProviderAccountUsageMeterState::Exhausted,
+                now_ms - PROVIDER_USAGE_STALE_AFTER_MS - 1,
+                None,
+            )
+        };
+        let fresh_go = ProviderAccountUsageMeter {
+            service_id: Some("opencode-go".to_string()),
+            ..capacity_meter(
+                "Go monthly",
+                ProviderAccountUsageMeterKind::RollingLimit,
+                ProviderAccountUsageMeterState::Healthy,
+                now_ms,
+                Some(now_ms + 60_000),
+            )
+        };
+        let mixed = capacity_snapshot(
+            "opencode",
+            ProviderAccountUsageAvailability::Available,
+            vec![stale_zen, fresh_go],
+            now_ms,
+        );
+
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode/deepseek-v4-pro"),
+            &mixed,
+            now_ms,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn opencode_usage_admission_is_scoped_to_the_selected_service() {
+        let now_ms = PROVIDER_USAGE_STALE_AFTER_MS * 2;
+        let go_exhausted = ProviderAccountUsageMeter {
+            service_id: Some("opencode-go".to_string()),
+            ..capacity_meter(
+                "Monthly",
+                ProviderAccountUsageMeterKind::RollingLimit,
+                ProviderAccountUsageMeterState::Exhausted,
+                now_ms,
+                Some(now_ms + 60_000),
+            )
+        };
+        let usage = capacity_snapshot(
+            "opencode",
+            ProviderAccountUsageAvailability::Available,
+            vec![go_exhausted],
+            now_ms,
+        );
+
+        assert!(provider_account_usage_block(
+            "opencode",
+            Some("opencode-go/deepseek-v4-pro"),
+            &usage,
+            now_ms,
+        )
+        .is_some());
+        assert!(
+            provider_account_usage_block("opencode", Some("opencode/gpt-5.2"), &usage, now_ms,)
+                .is_none()
+        );
+        assert!(
+            provider_account_usage_block("opencode", Some("gpt-5.2"), &usage, now_ms,).is_none()
+        );
+        assert!(
+            provider_account_usage_block("opencode", Some("openai/gpt-5.2"), &usage, now_ms,)
+                .is_none()
+        );
+
+        let zen_usage = capacity_snapshot(
+            "opencode",
+            ProviderAccountUsageAvailability::Available,
+            vec![ProviderAccountUsageMeter {
+                service_id: Some("opencode".to_string()),
+                ..capacity_meter(
+                    "Credits",
+                    ProviderAccountUsageMeterKind::CreditBalance,
+                    ProviderAccountUsageMeterState::Exhausted,
+                    now_ms,
+                    None,
+                )
+            }],
+            now_ms,
+        );
+        assert!(
+            provider_account_usage_block("opencode", Some("gpt-5.2"), &zen_usage, now_ms,)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn codex_and_claude_require_both_allowance_and_credit_exhaustion() {
+        let now_ms = 10_000_000;
+        let allowance = capacity_meter(
+            "Weekly",
+            ProviderAccountUsageMeterKind::RollingLimit,
+            ProviderAccountUsageMeterState::Exhausted,
+            now_ms,
+            Some(now_ms + 60_000),
+        );
+        let exhausted_credits = capacity_meter(
+            "Credits",
+            ProviderAccountUsageMeterKind::CreditBalance,
+            ProviderAccountUsageMeterState::Exhausted,
+            now_ms,
+            None,
+        );
+        let healthy_credits = ProviderAccountUsageMeter {
+            state: ProviderAccountUsageMeterState::Healthy,
+            ..exhausted_credits.clone()
+        };
+
+        for provider in ["codex", "claude"] {
+            assert!(provider_account_usage_block(
+                provider,
+                None,
+                &capacity_snapshot(
+                    provider,
+                    ProviderAccountUsageAvailability::Available,
+                    vec![allowance.clone()],
+                    now_ms,
+                ),
+                now_ms,
+            )
+            .is_none(), "{provider} usage exhaustion alone must remain runnable when paid credits may be available");
+            assert!(provider_account_usage_block(
+                provider,
+                None,
+                &capacity_snapshot(
+                    provider,
+                    ProviderAccountUsageAvailability::Available,
+                    vec![exhausted_credits.clone()],
+                    now_ms,
+                ),
+                now_ms,
+            )
+            .is_none(), "{provider} may still use its subscription allowance when only credits are exhausted");
+            assert!(
+                provider_account_usage_block(
+                    provider,
+                    None,
+                    &capacity_snapshot(
+                        provider,
+                        ProviderAccountUsageAvailability::Available,
+                        vec![allowance.clone(), healthy_credits.clone()],
+                        now_ms,
+                    ),
+                    now_ms,
+                )
+                .is_none(),
+                "{provider} paid credits keep the account runnable after subscription exhaustion"
+            );
+            let blocked = provider_account_usage_block(
+                provider,
+                None,
+                &capacity_snapshot(
+                    provider,
+                    ProviderAccountUsageAvailability::Available,
+                    vec![allowance.clone(), exhausted_credits.clone()],
+                    now_ms,
+                ),
+                now_ms,
+            )
+            .expect("both exhausted capacity sources must block");
+            assert!(blocked.requires_exhausted_credits);
         }
     }
 

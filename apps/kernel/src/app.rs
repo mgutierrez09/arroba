@@ -122,13 +122,16 @@ pub(crate) use provider_launch_policy::{
     apply_metaagent_launch_policy, default_provider_env_remove,
     failed_provider_resume_state_replacement,
     failed_provider_resume_state_replacement_from_message, generate_runtime_mcp_auth_token,
-    granted_mcp_servers_for_agent_launch, resolve_mcp_credentials_for_launch,
-    sanitize_resume_state_for_launch, workspace_live_sync_protected_roots,
+    granted_mcp_servers_for_agent_launch, registered_workflow_runtime_worktree_root,
+    resolve_mcp_credentials_for_launch, sanitize_resume_state_for_launch,
+    workspace_live_sync_protected_roots,
 };
 pub(crate) use provider_liveness::ProviderRunExitSessionSummary;
 pub(crate) use provider_processes::{ProviderLaunchProcessRuntime, ProviderProcessReapSummary};
 pub(crate) use provider_run_read::ProviderRunReadService;
-pub(crate) use remote_lease::{PreparedLeasedProviderRun, RemoteLeaseRuntime};
+pub(crate) use remote_lease::{
+    PreparedLeasedProviderRun, RemoteLeaseRuntime, RemoteProviderFailure,
+};
 
 pub struct DaemonApp {
     config: DaemonConfig,

@@ -138,9 +138,9 @@ impl<'a> KernelAgentService<'a> {
         let prompt = self
             .app
             .prompt_owner_finalize_active_prompt_cancellation(session_id, agent_id)?;
-        crate::app::workflow_runtime::cancel_workflow_prompt_from_runtime(
+        let workflow_settlement = crate::app::workflow_runtime::cancel_workflow_prompt_from_runtime(
             self.app, session_id, &prompt,
-        )?;
+        );
         let cancellation_provider_run_id = provider_run_id.map(str::to_string).or_else(|| {
             self.app
                 .providers
@@ -150,6 +150,9 @@ impl<'a> KernelAgentService<'a> {
         if let Some(provider_run_id) = cancellation_provider_run_id.as_deref() {
             flow_control::clear_prompt_activity(self.app, provider_run_id);
         }
+        // The prompt owner is already finalized. A failed workflow callback must
+        // remain visible, but must not strand a live/settling activity record.
+        workflow_settlement?;
         let started_next = if self
             .app
             .prompt_owner_active_prompt_for_agent(session_id, agent_id)?
@@ -168,5 +171,95 @@ impl<'a> KernelAgentService<'a> {
             prompt,
             started_next,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_cancellation_error_does_not_leave_a_settling_turn() {
+        let mut app = crate::DaemonApp::bootstrap(crate::DaemonConfig::for_tests())
+            .expect("daemon should boot");
+        let (session, agent) = crate::app::KernelSessionService::new(&mut app)
+            .create_session(crate::session::CreateSessionRequest::new(
+                "workspace-cancellation-cleanup",
+                "worktree-cancellation-cleanup",
+            ))
+            .expect("session should exist");
+        let workflow = app
+            .sessions_mut()
+            .create_workflow(session.id(), Some("cancellation-cleanup".to_string()))
+            .expect("workflow should exist");
+        let node = app
+            .sessions_mut()
+            .add_workflow_node(session.id(), workflow.id(), agent.id())
+            .expect("node should exist");
+        let endpoint = app
+            .sessions_mut()
+            .create_workflow_endpoint(session.id(), workflow.id(), node.id(), None)
+            .expect("endpoint should exist");
+        let run = app
+            .sessions_mut()
+            .invoke_workflow_endpoint(session.id(), workflow.id(), endpoint.id(), None)
+            .expect("workflow should start");
+        let prompt = crate::session::PromptQueueItem::new(
+            "cancelled-prompt",
+            crate::scheduler::runtime::workflow_prompt_source_attachment_id(run.id()),
+            agent.id(),
+            "cancel me",
+            PromptStatus::Queued,
+        )
+        .with_workflow_context(run.id(), run.node_runs()[0].id());
+        app.prompt_owner_submit_prepared_prompt(session.id(), prompt, false)
+            .expect("prompt should start");
+        app.prompt_owner_begin_cancelling_active_prompt(session.id(), agent.id())
+            .expect("prompt should be cancelling");
+        app.active_turns.start(crate::app::ActiveTurnState::new(
+            session.id().to_string(),
+            agent.id().to_string(),
+            "cancelled-prompt".to_string(),
+            "cancelled-provider".to_string(),
+        ));
+        flow_control::note_prompt_settlement_requested(&mut app, "cancelled-provider");
+        app.sessions_mut()
+            .cancel_workflow_run(session.id(), run.id())
+            .expect("workflow should stop");
+        // Reproduce archival between the prompt-owner cancellation and its workflow
+        // callback: another snapshot observer has already seen the empty mirror.
+        app.sessions
+            .mirror_agent_prompt_state(
+                session.id(),
+                agent.id(),
+                None,
+                std::collections::VecDeque::new(),
+            )
+            .expect("settled prompt mirror should publish");
+        app.sessions_mut()
+            .archive_terminal_workflow_runs(session.id())
+            .expect("terminal workflow should leave the hot session");
+
+        let result = app.finalize_active_prompt_cancellation(
+            session.id(),
+            agent.id(),
+            Some("cancelled-provider"),
+        );
+        assert!(
+            matches!(result, Err(DaemonError::WorkflowRunNotFound { .. })),
+            "the archived-run error remains visible: {result:?}"
+        );
+        assert!(app
+            .prompt_owner_active_prompt_for_agent(session.id(), agent.id())
+            .expect("session should exist")
+            .is_none());
+        assert!(
+            app.active_turns.get("cancelled-provider").is_none(),
+            "a finalized cancellation must clear activity even if workflow settlement fails"
+        );
+        assert!(!app
+            .prompt_activity
+            .read()
+            .contains_key("cancelled-provider"));
     }
 }

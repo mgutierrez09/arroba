@@ -924,88 +924,73 @@ impl KernelRuntimeState {
         model: Option<String>,
         effort: Option<Option<String>>,
     ) -> Result<crate::agent::AgentInstance, DaemonError> {
-        let update = self.owned.update_agent_profile(
-            session_id,
-            agent_id,
-            caller_user_id,
-            provider.clone(),
-            account_profile.clone(),
-            model.clone(),
-            effort.clone(),
-        )?;
-        for provider_run_id in update.terminated_run_ids {
-            let (_, process_key) = self
-                .with_app_side_effect(|app| {
-                    crate::app::ProviderLaunchProcessRuntime::new(app).remove_run(&provider_run_id)
-                })
-                .await
-                .unwrap_or((false, None));
+        let original =
             self.owned
-                .remove_provider_process_tracking_for_run(&provider_run_id, process_key);
-        }
-        let mut agent = update.agent;
-        if let Some(remote_update) = update.remote_update {
-            let mut config = self.config_snapshot().await;
-            if let (Some(relay_url), Some(relay_token)) = (
-                remote_update.relay_url.clone(),
-                remote_update.relay_token.clone(),
-            ) {
-                config.apply_remote_relay_override(relay_url, relay_token);
-            }
-            let target = ClientTarget {
-                daemon_id: Some(remote_update.worker_kernel_id.clone()),
-                daemon_alias: None,
-            };
-            let request = RelayPeerRequest::UpdateLeasedAgentProfile {
-                leased_agent_id: remote_update.leased_agent_id,
-                provider: remote_update.provider.clone(),
-                account_profile: remote_update.account_profile.clone(),
-                model: remote_update.model.clone(),
-                effort: remote_update.effort.clone(),
-            };
-            let response = match self.connected_relay_state_for_config(&config).await {
-                Some(relay_state) => {
-                    crate::transport::relay_client::send_peer_request_via_connected_relay(
-                        &config,
-                        &relay_state,
-                        target,
-                        request,
-                    )
-                    .await
-                }
-                None => {
-                    crate::transport::relay_client::send_peer_request_via_temporary_connection(
-                        &config, target, request,
-                    )
-                    .await
-                }
-            };
-            match response {
-                Ok(RelayPeerResponse::LeasedAgentProfileUpdated { .. }) => {}
-                Ok(other) => {
-                    return Err(DaemonError::LocalTransport {
-                        operation: "update remote leased agent profile",
-                        message: format!("unexpected remote profile response: {other:?}"),
-                    });
-                }
-                Err(error) => return Err(error),
-            }
-            agent = self.owned.commit_remote_agent_profile_update(
+                .ensure_agent_owner(agent_id, caller_user_id, "update agent profile")?;
+        let profile_transition = if original.remote_execution().is_some() {
+            Some(
+                self.owned
+                    .prompt_state_owner
+                    .claim_idle_agent_profile_transition(
+                        &self.owned.session_store.get_session(session_id)?,
+                        agent_id,
+                    )?,
+            )
+        } else {
+            None
+        };
+        let result = async {
+            let update = self.owned.update_agent_profile(
                 session_id,
                 agent_id,
-                remote_update.provider,
-                remote_update.account_profile,
-                remote_update.model,
-                remote_update.effort,
+                caller_user_id,
+                provider,
+                account_profile,
+                model,
+                effort,
             )?;
+            for provider_run_id in update.terminated_run_ids {
+                let (_, process_key) = self
+                    .with_app_side_effect(|app| {
+                        crate::app::ProviderLaunchProcessRuntime::new(app)
+                            .remove_run(&provider_run_id)
+                    })
+                    .await
+                    .unwrap_or((false, None));
+                self.owned
+                    .remove_provider_process_tracking_for_run(&provider_run_id, process_key);
+            }
+            let mut agent = update.agent;
+            if let Some(remote_update) = update.remote_update {
+                self.confirm_remote_agent_profile(agent_id, &remote_update)
+                    .await?;
+                agent = self.owned.commit_remote_agent_profile_update(
+                    session_id,
+                    agent_id,
+                    remote_update.provider,
+                    remote_update.account_profile,
+                    remote_update.model,
+                    remote_update.effort,
+                )?;
+            }
+            self.append_agent_durable_event("agent.updated", &agent, None)
+                .await?;
+            self.invalidate_workflow_copies_after_source_agent_change(session_id, agent_id)?;
+            Ok(agent)
         }
-        self.append_agent_durable_event("agent.updated", &agent, None)
-            .await?;
-        self.invalidate_workflow_copies_after_source_agent_change(session_id, agent_id)?;
-        Ok(agent)
+        .await;
+        if let Some(claim) = profile_transition {
+            let finish = self
+                .finish_remote_agent_profile_transition(session_id, agent_id, claim)
+                .await;
+            if result.is_ok() {
+                finish?;
+            }
+        }
+        result
     }
 
-    fn invalidate_workflow_copies_after_source_agent_change(
+    pub(super) fn invalidate_workflow_copies_after_source_agent_change(
         &self,
         session_id: &str,
         agent_id: &str,
@@ -1045,8 +1030,72 @@ impl KernelRuntimeState {
         caller_user_id: &str,
         action: crate::local::AgentSubstituteAction,
     ) -> Result<crate::agent::AgentInstance, DaemonError> {
-        self.owned
-            .update_agent_substitutes(session_id, agent_id, caller_user_id, action)
+        let original =
+            self.owned
+                .ensure_agent_owner(agent_id, caller_user_id, "update agent substitutes")?;
+        if original.session_id() != session_id {
+            return Err(DaemonError::AgentNotInSession {
+                session_id: session_id.to_string(),
+                agent_id: agent_id.to_string(),
+            });
+        }
+        if original.remote_execution().is_some() {
+            if let Some(target) =
+                super::remote_agent_profile_runtime::substitute_target(&original, &action)?
+            {
+                if !super::remote_agent_profile_runtime::same_execution_profile(&original, &target)
+                {
+                    return self
+                        .update_remote_agent_substitute(original, action, target)
+                        .await;
+                }
+            }
+        }
+        let profile_transition = if original.remote_execution().is_some() {
+            Some(
+                self.owned
+                    .prompt_state_owner
+                    .claim_agent_profile_list_edit(
+                        &self.owned.session_store.get_session(session_id)?,
+                        agent_id,
+                    )?,
+            )
+        } else {
+            None
+        };
+        let result = async {
+            let (agent, retired_run) = self.owned.update_agent_substitutes(
+                session_id,
+                agent_id,
+                caller_user_id,
+                action,
+            )?;
+            if let Some(provider_run_id) = retired_run {
+                let (_, process_key) = self
+                    .with_app_side_effect(|app| {
+                        crate::app::ProviderLaunchProcessRuntime::new(app)
+                            .remove_run(&provider_run_id)
+                    })
+                    .await
+                    .unwrap_or((false, None));
+                self.owned
+                    .remove_provider_process_tracking_for_run(&provider_run_id, process_key);
+            }
+            self.append_agent_durable_event("agent.updated", &agent, None)
+                .await?;
+            self.invalidate_workflow_copies_after_source_agent_change(session_id, agent_id)?;
+            Ok(agent)
+        }
+        .await;
+        if let Some(claim) = profile_transition {
+            let finish = self
+                .finish_remote_agent_profile_transition(session_id, agent_id, claim)
+                .await;
+            if result.is_ok() {
+                finish?;
+            }
+        }
+        result
     }
 
     pub(crate) async fn ensure_agent_owner(

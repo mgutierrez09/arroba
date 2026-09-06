@@ -316,18 +316,15 @@ pub(crate) fn is_stale_cloud_link_error(error: &DaemonError) -> bool {
     };
     [
         "cloud_api_code=session_invalid",
-        "cloud_api_code=identity_revoked",
         "cloud_api_code=realm_not_found",
         "cloud_api_code=account_deleted",
         "cloud_api_code=user_deleted",
         "\"code\":\"session_invalid\"",
-        "\"code\":\"identity_revoked\"",
         "\"code\":\"realm_not_found\"",
         "\"code\":\"account_deleted\"",
         "\"code\":\"user_deleted\"",
         "invalid_session",
         "cloud relay request failed with 401",
-        "cloud relay request failed with 403",
     ]
     .iter()
     .any(|needle| message.contains(needle))
@@ -356,8 +353,8 @@ mod tests {
     }
 
     #[test]
-    fn stale_cloud_link_errors_include_cloud_codes_and_auth_failures() {
-        assert!(is_stale_cloud_link_error(&DaemonError::LocalTransport {
+    fn stale_cloud_link_errors_only_include_invalid_cloud_sessions() {
+        assert!(!is_stale_cloud_link_error(&DaemonError::LocalTransport {
             operation: "cloud relay request",
             message: "cloud_api_code=identity_revoked".to_string(),
         }));
@@ -368,6 +365,10 @@ mod tests {
         assert!(!is_stale_cloud_link_error(&DaemonError::LocalTransport {
             operation: "cloud relay request",
             message: "network timeout".to_string(),
+        }));
+        assert!(!is_stale_cloud_link_error(&DaemonError::LocalTransport {
+            operation: "cloud relay request",
+            message: "cloud relay request failed with 403".to_string(),
         }));
     }
 
