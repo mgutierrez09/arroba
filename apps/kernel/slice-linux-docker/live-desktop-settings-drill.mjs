@@ -72,6 +72,28 @@ async function launchProbe(phase, readOnly = false) {
   const chromium = await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "^chromium$"))
   await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "getactivewindow")) === chromium)
   await user("env", "DISPLAY=:99", "xdotool", "windowminimize", "--sync", chromium)
+  // Exercise the same document-bound activation used by the Room tool and
+  // Web tab selector. Background navigation must not acquire desktop focus.
+  await assert.rejects(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "^chromium$"),
+    error => error.code === 1, "Chromium must actually be minimized before activation")
+  await user("node", "--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { BrowserCdpClient } from "/src/apps/kernel/slice-linux-docker/docker/browser-controller-cdp.mjs";
+    const browser = new BrowserCdpClient();
+    try {
+      const state = await browser.reconcile({ css_width: 1280, css_height: 800,
+        device_scale_factor: 1, desktop_pixel_width: 1280, desktop_pixel_height: 800 });
+      assert.equal(state.tabs.length, 1);
+      const tab = state.tabs[0];
+      await browser.manageTab({ target_id: tab.target_id, document_id: tab.document_id, action: "activate" });
+    } finally { await browser.close(); }
+  `)
+  await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "^chromium$")) === chromium)
+  await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "getactivewindow")) === chromium)
+  await screen("screenshot", "/tmp/reactivated-browser.png")
+  await docker("cp", `${id}:/tmp/reactivated-browser.png`, path.join(evidence, `${phase}-browser-reactivated.png`))
+  console.log(JSON.stringify({ phase, minimizedBrowserActivated: true }))
+  await user("env", "DISPLAY=:99", "xdotool", "windowminimize", "--sync", chromium)
   await screen("pointer-click", String(Math.round(Number(geometry.X) + 6 + taskWidth * 1.5)),
     String(Math.round(Number(geometry.Y) + Number(geometry.HEIGHT) / 2)), "left", "1")
   await waitFor(async () => (await user("env", "DISPLAY=:99", "xdotool", "getactivewindow")) === window)

@@ -5,6 +5,12 @@ desktop. Each open application keeps a named button when minimized. Clicking
 an inactive or minimized task restores it; clicking the active task minimizes it.
 The bar reserves 34 pixels so maximized applications do not cover it.
 
+Explicit Browser tab activation also restores a minimized Chromium window.
+It uses the existing document-bound controller operation, not simulated taskbar
+clicks. Navigation alone does not request desktop focus. Office workflows that
+need the browser visible should explicitly activate their tab; reads and
+background navigation must not take focus from a desktop application.
+
 The desktop launcher owns the bar's startup, health check, and shutdown. Both
 noVNC and Selkies display the same desktop, without browser-only restore logic.
 New slice images install tint2. Support refresh installs it when absent from an
