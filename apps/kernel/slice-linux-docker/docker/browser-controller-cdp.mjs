@@ -239,7 +239,8 @@ export class BrowserCdpClient {
     };
   }
 
-  async manageTab(rawRequest) {
+  async manageTab(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const action = rawRequest?.action;
@@ -266,6 +267,7 @@ export class BrowserCdpClient {
         `browser target ${JSON.stringify(targetId)} moved away from the requested document`,
       );
     }
+    assertNotCancelled(signal);
     if (action === "activate") {
       await connection.send("Target.activateTarget", { targetId });
     } else {
@@ -388,7 +390,8 @@ export class BrowserCdpClient {
     }
   }
 
-  async navigate(rawRequest) {
+  async navigate(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const { connection, sessionId } = await this.resolvePageTarget(targetId);
@@ -399,6 +402,7 @@ export class BrowserCdpClient {
         targetId,
         documentId,
         url: rawRequest?.url,
+        signal,
       });
       this.documentIdsByTarget.set(targetId, result.document_id);
       this.snapshotStateByTarget.delete(targetId);
@@ -411,7 +415,8 @@ export class BrowserCdpClient {
     }
   }
 
-  async manageHistory(rawRequest) {
+  async manageHistory(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const { connection, sessionId } = await this.resolvePageTarget(targetId);
@@ -422,6 +427,7 @@ export class BrowserCdpClient {
         targetId,
         documentId,
         action: rawRequest?.action,
+        signal,
       });
       this.documentIdsByTarget.set(targetId, result.document_id);
       this.snapshotStateByTarget.delete(targetId);
@@ -456,7 +462,8 @@ export class BrowserCdpClient {
     }
   }
 
-  async handleDialog(rawRequest) {
+  async handleDialog(rawRequest, { signal } = {}) {
+    assertNotCancelled(signal);
     const targetId = requiredIdentity(rawRequest?.target_id, "target_id");
     const documentId = requiredIdentity(rawRequest?.document_id, "document_id");
     const action = rawRequest?.action;
@@ -504,6 +511,7 @@ export class BrowserCdpClient {
       );
     }
     const answer = promptText ?? defaultPrompt;
+    assertNotCancelled(signal);
     await connection.send(
       "Page.handleJavaScriptDialog",
       {

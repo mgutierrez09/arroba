@@ -2,7 +2,8 @@ use crate::runtime::browser_controller_process::{
     BrowserControllerProcessStore, CONTROLLER_RESTARTED_BEFORE_OPERATION,
 };
 use crate::transport::room_browser_controller::{
-    RoomBrowserControllerCommand as Command, RoomBrowserControllerResult as Response,
+    BrowserLifecycleOperation, RoomBrowserControllerCommand as Command,
+    RoomBrowserControllerResult as Response,
 };
 
 use super::*;
@@ -66,6 +67,9 @@ impl KernelRuntimeState {
             .await?
         };
         match response {
+            Response::ActionCancelled { controller_fenced } if admitted_mutation_command => {
+                Err(DaemonError::BrowserControllerActionCancelled { controller_fenced })
+            }
             Response::RecoveryRequired { process } if admitted_mutation_command => {
                 Err(DaemonError::BrowserControllerRecoveryRequired {
                     runtime_generation: process.runtime_generation,
@@ -216,6 +220,52 @@ impl KernelRuntimeState {
 
 fn receipt_recovery_command(command: &Command) -> Option<Command> {
     match command {
+        Command::Tab {
+            execution_id,
+            target_id,
+            document_id,
+            action,
+        } => Some(lifecycle_recovery(
+            execution_id,
+            target_id,
+            document_id,
+            BrowserLifecycleOperation::Tab { action: *action },
+        )),
+        Command::History {
+            execution_id,
+            target_id,
+            document_id,
+            action,
+        } => Some(lifecycle_recovery(
+            execution_id,
+            target_id,
+            document_id,
+            BrowserLifecycleOperation::History { action: *action },
+        )),
+        Command::Navigate {
+            execution_id,
+            target_id,
+            document_id,
+            url,
+        } => Some(lifecycle_recovery(
+            execution_id,
+            target_id,
+            document_id,
+            BrowserLifecycleOperation::Navigate { url: url.clone() },
+        )),
+        Command::Dialog {
+            execution_id,
+            target_id,
+            document_id,
+            action,
+        } => Some(lifecycle_recovery(
+            execution_id,
+            target_id,
+            document_id,
+            BrowserLifecycleOperation::Dialog {
+                action: action.clone(),
+            },
+        )),
         Command::ConfigureDownloads {
             execution_id,
             target_id,
@@ -267,6 +317,20 @@ fn receipt_recovery_command(command: &Command) -> Option<Command> {
             timeout_ms: *timeout_ms,
         }),
         _ => None,
+    }
+}
+
+fn lifecycle_recovery(
+    execution_id: &str,
+    target_id: &str,
+    document_id: &str,
+    operation: BrowserLifecycleOperation,
+) -> Command {
+    Command::RecoverLifecycle {
+        execution_id: execution_id.to_string(),
+        target_id: target_id.to_string(),
+        document_id: document_id.to_string(),
+        operation,
     }
 }
 
@@ -430,26 +494,41 @@ async fn execute_local(
             .capture_browser_snapshot(&session_id, &target_id, &document_id)
             .map(|snapshot| Response::Snapshot { snapshot }),
         Command::Tab {
+            execution_id,
             target_id,
             document_id,
             action,
-        } => processes
-            .manage_browser_tab(&session_id, &target_id, &document_id, action)
-            .map(|result| Response::Tab { result }),
+        } => processes.perform_cancellable_browser_lifecycle(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &BrowserLifecycleOperation::Tab { action },
+        ),
         Command::History {
+            execution_id,
             target_id,
             document_id,
             action,
-        } => processes
-            .navigate_browser_history(&session_id, &target_id, &document_id, action)
-            .map(|result| Response::History { result }),
+        } => processes.perform_cancellable_browser_lifecycle(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &BrowserLifecycleOperation::History { action },
+        ),
         Command::Navigate {
+            execution_id,
             target_id,
             document_id,
             url,
-        } => processes
-            .navigate_browser(&session_id, &target_id, &document_id, url.as_str())
-            .map(|result| Response::Navigation { result }),
+        } => processes.perform_cancellable_browser_lifecycle(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &BrowserLifecycleOperation::Navigate { url },
+        ),
         Command::Wait {
             target_id,
             document_id,
@@ -459,12 +538,29 @@ async fn execute_local(
             .wait_for_browser(&session_id, &target_id, &document_id, &wait, timeout_ms)
             .map(|result| Response::Wait { result }),
         Command::Dialog {
+            execution_id,
             target_id,
             document_id,
             action,
-        } => processes
-            .handle_browser_dialog(&session_id, &target_id, &document_id, &action)
-            .map(|result| Response::Dialog { result }),
+        } => processes.perform_cancellable_browser_lifecycle(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &BrowserLifecycleOperation::Dialog { action },
+        ),
+        Command::RecoverLifecycle {
+            execution_id,
+            target_id,
+            document_id,
+            operation,
+        } => processes.recover_cancellable_browser_lifecycle(
+            &session_id,
+            &execution_id,
+            &target_id,
+            &document_id,
+            &operation,
+        ),
         Command::ConfigureDownloads {
             execution_id,
             target_id,

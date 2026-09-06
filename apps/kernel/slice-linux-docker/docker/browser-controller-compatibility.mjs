@@ -1,3 +1,5 @@
+import { assertNotCancelled } from "./browser-controller-actions.mjs";
+
 const MIN_WAIT_TIMEOUT_MS = 100;
 const MAX_WAIT_TIMEOUT_MS = 5_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
@@ -19,9 +21,12 @@ export async function navigateBrowser({
   targetId,
   documentId,
   url,
+  signal,
 }) {
+  assertNotCancelled(signal);
   const normalizedUrl = normalizeNavigationUrl(url);
   await assertCurrentDocument(connection, sessionId, targetId, documentId);
+  assertNotCancelled(signal);
   const result = await connection.send(
     "Page.navigate",
     { url: normalizedUrl },

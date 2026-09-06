@@ -40,14 +40,20 @@ impl KernelRuntimeState {
                 operation: "browser_controller.compatibility.navigate",
                 message: format!("Room browser tab `{tab_id}` is not available"),
             })?;
+        let execution_id = format!("{:032x}", rand::random::<u128>());
         self.execute_browser_mutation_as_agent(
             session_id,
             agent_id,
             &tab_id,
             document_revision,
             "navigate",
-            None,
-            self.navigate_browser_environment_compatibility(session_id, url),
+            Some(&execution_id),
+            self.navigate_browser_environment_compatibility(
+                session_id,
+                &execution_id,
+                &tab_id,
+                url,
+            ),
         )
         .await
     }
@@ -55,6 +61,8 @@ impl KernelRuntimeState {
     pub(crate) async fn navigate_browser_environment_compatibility(
         &self,
         session_id: &str,
+        execution_id: &str,
+        tab_id: &str,
         url: &str,
     ) -> Result<BrowserControllerNavigationResult, DaemonError> {
         let url =
@@ -63,12 +71,21 @@ impl KernelRuntimeState {
                 message,
             })?;
         let expected_url = url.as_str().to_string();
-        let (target_id, document_id) =
-            self.focused_browser_controller_identity(session_id, "navigate")?;
+        let binding = self
+            .room_environment_controller_tab_binding(session_id, tab_id)
+            .map_err(|error| {
+                super::room_browser_controller::controller_route_error(&format!(
+                    "{}: {error:?}",
+                    error.code()
+                ))
+            })?;
+        let target_id = binding.runtime_target_id;
+        let document_id = binding.document_id;
         let RoomBrowserControllerResult::Navigation { result } = self
             .room_browser_controller_command(
                 session_id,
                 RoomBrowserControllerCommand::Navigate {
+                    execution_id: execution_id.to_string(),
                     target_id: target_id.clone(),
                     document_id,
                     url,

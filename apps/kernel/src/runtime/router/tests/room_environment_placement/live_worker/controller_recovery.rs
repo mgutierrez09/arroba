@@ -376,6 +376,8 @@ pub(super) async fn check(fixture: &LiveWorker, token: &str) {
     );
     super::controller_upload_recovery::check_restart(fixture, token).await;
     super::controller_configuration_recovery::check(fixture, token).await;
+    super::controller_lifecycle_cancellation::check(fixture, token).await;
+    super::controller_navigation_queue::check(fixture, token).await;
     eprintln!(
         "{}",
         json!({

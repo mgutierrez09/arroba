@@ -19,9 +19,10 @@ fn browser_history_peer_contract_is_document_bound_and_versioned() {
     };
     use crate::transport::room_browser_controller::RoomBrowserControllerResult;
 
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 311);
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 45);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 312);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 46);
     let command = RoomBrowserControllerCommand::History {
+        execution_id: "00000000000000000000000000000001".into(),
         target_id: "target-a".into(),
         document_id: "document-a".into(),
         action: BrowserHistoryAction::Back,
@@ -29,7 +30,7 @@ fn browser_history_peer_contract_is_document_bound_and_versioned() {
     assert_eq!(
         serde_json::to_value(&command).unwrap(),
         serde_json::json!({
-            "kind":"history", "target_id":"target-a", "document_id":"document-a",
+            "kind":"history", "execution_id":"00000000000000000000000000000001", "target_id":"target-a", "document_id":"document-a",
             "action":"back"
         })
     );
@@ -60,8 +61,8 @@ fn download_cancellation_peer_contract_is_versioned_and_does_not_require_a_live_
         BrowserControllerDownloadCancellationResult, BrowserDownloadCancellation,
     };
     use crate::transport::room_browser_controller::RoomBrowserControllerResult;
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 311);
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 45);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 312);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 46);
     let command = RoomBrowserControllerCommand::CancelDownload {
         cancellation: BrowserDownloadCancellation::new(2, "download-a".into()).unwrap(),
     };
@@ -93,7 +94,7 @@ fn download_cancellation_peer_contract_is_versioned_and_does_not_require_a_live_
 
 #[test]
 fn room_screenshot_peer_protocol_is_bounded_and_versioned() {
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 45);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 46);
 
     let request = RelayPeerRequest::ReadRoomScreenshotChunk {
         session_id: "session-1".to_string(),
@@ -135,7 +136,7 @@ fn room_screenshot_peer_protocol_is_bounded_and_versioned() {
 
 #[test]
 fn room_computer_observation_peer_protocol_is_typed_redacted_and_versioned() {
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 45);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 46);
     let request = RelayPeerRequest::ObserveRoomComputer {
         session_id: "room-1".to_string(),
         slice_id: "slice-1".to_string(),
@@ -227,8 +228,8 @@ fn room_computer_observation_peer_protocol_is_typed_redacted_and_versioned() {
 
 #[test]
 fn room_controller_protocol_shapes_are_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 311);
-    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 45);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 312);
+    assert_eq!(RELAY_PEER_PROTOCOL_VERSION, 46);
     for (command, wire_command) in [
         (
             RoomBrowserControllerCommand::Action {
@@ -274,12 +275,13 @@ fn room_controller_protocol_shapes_are_versioned() {
         ),
         (
             RoomBrowserControllerCommand::Tab {
+                execution_id: "00000000000000000000000000000001".into(),
                 target_id: "target-popup".into(),
                 document_id: "document-popup".into(),
                 action: crate::runtime::browser_controller_tab::BrowserTabAction::Close,
             },
             serde_json::json!({
-                "kind":"tab","target_id":"target-popup","document_id":"document-popup",
+                "kind":"tab","execution_id":"00000000000000000000000000000001","target_id":"target-popup","document_id":"document-popup",
                 "action":"close"
             }),
         ),
@@ -476,6 +478,7 @@ fn room_controller_protocol_shapes_are_versioned() {
         ),
         (
             RoomBrowserControllerCommand::Navigate {
+                execution_id: "00000000000000000000000000000001".into(),
                 target_id: "target-1".into(),
                 document_id: "doc-1".into(),
                 url: crate::runtime::browser_controller_compatibility::BrowserNavigationUrl::new(
@@ -483,7 +486,7 @@ fn room_controller_protocol_shapes_are_versioned() {
                 )
                 .unwrap(),
             },
-            serde_json::json!({"kind":"navigate","target_id":"target-1","document_id":"doc-1",
+            serde_json::json!({"kind":"navigate","execution_id":"00000000000000000000000000000001","target_id":"target-1","document_id":"doc-1",
                 "url":"https://example.test/path?sensitive-navigation-fixture"}),
         ),
         (
@@ -500,13 +503,14 @@ fn room_controller_protocol_shapes_are_versioned() {
         ),
         (
             RoomBrowserControllerCommand::Dialog {
+                execution_id: "00000000000000000000000000000001".into(),
                 target_id: "target-1".into(),
                 document_id: "doc-1".into(),
                 action: crate::runtime::browser_controller_action::BrowserDialogAction::Accept {
                     prompt_text: Some("sensitive-dialog-fixture".into()),
                 },
             },
-            serde_json::json!({"kind":"dialog","target_id":"target-1","document_id":"doc-1",
+            serde_json::json!({"kind":"dialog","execution_id":"00000000000000000000000000000001","target_id":"target-1","document_id":"doc-1",
                 "action":{"kind":"accept","prompt_text":"sensitive-dialog-fixture"}}),
         ),
         (
@@ -645,6 +649,26 @@ fn room_controller_protocol_shapes_are_versioned() {
             serde_json::from_value::<RelayPeerRequest>(wire).unwrap(),
             request
         );
+    }
+    for operation in [
+        serde_json::json!({"kind":"tab","action":"close"}),
+        serde_json::json!({"kind":"history","action":"reload"}),
+        serde_json::json!({"kind":"navigate","url":"https://example.test/sensitive-navigation-fixture"}),
+        serde_json::json!({"kind":"dialog","action":{"kind":"accept","prompt_text":"sensitive-dialog-fixture"}}),
+    ] {
+        let wire = serde_json::json!({"kind":"recover_lifecycle",
+            "execution_id":"00000000000000000000000000000001",
+            "target_id":"target-1","document_id":"doc-1","operation":operation});
+        let command: RoomBrowserControllerCommand = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&command).unwrap(), wire);
+        assert!(!format!("{command:?}").contains("sensitive-navigation-fixture"));
+        assert!(!format!("{command:?}").contains("sensitive-dialog-fixture"));
+        let mut missing_execution = wire;
+        missing_execution
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_id");
+        assert!(serde_json::from_value::<RoomBrowserControllerCommand>(missing_execution).is_err());
     }
     for result in [
         serde_json::json!({"kind":"recovery_required","process":{

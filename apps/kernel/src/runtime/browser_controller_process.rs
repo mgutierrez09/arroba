@@ -32,6 +32,7 @@ use crate::session::CanonicalViewport;
 
 mod cancellation;
 mod configuration_cancellation;
+mod lifecycle_cancellation;
 pub(crate) use configuration_cancellation::BrowserConfiguration;
 #[cfg(test)]
 mod upload_cancellation_tests;
@@ -328,6 +329,10 @@ impl BrowserControllerProcessStdioBackend {
                 | "browser.upload"
                 | "browser.downloads.configure"
                 | "browser.permission"
+                | "browser.tab"
+                | "browser.navigate"
+                | "browser.history"
+                | "browser.dialog"
         )
         .then(|| self.action_cancellation.clone())
         .flatten();
@@ -1271,42 +1276,6 @@ impl BrowserControllerProcessStore {
             .map(Some)
     }
 
-    pub(crate) fn manage_browser_tab(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-        action: BrowserTabAction,
-    ) -> Result<Option<BrowserControllerTabResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .manage_browser_tab(session_id, target_id, document_id, action)
-            .map(Some)
-    }
-
-    pub(crate) fn navigate_browser_history(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-        action: BrowserHistoryAction,
-    ) -> Result<Option<BrowserControllerHistoryResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .navigate_browser_history(session_id, target_id, document_id, action)
-            .map(Some)
-    }
-
     pub(crate) fn perform_browser_action(
         &self,
         session_id: &str,
@@ -1331,24 +1300,6 @@ impl BrowserControllerProcessStore {
                 action,
                 timeout_ms,
             )
-            .map(Some)
-    }
-
-    pub(crate) fn navigate_browser(
-        &self,
-        session_id: &str,
-        target_id: &str,
-        document_id: &str,
-        url: &str,
-    ) -> Result<Option<BrowserControllerNavigationResult>, String> {
-        let Some(ownership) = &self.ownership else {
-            return Ok(None);
-        };
-        let mut ownership = ownership
-            .lock()
-            .map_err(|_| "browser controller supervisor lock poisoned".to_string())?;
-        ownership
-            .navigate_browser(session_id, target_id, document_id, url)
             .map(Some)
     }
 

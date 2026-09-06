@@ -299,16 +299,19 @@ async fn check_slice_controller(fixture: &mut LiveWorker) {
                 execution_id: "00000000000000000000000000000000".into(),
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::Dialog {
+                execution_id: "00000000000000000000000000000010".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 action: crate::runtime::browser_controller_action::BrowserDialogAction::Dismiss,
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::Tab {
+                execution_id: "00000000000000000000000000000011".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 action: crate::runtime::browser_controller_tab::BrowserTabAction::Activate,
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::History {
+                execution_id: "00000000000000000000000000000012".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 action: crate::runtime::browser_controller_history::BrowserHistoryAction::Back,
@@ -346,6 +349,7 @@ async fn check_slice_controller(fixture: &mut LiveWorker) {
                 limit: 10,
             },
             crate::transport::room_browser_controller::RoomBrowserControllerCommand::Navigate {
+                execution_id: "00000000000000000000000000000013".into(),
                 target_id: "worker-tab".into(),
                 document_id: "worker-document".into(),
                 url: crate::runtime::browser_controller_compatibility::BrowserNavigationUrl::new(

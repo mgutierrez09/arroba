@@ -1,3 +1,5 @@
+import { assertNotCancelled } from "./browser-controller-actions.mjs";
+
 const HISTORY_ACTIONS = new Set(["back", "forward", "reload"]);
 const DEFAULT_HISTORY_TIMEOUT_MS = 5_000;
 const HISTORY_POLL_INTERVAL_MS = 25;
@@ -16,10 +18,12 @@ export async function navigateBrowserHistory({
   targetId,
   documentId,
   action,
+  signal,
   timeoutMs = DEFAULT_HISTORY_TIMEOUT_MS,
   now = Date.now,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }) {
+  assertNotCancelled(signal);
   if (!HISTORY_ACTIONS.has(action)) {
     throw new BrowserHistoryError(
       "browser_history_action_invalid",
@@ -35,6 +39,7 @@ export async function navigateBrowserHistory({
   let expectedEntry = null;
 
   if (action === "reload") {
+    assertNotCancelled(signal);
     await connection.send("Page.reload", {}, sessionId);
   } else {
     const history = await connection.send("Page.getNavigationHistory", {}, sessionId);
@@ -47,6 +52,7 @@ export async function navigateBrowserHistory({
       );
     }
     expectedEntry = entry;
+    assertNotCancelled(signal);
     await connection.send("Page.navigateToHistoryEntry", { entryId: entry.id }, sessionId);
   }
 

@@ -72,6 +72,8 @@ const chromium = {
         url: sessionId === "worker-popup-session" ? "https://popup.worker.test/" : state.url,
       } } };
       case "Page.navigate": {
+        state.navigateCount = (state.navigateCount ?? 0) + 1;
+        state.navigationSession = sessionId;
         state.url = params.url;
         state.documentId = `worker-document-${++state.documentSequence}`;
         state.history.splice(state.historyIndex + 1);
@@ -98,6 +100,7 @@ const chromium = {
         return {};
       }
       case "Page.reload":
+        state.reloadCount = (state.reloadCount ?? 0) + 1;
         state.documentId = `worker-document-${++state.documentSequence}`;
         persist();
         return {};
@@ -105,6 +108,7 @@ const chromium = {
         state.focusedTarget === (sessionId === "worker-popup-session" ? "worker-popup" : "worker-tab")
       } };
       case "Target.activateTarget":
+        state.activateCount = (state.activateCount ?? 0) + 1;
         state.focusedTarget = params.targetId;
         persist();
         return {};
@@ -223,6 +227,7 @@ const chromium = {
         return {};
       }
       case "Page.handleJavaScriptDialog":
+        state.dialogCount = (state.dialogCount ?? 0) + 1;
         emit({ method: "Page.javascriptDialogOpening", sessionId, params: {
           type: "prompt", message: "must-not-cross-relay", defaultPrompt: "must-not-cross-relay",
         } });
@@ -312,16 +317,19 @@ browser.uploadFiles = async (request, options = {}) => {
   try { return await uploadFiles(request, options); }
   finally { options.signal?.removeEventListener("abort", observedAbort); }
 };
-for (const method of ["configureDownloads", "setPermission"]) {
+for (const [scope, methods] of [
+  ["configuration", ["configureDownloads", "setPermission"]],
+  ["lifecycle", ["manageTab", "navigate", "manageHistory", "handleDialog"]],
+]) for (const method of methods) {
   const configure = browser[method].bind(browser);
   browser[method] = async (request, options = {}) => {
     const root = dirname(pidFile);
-    const observedAbort = () => writeFileSync(join(root, "configuration-cancel-observed"), "cancel observed");
+    const observedAbort = () => writeFileSync(join(root, `${scope}-cancel-observed`), "cancel observed");
     options.signal?.addEventListener("abort", observedAbort, { once: true });
     try {
-      if (existsSync(join(root, "hold-configuration"))) {
-        writeFileSync(join(root, "configuration-pending"), "pending");
-        while (existsSync(join(root, "hold-configuration"))) await new Promise((resolve) => setTimeout(resolve, 5));
+      if (existsSync(join(root, `hold-${scope}`))) {
+        writeFileSync(join(root, `${scope}-pending`), "pending");
+        while (existsSync(join(root, `hold-${scope}`))) await new Promise((resolve) => setTimeout(resolve, 5));
       }
       return await configure(request, options);
     } finally { options.signal?.removeEventListener("abort", observedAbort); }
