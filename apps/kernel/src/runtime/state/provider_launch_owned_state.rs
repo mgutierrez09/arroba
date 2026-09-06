@@ -82,6 +82,33 @@ impl KernelRuntimeOwnedState {
 
     pub(super) fn prepare_provider_launch_request(
         &self,
+        request: crate::provider::LaunchProviderRequest,
+        runtime_mcp_url: String,
+    ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
+        let request = self.prepare_provider_launch_request_without_account_credentials(
+            request,
+            runtime_mcp_url,
+        )?;
+        self.attach_provider_account_credentials(request)
+    }
+
+    pub(super) fn prepare_workflow_provider_launch_request(
+        &self,
+        request: crate::provider::LaunchProviderRequest,
+        runtime_mcp_url: String,
+    ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
+        let request = self.prepare_provider_launch_request_without_account_credentials(
+            request,
+            runtime_mcp_url,
+        )?;
+        if self.provider_launch_request_uses_vaulted_account_credential(&request)? {
+            return Ok(request);
+        }
+        self.attach_provider_account_credentials(request)
+    }
+
+    fn prepare_provider_launch_request_without_account_credentials(
+        &self,
         mut request: crate::provider::LaunchProviderRequest,
         runtime_mcp_url: String,
     ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
@@ -143,19 +170,8 @@ impl KernelRuntimeOwnedState {
                 &request.provider,
                 &profile.profile_id,
             )?;
-            let provider_credential_env =
-                crate::provider::resolve_provider_account_credentials_for_launch(
-                    &config,
-                    &self.provider_account_profiles,
-                    &account_owner_user_id,
-                    &request.provider,
-                    &profile.profile_id,
-                    request.client_interface,
-                )?;
             request.account_profile = profile.profile_id;
-            request = request
-                .with_provider_account_env(provider_account_env)
-                .with_provider_credential_env(provider_credential_env);
+            request = request.with_provider_account_env(provider_account_env);
         }
         let effective_config =
             crate::session::effective_agent_execution_config(&session, agent.as_ref());
@@ -252,6 +268,55 @@ impl KernelRuntimeOwnedState {
         )?);
         request = crate::app::apply_metaagent_launch_policy(request, agent.as_ref());
         Ok(request)
+    }
+
+    fn attach_provider_account_credentials(
+        &self,
+        mut request: crate::provider::LaunchProviderRequest,
+    ) -> Result<crate::provider::LaunchProviderRequest, DaemonError> {
+        if crate::provider::canonical_provider_family(&request.provider)
+            .is_some_and(|provider| matches!(provider, "codex" | "claude" | "opencode"))
+        {
+            let config = self.config_projection.snapshot();
+            let account_owner_user_id =
+                crate::account_profile::provider_account_authority_owner_user_id(
+                    &config,
+                    &request.owner_user_id,
+                );
+            let provider_credential_env =
+                crate::provider::resolve_provider_account_credentials_for_launch(
+                    &config,
+                    &self.provider_account_profiles,
+                    &account_owner_user_id,
+                    &request.provider,
+                    &request.account_profile,
+                    request.client_interface,
+                )?;
+            request = request.with_provider_credential_env(provider_credential_env);
+        }
+        Ok(request)
+    }
+
+    fn provider_launch_request_uses_vaulted_account_credential(
+        &self,
+        request: &crate::provider::LaunchProviderRequest,
+    ) -> Result<bool, DaemonError> {
+        let config = self.config_projection.snapshot();
+        if config.user_config.credential_vault.backend
+            != crate::config::CredentialVaultBackend::CharioxEncrypted
+        {
+            return Ok(false);
+        }
+        let account_owner_user_id =
+            crate::account_profile::provider_account_authority_owner_user_id(
+                &config,
+                &request.owner_user_id,
+            );
+        crate::provider::provider_account_credential_uses_vault(
+            &account_owner_user_id,
+            &request.provider,
+            &request.account_profile,
+        )
     }
 }
 
@@ -543,6 +608,13 @@ mod tests {
                 "Vaulted Claude",
             )
             .expect("managed Claude profile should create");
+        let workflow_agent = crate::app::KernelSessionService::new(&mut app)
+            .spawn_agent(
+                crate::agent::CreateAgentRequest::new(session.id(), "claude")
+                    .with_model("claude-sonnet")
+                    .with_account_profile(profile.profile_id.clone()),
+            )
+            .expect("workflow Claude agent should create");
         crate::secret::unlock_chariox_encrypted_vault(
             &vault_path,
             "correct horse battery staple",
@@ -563,6 +635,64 @@ mod tests {
 
         let app = Arc::new(Mutex::new(app));
         let runtime = owned_runtime_state(&app).await;
+        let (workflow_provider_run_id, retired_provider_run_id) = runtime
+            .owned
+            .workflow_ensure_provider_run(
+                session.id(),
+                workflow_agent.id(),
+                false,
+                false,
+                false,
+                false,
+                None,
+            )
+            .expect("locked vault must not block synchronous workflow admission");
+        assert!(retired_provider_run_id.is_none());
+        assert!(runtime
+            .owned
+            .take_pending_provider_launch_credentials(&workflow_provider_run_id)
+            .is_empty());
+        let workflow_run = runtime
+            .owned
+            .provider_store
+            .get_run(&workflow_provider_run_id)
+            .expect("workflow provider run should exist");
+        let mut workflow_credentials = Box::pin(
+            runtime.resolve_provider_account_credentials_for_run_with_vault(
+                &workflow_run,
+                "test vaulted workflow Claude launch",
+            ),
+        );
+        tokio::select! {
+            result = &mut workflow_credentials => panic!("workflow credential resolution completed before unlock: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+        }
+        let interaction = runtime
+            .owned
+            .session_store
+            .get_session(session.id())
+            .expect("session should remain available")
+            .active_interaction_for_agent(workflow_agent.id())
+            .expect("workflow vault unlock interaction should be visible")
+            .clone();
+        runtime
+            .resolve_runtime_interaction(
+                session.id(),
+                interaction.id(),
+                "unlock_operation",
+                Some("correct horse battery staple"),
+            )
+            .await
+            .expect("workflow unlock interaction should resolve");
+        assert_eq!(
+            workflow_credentials
+                .await
+                .expect("workflow credentials should resolve after unlock")
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![("CLAUDE_CODE_OAUTH_TOKEN", "setup-token-secret")]
+        );
+
         let request = crate::provider::LaunchProviderRequest::new(
             session.id(),
             "claude",

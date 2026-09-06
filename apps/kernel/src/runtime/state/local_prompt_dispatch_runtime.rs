@@ -3236,13 +3236,33 @@ impl KernelRuntimeState {
                     );
                 }
             }
-            let provider_credential_env = state
+            let mut provider_credential_env = state
                 .owned
                 .take_pending_provider_launch_credentials(&provider_run_id);
             let run = match state.owned.provider_store.get_run(&provider_run_id) {
                 Ok(run) if run.state() == crate::provider::ProviderRunState::Starting => run,
                 _ => return,
             };
+            if provider_credential_env.is_empty() {
+                match state
+                    .resolve_provider_account_credentials_for_run_with_vault(
+                        &run,
+                        "launch workflow provider run",
+                    )
+                    .await
+                {
+                    Ok(credentials) => provider_credential_env = credentials,
+                    Err(error) => {
+                        let started = crate::app::StartedProviderLaunch {
+                            run,
+                            previous_active_run_id: None,
+                            provider_credential_env,
+                        };
+                        state.fail_provider_launch(&started, &error).await;
+                        return;
+                    }
+                }
+            }
             let started = crate::app::StartedProviderLaunch {
                 run: run.clone(),
                 previous_active_run_id: None,

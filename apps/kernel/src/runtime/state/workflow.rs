@@ -202,7 +202,7 @@ impl KernelRuntimeOwnedState {
         {
             request = request.with_working_directory(working_directory);
         }
-        request = self.prepare_provider_launch_request(
+        request = self.prepare_workflow_provider_launch_request(
             request,
             self.config_projection.snapshot().runtime_mcp_url(),
         )?;

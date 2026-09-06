@@ -106,6 +106,39 @@ impl KernelRuntimeState {
             .await
     }
 
+    pub(super) async fn resolve_provider_account_credentials_for_run_with_vault(
+        &self,
+        run: &crate::provider::RuntimeProviderRun,
+        operation: &'static str,
+    ) -> Result<crate::provider::ProviderCredentialEnvironment, DaemonError> {
+        let mut request = crate::provider::LaunchProviderRequest::new(
+            run.session_id(),
+            run.adapter_key(),
+            run.provider(),
+            run.account_profile(),
+            run.model(),
+        )
+        .with_owner_user_id(run.owner_user_id().to_string());
+        if let Some(agent_id) = run.agent_instance_id() {
+            request = request.with_agent_id(agent_id.to_string());
+        }
+        let _vault_unlock = self
+            .ensure_provider_account_vault_unlocked_for_launch(&request, operation)
+            .await?;
+        let config = self.owned.config_projection.snapshot();
+        let account_owner_user_id =
+            crate::account_profile::provider_account_authority_owner_user_id(
+                &config,
+                run.owner_user_id(),
+            );
+        crate::provider::resolve_provider_account_credentials(
+            &config,
+            &account_owner_user_id,
+            run.provider(),
+            run.account_profile(),
+        )
+    }
+
     pub(crate) async fn ensure_vault_unlocked_for_command_context(
         &self,
         command: &crate::runtime::command::KernelCommand,
