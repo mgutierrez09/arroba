@@ -9,7 +9,7 @@ import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.m
 export async function runRoomOfficeWork(input) {
   const { client, requests, sessionId, agentId, options, officeRuntime } = input
   const { containerName, docker, sliceScreen, runCommandWithStdin } = officeRuntime
-  const document = `/home/slice/Documents/office-${randomUUID()}.txt`
+  const document = `/workspace/Documents/office-${randomUUID()}.txt`
   const contents = "Chariox office document\nPrepared through the graphical editor.\nGrüße from the Room.\n"
   const subject = `Office document ${randomUUID()}`
   const password = randomUUID()
@@ -63,7 +63,7 @@ export async function runRoomOfficeWork(input) {
       "apt-get -y -qq --no-install-recommends install mousepad=0.5.10-2 xterm",
       "apt-get clean", "find /var/lib/apt/lists -mindepth 1 -delete",
     ].join("\n")])
-    await command(["mkdir", "-p", "/home/slice/Documents"])
+    await command(["mkdir", "-p", "/workspace/Documents"])
     report.installed = (await command(["dpkg-query", "-W", "-f=${Package} ${Version}\n", "mousepad", "xterm"])).trim()
     const menu = await command(["cat", "/etc/xdg/openbox/menu.xml"])
     assert.match(menu, /item label="Terminal emulator">\s*<action name="Execute"><execute>x-terminal-emulator<\/execute>/,
