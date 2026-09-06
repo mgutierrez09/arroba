@@ -753,8 +753,22 @@ open_url() {
   focus_chromium
 }
 
+cleanup_failed_start() {
+  local startup_status=$?
+  trap - EXIT
+  if [[ "$startup_status" -ne 0 ]]; then
+    stop_desktop || true
+  fi
+  exit "$startup_status"
+}
+
 case "${1:-status}" in
-  start) start_desktop ;;
+  start)
+    # Keep errexit active inside start_desktop. An `if start_desktop` wrapper
+    # would suppress failures inside the function and could report success.
+    trap cleanup_failed_start EXIT
+    start_desktop
+    ;;
   stop) stop_desktop ;;
   status) status ;;
   screenshot) shift; screenshot "$@" ;;
