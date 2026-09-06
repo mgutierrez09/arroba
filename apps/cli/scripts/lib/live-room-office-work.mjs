@@ -115,6 +115,7 @@ export async function runRoomOfficeWork(input) {
     report.mailTurn = await prompt([
       "Continue in the same Room. The graphical editor document is saved. Use only Chariox runtime MCP Browser tools for this turn.",
       `Open ${origin}/mail/compose with slice_open_url. It is already signed in.`,
+      "Use slice_browser_status to find that mail tab's opaque tab_id. Call slice_browser_tab with action=activate and that tab_id so the shared desktop visibly shows Chromium. Navigation alone does not request desktop focus.",
       `Discover the To, Subject and Body fields, and fill To with ${recipient}, Subject with ${JSON.stringify(subject)}, Body with 'Attached is the graphical editor document.'.`,
       `Find the Attachment file field and use slice_browser_upload with its returned field_id and files=[${JSON.stringify(document)}].`,
       "Then find Send and submit its form exactly once. Inspect the confirmation with slice_browser_text and stop.",
@@ -133,13 +134,19 @@ export async function runRoomOfficeWork(input) {
     assert.equal(received.sha256, createHash("sha256").update(fileBytes).digest("hex"))
     const mailActions = fresh(await actions())
     const upload = mailActions.find((a) => a.kind === "upload" && a.state === "completed")
+    const activation = mailActions.find((a) => a.kind === "browser_tab_activate" && a.state === "completed")
+    assert.ok(activation && activation.sequence < upload.sequence,
+      "office mail must explicitly activate its Browser tab before uploading")
     const submits = mailActions.filter((a) => a.kind === "submit" && a.state === "completed" && a.sequence > upload.sequence)
     assert.equal(submits.length, 1, "office mail needs one attributed form submission after upload")
-    for (const action of [upload, submits[0]]) {
+    for (const action of [activation, upload, submits[0]]) {
       await input.waitForTuis(new RegExp(`^Room action #${action.sequence}: real-${options.provider} · browser ${action.kind} · completed$`))
     }
+    assert.match(await activeClass(), /Chromium/i,
+      "office mail must leave its browser visible, not minimized behind the editor")
     await input.screenshot("office-mail-sent")
-    report.mail = { received, uploadActionId: upload.action_id, submitActionId: submits[0].action_id,
+    report.mail = { received, activationActionId: activation.action_id, visibleBrowser: true,
+      uploadActionId: upload.action_id, submitActionId: submits[0].action_id,
       localTuiObserved: true, remoteTuiObserved: true, submissions: 1 }
     report.skipped = ["Web viewer projection", "real external email service", "provider save/resume", "other providers and office scenarios"]
     await phase("office-passed")
