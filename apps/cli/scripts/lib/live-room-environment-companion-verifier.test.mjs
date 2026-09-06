@@ -19,9 +19,9 @@ test(`Room companion accepts a ${hours}-hour soak budget before preparation`, as
 })
 }
 
-for (const scenario of [null, "computer", "browser", "form", "nested-frame", "shadow-root", "replace-field"]) {
+for (const scenario of [null, "computer", "browser", "form", "nested-frame", "shadow-root", "replace-field", "history-rollover"]) {
 const recovery = scenario === "replace-field"
-const form = ["form", "nested-frame", "shadow-root", "replace-field"].includes(scenario)
+const form = ["form", "nested-frame", "shadow-root", "replace-field", "history-rollover"].includes(scenario)
 const browserMutation = recovery ? "replace-field" : undefined
 const browserLayout = ["nested-frame", "shadow-root"].includes(scenario) ? scenario : undefined
 const providerMode = form ? "browser" : scenario
@@ -108,14 +108,24 @@ test(`Room companion verifier uses stable TUI baselines, provider scenario=${sce
         ...(includeProvider ? { realProvider: { provider: "codex", model: "gpt-5.4", mode: providerMode, ...(form ? { browserTask: "form", browserLayout, browserMutation } : {}) } } : {}),
       },
       client: {
-        send: async () => ({ RoomEnvironmentActionHistoryListed: { page: { actions: [action, keyboardAction, shortcutAction, replacementAction, dragAction, scrollAction,
-          ...(includeProvider ? [providerAction] : []), ...(form ? [fillAction] : []), ...(recovery ? [replaceAction, staleAction] : [])] } } }),
+        send: async ({ before }) => {
+          const early = [...(includeProvider ? [providerAction] : []), ...(form ? [fillAction] : []), ...(recovery ? [replaceAction, staleAction] : [])]
+          const recent = [action, keyboardAction, shortcutAction, replacementAction, dragAction, scrollAction]
+          if (scenario === "history-rollover") {
+            return { RoomEnvironmentActionHistoryListed: { page: before == null ? {
+              actions: [...Array.from({ length: 94 }, (_, index) => ({ action_id: `soak-${index}`, sequence: 1000 - index,
+                actor_id: "user:soak", kind: "browser_history_reload", state: "completed" })), ...recent],
+              next_before_sequence: 7,
+            } : { actions: early, next_before_sequence: null } } }
+          }
+          return { RoomEnvironmentActionHistoryListed: { page: { actions: [...recent, ...early] } } }
+        },
       },
       observerClient: {
         send: async () => ({ RoomEnvironmentState: { environment: { input_ownership: [] } } }),
       },
       requests: {
-        listRoomEnvironmentActionHistoryRequest: () => ({}),
+        listRoomEnvironmentActionHistoryRequest: (_session, before) => ({ before }),
         getRoomEnvironmentStateRequest: () => ({}),
       },
       activityController: { synchronize: async () => true },

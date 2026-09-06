@@ -3,6 +3,7 @@ import path from "node:path"
 import { assertRoomRealProviderAction, assertRoomBrowserFormActions } from "./live-room-real-provider.mjs"
 import { assertRoomBrowserRecoveryActions } from "./live-room-browser-recovery.mjs"
 import { roomDrillCompanionTimeoutMs } from "./room-drill-companion-budget.mjs"
+import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
 
 import {
   publishRoomDrillCompanionReady,
@@ -69,14 +70,14 @@ export async function runRoomEnvironmentCompanion(input) {
     await input.waitForPhysicalEffect("WEB_DRAG_SELECTION_OK WINDOW_GEOMETRY_STABLE")
     await input.waitForPhysicalEffect("WEB_SCROLL_BOTH_AXES_OK")
   }
-  const history = unwrap(
+  const history = await readRoomDrillActionHistory(async (before, limit) => unwrap(
     await input.client.send(input.requests.listRoomEnvironmentActionHistoryRequest(
       input.ready.sessionId,
-      null,
-      100,
+      before,
+      limit,
     )),
     "RoomEnvironmentActionHistoryListed",
-  ).page.actions
+  ).page)
   const webAction = history.find((action) => action.action_id === companion.actionId)
   assert.ok(webAction, `Web companion action ${companion.actionId} was absent from kernel history`)
   assert.equal(webAction.actor_id, companion.actorId)
