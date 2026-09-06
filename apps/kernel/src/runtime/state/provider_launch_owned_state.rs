@@ -143,8 +143,16 @@ impl KernelRuntimeOwnedState {
                 &request.provider,
                 &profile.profile_id,
             )?;
+            let provider_credential_env = crate::provider::resolve_provider_account_credentials(
+                &config,
+                &account_owner_user_id,
+                &request.provider,
+                &profile.profile_id,
+            )?;
             request.account_profile = profile.profile_id;
-            request = request.with_provider_account_env(provider_account_env);
+            request = request
+                .with_provider_account_env(provider_account_env)
+                .with_provider_credential_env(provider_credential_env);
         }
         let effective_config =
             crate::session::effective_agent_execution_config(&session, agent.as_ref());

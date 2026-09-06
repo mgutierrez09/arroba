@@ -52,7 +52,7 @@ impl KernelRuntimeOwnedState {
 
     pub(super) fn start_provider_launch(
         &self,
-        request: crate::provider::LaunchProviderRequest,
+        mut request: crate::provider::LaunchProviderRequest,
     ) -> Result<crate::app::StartedProviderLaunch, DaemonError> {
         let session_id = request.session_id.clone();
         let active_run_id = self
@@ -106,12 +106,14 @@ impl KernelRuntimeOwnedState {
             }
         }
 
+        let provider_credential_env = std::mem::take(&mut request.provider_credential_env);
         let outcome = self.provider_store.start_run_provider_only(request)?;
         self.session_store
             .set_active_provider_run(&session_id, Some(outcome.run().id().to_string()))?;
         Ok(crate::app::StartedProviderLaunch {
             run: outcome.into_run(),
             previous_active_run_id,
+            provider_credential_env,
         })
     }
 

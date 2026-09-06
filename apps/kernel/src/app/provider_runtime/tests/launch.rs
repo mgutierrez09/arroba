@@ -217,6 +217,7 @@ async fn provider_launch_failure_retries_durable_resume_invalidation_automatical
     let started = StartedProviderLaunch {
         run: run.clone(),
         previous_active_run_id: None,
+        provider_credential_env: Default::default(),
     };
     let resume_error = DaemonError::ProviderProtocol {
         provider_run_id: run.id().to_string(),
@@ -348,6 +349,7 @@ fn provider_launch_failure_cleans_failed_run_after_resume_was_superseded() {
     let started = StartedProviderLaunch {
         run: run.clone(),
         previous_active_run_id: None,
+        provider_credential_env: Default::default(),
     };
     let resume_error = DaemonError::ProviderProtocol {
         provider_run_id: run.id().to_string(),

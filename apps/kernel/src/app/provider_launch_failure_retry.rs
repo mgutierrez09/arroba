@@ -173,6 +173,7 @@ mod tests {
                 },
             ),
             previous_active_run_id: None,
+            provider_credential_env: Default::default(),
         }
     }
 

@@ -25,6 +25,7 @@ pub struct ClaudeRuntimeState {
     pub(super) program: String,
     pub(super) args: Vec<String>,
     pub(super) env: BTreeMap<String, String>,
+    pub(super) provider_credential_env: crate::provider::ProviderCredentialEnvironment,
     pub(super) env_remove: Vec<String>,
     pub(super) working_directory: Option<PathBuf>,
     pub(super) context_file: Option<PathBuf>,

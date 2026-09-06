@@ -66,5 +66,5 @@ pub use waiting_room::*;
 pub use workflow::*;
 pub use workspace::*;
 
-/// Version 306 adds authenticated human Room browser tab lifecycle actions.
-pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 306;
+/// Version 307 adds the provider-launch credential use and injection policy.
+pub const LOCAL_DAEMON_PROTOCOL_VERSION: u32 = 307;

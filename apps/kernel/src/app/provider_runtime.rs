@@ -59,7 +59,10 @@ impl DaemonApp {
             self.providers
                 .mark_workflow_fresh_context(started.run.id(), workflow_node_run_id)?;
         }
-        let binding = match ProviderProcessService::initialize_runtime_binding(&started.run) {
+        let binding = match ProviderProcessService::initialize_runtime_binding_with_credentials(
+            &started.run,
+            &started.provider_credential_env,
+        ) {
             Ok(binding) => binding,
             Err(error) => {
                 self.fail_provider_launch(&started, &error);
@@ -133,7 +136,10 @@ impl DaemonApp {
             }),
         );
         if run.endpoint_mode() == AgentEndpointMode::Managed {
-            if let Err(error) = self.pty.spawn_for_run(&run) {
+            if let Err(error) = self
+                .pty
+                .spawn_for_run_with_credentials(&run, &started.provider_credential_env)
+            {
                 crate::logging::error_with_fields(
                     "daemon.app",
                     "PTY spawn failed for provider run",
@@ -451,7 +457,10 @@ impl DaemonApp {
         } else {
             self.start_provider_launch(request)?
         };
-        let binding = match ProviderProcessService::initialize_runtime_binding(&started.run) {
+        let binding = match ProviderProcessService::initialize_runtime_binding_with_credentials(
+            &started.run,
+            &started.provider_credential_env,
+        ) {
             Ok(binding) => binding,
             Err(error) => {
                 self.fail_provider_launch(&started, &error);
@@ -478,6 +487,7 @@ impl DaemonApp {
         workflow_tools_enabled: bool,
     ) -> Result<RuntimeProviderRun, DaemonError> {
         request = self.prepare_app_provider_launch_request(request, "launch provider run")?;
+        let provider_credential_env = std::mem::take(&mut request.provider_credential_env);
         let initial_run = self.providers.launch_run_detached(request)?;
         let run_id = initial_run.id().to_string();
         let launch_result = (|| {
@@ -487,10 +497,12 @@ impl DaemonApp {
             }
             self.update_provider_run_projection(run.clone());
             if run.endpoint_mode() == AgentEndpointMode::Managed {
-                self.pty.spawn_for_run(&run)?;
+                self.pty
+                    .spawn_for_run_with_credentials(&run, &provider_credential_env)?;
                 ProviderProcessTracker::new(self).register_managed_run(&run)?;
             }
-            self.providers.initialize_runtime(&run)?;
+            self.providers
+                .initialize_runtime_with_credentials(&run, &provider_credential_env)?;
             let run = self.providers.get_run(run.id())?;
             self.sessions
                 .set_active_provider_run(run.session_id(), Some(run.id().to_string()))?;
@@ -518,6 +530,7 @@ impl DaemonApp {
                     .get_run(&run_id)
                     .unwrap_or_else(|_| initial_run.clone()),
                 previous_active_run_id: None,
+                provider_credential_env: Default::default(),
             };
             self.fail_provider_launch(&started, error);
         }

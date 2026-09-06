@@ -3,7 +3,7 @@ use crate::local::{BindRoomEnvironmentSliceRequest, RoomEnvironmentSliceBinding}
 
 #[test]
 fn room_environment_placement_shapes_are_versioned() {
-    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 306);
+    assert_eq!(LOCAL_DAEMON_PROTOCOL_VERSION, 307);
     let request = LocalDaemonRequest::BindRoomEnvironmentSlice(BindRoomEnvironmentSliceRequest {
         session_id: "session-1".into(),
         slice_ref: "desktop".into(),

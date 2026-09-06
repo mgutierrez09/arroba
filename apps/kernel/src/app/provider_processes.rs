@@ -26,10 +26,23 @@ impl<'a> ProviderLaunchProcessRuntime<'a> {
     }
 
     pub(crate) fn spawn_for_launch(&mut self, run: &RuntimeProviderRun) -> Result<(), DaemonError> {
+        self.spawn_for_launch_with_credentials(
+            run,
+            &crate::provider::ProviderCredentialEnvironment::default(),
+        )
+    }
+
+    pub(crate) fn spawn_for_launch_with_credentials(
+        &mut self,
+        run: &RuntimeProviderRun,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
+    ) -> Result<(), DaemonError> {
         if run.endpoint_mode() != AgentEndpointMode::Managed {
             return Ok(());
         }
-        self.app.pty.spawn_for_run(run)?;
+        self.app
+            .pty
+            .spawn_for_run_with_credentials(run, credentials)?;
         ProviderProcessTracker::new(self.app).register_managed_run(run)
     }
 

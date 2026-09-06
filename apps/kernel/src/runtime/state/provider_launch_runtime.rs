@@ -50,7 +50,8 @@ impl KernelRuntimeState {
             );
             if let Err(error) = self
                 .with_app_side_effect(|app| {
-                    crate::app::ProviderLaunchProcessRuntime::new(app).spawn_for_launch(&run)
+                    crate::app::ProviderLaunchProcessRuntime::new(app)
+                        .spawn_for_launch_with_credentials(&run, &started.provider_credential_env)
                 })
                 .await
             {
@@ -87,8 +88,12 @@ impl KernelRuntimeState {
                 tokio::time::sleep(std::time::Duration::from_millis(runtime_init_delay_ms)).await;
             }
             let run = started.run.clone();
+            let provider_credential_env = started.provider_credential_env.clone();
             let binding = tokio::task::spawn_blocking(move || {
-                crate::provider::ProviderProcessService::initialize_runtime_binding(&run)
+                crate::provider::ProviderProcessService::initialize_runtime_binding_with_credentials(
+                    &run,
+                    &provider_credential_env,
+                )
             })
             .await
             .map_err(|error| DaemonError::LocalTransport {
@@ -274,7 +279,8 @@ impl KernelRuntimeState {
             );
             if let Err(error) = self
                 .with_app_side_effect(|app| {
-                    crate::app::ProviderLaunchProcessRuntime::new(app).spawn_for_launch(&run)
+                    crate::app::ProviderLaunchProcessRuntime::new(app)
+                        .spawn_for_launch_with_credentials(&run, &started.provider_credential_env)
                 })
                 .await
             {

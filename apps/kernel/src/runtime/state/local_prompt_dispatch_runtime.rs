@@ -858,6 +858,7 @@ mod tests {
                 &crate::app::StartedProviderLaunch {
                     run: provider_run,
                     previous_active_run_id: None,
+                    provider_credential_env: Default::default(),
                 },
                 &DaemonError::LocalTransport {
                     operation: "initialize workflow provider runtime",
@@ -3133,6 +3134,7 @@ impl KernelRuntimeState {
             let started = crate::app::StartedProviderLaunch {
                 run: run.clone(),
                 previous_active_run_id: None,
+                provider_credential_env: Default::default(),
             };
             let spawn_result = state
                 .with_app_side_effect(|app| {

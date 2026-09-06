@@ -147,6 +147,17 @@ impl PtyManager {
     }
 
     pub fn spawn_for_run(&mut self, run: &RuntimeProviderRun) -> Result<(), DaemonError> {
+        self.spawn_for_run_with_credentials(
+            run,
+            &crate::provider::ProviderCredentialEnvironment::default(),
+        )
+    }
+
+    pub(crate) fn spawn_for_run_with_credentials(
+        &mut self,
+        run: &RuntimeProviderRun,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
+    ) -> Result<(), DaemonError> {
         if let Some(process_key) = self.process_aliases.get(run.id()) {
             self.output_signal.prefer_alias(process_key, run.id());
             return Ok(());
@@ -190,10 +201,21 @@ impl PtyManager {
             rows: 40,
         };
 
-        self.spawn(request)
+        self.spawn_with_credentials(request, credentials)
     }
 
     pub fn spawn(&mut self, request: PtySpawnRequest) -> Result<(), DaemonError> {
+        self.spawn_with_credentials(
+            request,
+            &crate::provider::ProviderCredentialEnvironment::default(),
+        )
+    }
+
+    fn spawn_with_credentials(
+        &mut self,
+        request: PtySpawnRequest,
+        credentials: &crate::provider::ProviderCredentialEnvironment,
+    ) -> Result<(), DaemonError> {
         if let Some(process_key) = self.process_aliases.get(&request.provider_run_id) {
             self.output_signal
                 .prefer_alias(process_key, &request.provider_run_id);
@@ -235,6 +257,9 @@ impl PtyManager {
             command.env_remove(key);
         }
         for (key, value) in request.env {
+            command.env(key, value);
+        }
+        for (key, value) in credentials.iter() {
             command.env(key, value);
         }
         if let Some(working_directory) = request.working_directory {
