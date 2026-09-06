@@ -7,6 +7,14 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  assertBrowserComputerEvidencePath,
+  assertBrowserComputerPreflight,
+  collectBrowserComputerResourceSnapshot,
+  defaultBrowserComputerEvidenceDir,
+  evaluateBrowserComputerCleanup,
+  parseBrowserComputerByteBudget,
+} from "./lib/browser-computer-drill-guard.mjs"
 import { finalizeDrillArtifacts } from "./lib/drill-artifacts.mjs"
 import { resolveBuiltBinary } from "./lib/drill-runtime-helpers.mjs"
 
@@ -14,7 +22,8 @@ const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(cliRoot, "..", "..")
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
 const runId = `m20-docker-state-${process.pid}-${stamp}`
-const artifactDir = process.env.M20_ARTIFACT_DIR ?? path.join(repoRoot, ".artifacts", "m20-docker-slice-browser-state", stamp)
+const artifactDir = process.env.M20_ARTIFACT_DIR ?? defaultBrowserComputerEvidenceDir(runId)
+assertBrowserComputerEvidencePath(artifactDir, [repoRoot])
 const tempRoot = path.join(os.tmpdir(), runId)
 const kernelPort = Number.parseInt(process.env.M20_KERNEL_PORT ?? "", 10) || 55000 + Math.floor(Math.random() * 2000)
 const kernelUrl = `ws://127.0.0.1:${kernelPort}/kernel`
@@ -38,21 +47,75 @@ let requests = null
 let slice = null
 let fixture = null
 let fixturePort = null
+let resourceBefore = null
+let resourceAfter = null
+let resourcePreflight = null
+let cleanupResult = null
+let failure = null
 
 await mkdir(artifactDir, { recursive: true })
 await mkdir(tempRoot, { recursive: true })
 
 try {
+  log("checking Docker")
+  await assertDockerReady()
+  log("recording local resources and checking the operation budget")
+  resourceBefore = await collectBrowserComputerResourceSnapshot({
+    runCommand,
+    filesystemPath: artifactDir,
+  })
+  resourcePreflight = assertBrowserComputerPreflight(resourceBefore, {
+    allowExistingHeadedSlices: process.env.M20_ALLOW_EXISTING_SLICES === "1",
+    requiredMemoryBytes: parseBrowserComputerByteBudget(process.env.M20_REQUIRED_MEMORY_BYTES),
+    requiredDiskBytes: parseBrowserComputerByteBudget(process.env.M20_REQUIRED_DISK_BYTES),
+  })
+  for (const warning of resourcePreflight.warnings) log(warning)
+  await writeFile(path.join(artifactDir, "resources-before.json"), `${JSON.stringify({
+    snapshot: resourceBefore,
+    preflight: resourcePreflight,
+  }, null, 2)}\n`)
   await run()
-  await writeManifest(true)
-  console.log(`M20_DOCKER_SLICE_BROWSER_STATE_PASS ${JSON.stringify({ artifactDir, screenshots, markers })}`)
 } catch (error) {
-  await writeManifest(false, error)
+  failure = error
+} finally {
+  await cleanup().catch((error) => {
+    failure ??= error
+  })
+  if (resourceBefore) {
+    try {
+      resourceAfter = await collectBrowserComputerResourceSnapshot({
+        runCommand,
+        filesystemPath: artifactDir,
+      })
+      cleanupResult = await evaluateBrowserComputerCleanup({
+        before: resourceBefore,
+        after: resourceAfter,
+        ownedContainers: [containerName],
+        ownedVolumes: [homeVolume],
+        tempRoots: [tempRoot],
+        childProcesses: children,
+        allowRetainedResources: process.env.M20_KEEP_RESOURCES === "1",
+      })
+      await writeFile(path.join(artifactDir, "resources-after.json"), `${JSON.stringify({
+        snapshot: resourceAfter,
+        cleanup: cleanupResult,
+      }, null, 2)}\n`)
+      if (!cleanupResult.ok) {
+        failure ??= new Error(`browser/computer drill cleanup failed:\n- ${cleanupResult.violations.join("\n- ")}`)
+      }
+    } catch (error) {
+      failure ??= error
+    }
+  }
+  await writeManifest(failure === null, failure)
+}
+
+if (failure) {
   await finalizeDrillArtifacts({
     rootDir: artifactDir,
     passed: false,
     preserveOnFailure: true,
-    failure: error,
+    failure,
     metadata: {
       drill: "docker-slice-browser-state",
       artifactDir,
@@ -63,18 +126,17 @@ try {
       fixturePort,
       markers,
       screenshots,
+      cleanup: cleanupResult,
     },
     log,
   })
-  console.error(error?.stack ?? String(error))
+  console.error(failure?.stack ?? String(failure))
   process.exitCode = 1
-} finally {
-  await cleanup()
+} else {
+  console.log(`M20_DOCKER_SLICE_BROWSER_STATE_PASS ${JSON.stringify({ artifactDir, screenshots, markers, cleanup: cleanupResult })}`)
 }
 
 async function run() {
-  log("checking Docker")
-  await assertDockerReady()
   log("writing disposable config")
   await seedConfig()
   log("starting local webmail fixture")
@@ -487,6 +549,7 @@ function start(label, command, args, options = {}) {
     env: options.env ?? process.env,
     stdio: ["ignore", "pipe", "pipe"],
   })
+  child.drillLabel = label
   children.push(child)
   child.stdout.on("data", (chunk) => process.stdout.write(`[${label}] ${chunk}`))
   child.stderr.on("data", (chunk) => process.stderr.write(`[${label}] ${chunk}`))
@@ -559,15 +622,9 @@ async function cleanup() {
     await removeContainerAndHomeVolume().catch(() => undefined)
     await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined)
   }
-  client?.close?.()
-  fixture?.server?.close?.()
-  for (const child of children.toReversed()) {
-    if (!child.killed) child.kill("SIGTERM")
-  }
-  await sleep(1000)
-  for (const child of children) {
-    if (!child.killed) child.kill("SIGKILL")
-  }
+  if (client?.close) await client.close().catch(() => undefined)
+  await closeServer(fixture?.server)
+  for (const child of children.toReversed()) await stopChild(child)
 }
 
 async function writeManifest(ok, error = null) {
@@ -580,6 +637,10 @@ async function writeManifest(ok, error = null) {
     fixturePort,
     markers,
     screenshots,
+    resourceBefore,
+    resourceAfter,
+    resourcePreflight,
+    cleanupResult,
   }, null, 2))
 }
 
@@ -637,6 +698,27 @@ async function waitFor(predicate, timeoutMs, message) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function closeServer(server) {
+  if (!server?.listening) return
+  await new Promise((resolve) => server.close(resolve))
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  child.kill("SIGTERM")
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    sleep(3_000),
+  ])
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL")
+    await Promise.race([
+      new Promise((resolve) => child.once("exit", resolve)),
+      sleep(2_000),
+    ])
+  }
 }
 
 function escapeHtml(value) {

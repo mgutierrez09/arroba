@@ -8,6 +8,22 @@ The immediate product requirement is that a user or agent can log into services 
 
 This milestone is not a substrate bakeoff. Docker is the required implementation path for slice saved state. Any failure in the drills must be treated as a Docker slice persistence bug or an external-service policy issue to root-cause, not as a reason to switch substrates.
 
+## Local resource checks
+
+The local drill records available memory, disk, and Docker inventory. It does
+not reject work because of a fixed free-space or free-memory percentage.
+Before a heavy run, estimate its additional peak resource use and recovery
+reserve from previous measurements or a conservative first-run estimate. Pass
+those byte budgets as `M20_REQUIRED_MEMORY_BYTES` and `M20_REQUIRED_DISK_BYTES`.
+The drill rejects an operation whose supplied budget exceeds available capacity.
+
+If a budget is omitted, the drill reports a warning and records resources for
+observation; a passing check is not proof that an unestimated workload will fit.
+Actual zero available memory or disk still fails. Run builds and headed slices
+serially, monitor during execution, and stop only an operation that presents a
+credible exhaustion risk. Keep build caches and runtime state outside the
+repository. The existing single-slice default and cleanup checks remain in force.
+
 ## Working Hypothesis
 
 Docker may be sufficient if Chariox preserves the correct browser and OS identity state. A simple container image commit is not enough when important state is stored in bind mounts, volumes, tmpfs, keyrings, or runtime-only browser profile directories.
