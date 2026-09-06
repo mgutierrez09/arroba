@@ -58,6 +58,88 @@ impl std::fmt::Debug for ProviderCredentialEnvironment {
 }
 
 #[cfg(test)]
+#[derive(Default)]
+struct ProviderCredentialDeliveryProbeState {
+    expected: ProviderCredentialEnvironment,
+    observations: BTreeMap<&'static str, bool>,
+}
+
+#[cfg(test)]
+fn provider_credential_delivery_probes(
+) -> &'static std::sync::Mutex<BTreeMap<String, ProviderCredentialDeliveryProbeState>> {
+    static PROBES: std::sync::OnceLock<
+        std::sync::Mutex<BTreeMap<String, ProviderCredentialDeliveryProbeState>>,
+    > = std::sync::OnceLock::new();
+    PROBES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
+pub(crate) struct ProviderCredentialDeliveryProbe {
+    provider_run_id: String,
+}
+
+#[cfg(test)]
+impl ProviderCredentialDeliveryProbe {
+    pub(crate) fn install(provider_run_id: &str, expected: &[(&str, &str)]) -> Self {
+        let mut environment = ProviderCredentialEnvironment::default();
+        for (name, value) in expected {
+            environment.insert(*name, Zeroizing::new((*value).to_string()));
+        }
+        provider_credential_delivery_probes()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                provider_run_id.to_string(),
+                ProviderCredentialDeliveryProbeState {
+                    expected: environment,
+                    observations: BTreeMap::new(),
+                },
+            );
+        Self {
+            provider_run_id: provider_run_id.to_string(),
+        }
+    }
+
+    pub(crate) fn observed_exactly(&self, stage: &'static str) -> bool {
+        provider_credential_delivery_probes()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.provider_run_id)
+            .and_then(|probe| probe.observations.get(stage))
+            .copied()
+            .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+impl Drop for ProviderCredentialDeliveryProbe {
+    fn drop(&mut self) {
+        provider_credential_delivery_probes()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.provider_run_id);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn record_provider_credential_delivery_for_test(
+    provider_run_id: &str,
+    stage: &'static str,
+    credentials: &ProviderCredentialEnvironment,
+) -> bool {
+    let mut probes = provider_credential_delivery_probes()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(probe) = probes.get_mut(provider_run_id) else {
+        return false;
+    };
+    probe
+        .observations
+        .insert(stage, credentials == &probe.expected);
+    true
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

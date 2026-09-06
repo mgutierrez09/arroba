@@ -43,6 +43,14 @@ impl ProviderProcessService {
         run: &RuntimeProviderRun,
         credentials: &crate::provider::ProviderCredentialEnvironment,
     ) -> Result<Option<ProviderRuntimeBinding>, DaemonError> {
+        #[cfg(test)]
+        if crate::provider::record_provider_credential_delivery_for_test(
+            run.id(),
+            "runtime_binding",
+            credentials,
+        ) {
+            return Ok(None);
+        }
         // Cold prompt launches can reach this synchronous provider handshake
         // from an async worker. The provider calls back into this kernel's MCP
         // server during initialization, so yield the worker while waiting.

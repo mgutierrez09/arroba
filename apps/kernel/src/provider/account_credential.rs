@@ -57,6 +57,29 @@ pub(crate) fn resolve_provider_account_credentials(
     Ok(environment)
 }
 
+pub(crate) fn resolve_provider_account_credentials_for_launch(
+    config: &DaemonConfig,
+    profiles: &crate::account_profile::ProviderAccountProfileRegistry,
+    owner_user_id: &str,
+    provider: &str,
+    profile_id: &str,
+    client_interface: crate::provider::ProviderClientInterface,
+) -> Result<ProviderCredentialEnvironment, DaemonError> {
+    let environment =
+        resolve_provider_account_credentials(config, owner_user_id, provider, profile_id)?;
+    if !environment.is_empty()
+        || crate::provider::canonical_provider_family(provider) != Some("claude")
+        || client_interface == crate::provider::ProviderClientInterface::NativeTui
+        || profiles.has_portable_claude_credentials(owner_user_id, profile_id)?
+    {
+        return Ok(environment);
+    }
+    Err(DaemonError::InvalidConfig {
+        field: "provider account credential",
+        message: "unattended Claude launch requires a Chariox-vault setup token or a portable provider-native credential; use `provider setup-token claude <account-profile>` or launch the native Claude TUI to sign in interactively",
+    })
+}
+
 fn canonical_label(provider: &str) -> &'static str {
     crate::provider::canonical_provider_family(provider).unwrap_or("provider")
 }

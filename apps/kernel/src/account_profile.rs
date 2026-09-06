@@ -1036,6 +1036,33 @@ impl ProviderAccountProfileRegistry {
         Ok(environment)
     }
 
+    pub(crate) fn has_portable_claude_credentials(
+        &self,
+        owner_user_id: &str,
+        profile_id: &str,
+    ) -> Result<bool, DaemonError> {
+        let locator = {
+            let document = self.read_document()?;
+            resolve_stored_profile(&document, owner_user_id, "claude", profile_id)?
+                .locator
+                .clone()
+        };
+        let ProviderAccountLocator::Claude {
+            claude_config_dir, ..
+        } = locator
+        else {
+            return Ok(false);
+        };
+        let credentials = read_bounded_regular_file_no_follow(
+            &claude_config_dir.join(".credentials.json"),
+            MAX_MATERIALIZATION_BYTES,
+            ".credentials.json",
+        )?;
+        Ok(credentials
+            .as_deref()
+            .is_some_and(claude_credentials_are_portable))
+    }
+
     pub fn create_managed(
         &self,
         owner_user_id: &str,

@@ -9,6 +9,10 @@ mod codex_client;
 mod codex_runtime;
 mod command_catalog;
 mod credential_environment;
+#[cfg(test)]
+pub(crate) use credential_environment::{
+    record_provider_credential_delivery_for_test, ProviderCredentialDeliveryProbe,
+};
 mod executable_resolution;
 mod external_observation;
 mod launch_contract;
@@ -30,7 +34,7 @@ mod workspace_write_fence;
 
 #[cfg(test)]
 pub(crate) use account_credential::provider_account_credential_id;
-pub(crate) use account_credential::resolve_provider_account_credentials;
+pub(crate) use account_credential::resolve_provider_account_credentials_for_launch;
 pub(crate) use claude::ensure_claude_native_hidden_context_fits;
 pub(crate) use claude::probe_claude_account_usage;
 pub use claude::{claude_provider_catalog, plan_claude_launch, resolve_claude_executable};

@@ -486,19 +486,32 @@ mod tests {
             )
             .expect("workflow provider should start");
         assert!(retired_provider_run_id.is_none());
-        let credentials = runtime
-            .owned
-            .take_pending_provider_launch_credentials(&provider_run_id);
-        assert_eq!(
-            credentials.iter().collect::<Vec<_>>(),
-            vec![("CLAUDE_CODE_OAUTH_TOKEN", "workflow-setup-token")]
+        let credential_probe = crate::provider::ProviderCredentialDeliveryProbe::install(
+            &provider_run_id,
+            &[("CLAUDE_CODE_OAUTH_TOKEN", "workflow-setup-token")],
         );
-        let pty_credentials = credentials.clone();
-        let structured_credentials = credentials.clone();
-        assert_eq!(
-            pty_credentials.iter().collect::<Vec<_>>(),
-            structured_credentials.iter().collect::<Vec<_>>()
-        );
+        let mut dispatches = WorkflowPromptDispatches::default();
+        dispatches
+            .starting_provider_runs
+            .push(provider_run_id.clone());
+        runtime.spawn_workflow_prompt_dispatches(dispatches);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if runtime
+                    .owned
+                    .provider_store
+                    .get_run(&provider_run_id)
+                    .is_ok_and(|run| run.state() == crate::provider::ProviderRunState::Running)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached workflow launch should finish");
+        assert!(credential_probe.observed_exactly("pty_spawn"));
+        assert!(credential_probe.observed_exactly("runtime_binding"));
         assert!(runtime
             .owned
             .take_pending_provider_launch_credentials(&provider_run_id)

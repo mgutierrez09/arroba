@@ -62,12 +62,15 @@ impl DaemonApp {
                 &request.provider,
                 &profile.profile_id,
             )?;
-            let provider_credential_env = crate::provider::resolve_provider_account_credentials(
-                &self.config,
-                &account_owner_user_id,
-                &request.provider,
-                &profile.profile_id,
-            )?;
+            let provider_credential_env =
+                crate::provider::resolve_provider_account_credentials_for_launch(
+                    &self.config,
+                    &self.provider_account_profiles,
+                    &account_owner_user_id,
+                    &request.provider,
+                    &profile.profile_id,
+                    request.client_interface,
+                )?;
             request.account_profile = profile.profile_id;
             request = request
                 .with_provider_account_env(provider_account_env)

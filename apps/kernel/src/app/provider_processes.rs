@@ -37,6 +37,14 @@ impl<'a> ProviderLaunchProcessRuntime<'a> {
         run: &RuntimeProviderRun,
         credentials: &crate::provider::ProviderCredentialEnvironment,
     ) -> Result<(), DaemonError> {
+        #[cfg(test)]
+        if crate::provider::record_provider_credential_delivery_for_test(
+            run.id(),
+            "pty_spawn",
+            credentials,
+        ) {
+            return Ok(());
+        }
         if run.endpoint_mode() != AgentEndpointMode::Managed {
             return Ok(());
         }

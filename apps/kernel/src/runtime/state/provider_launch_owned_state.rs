@@ -143,12 +143,15 @@ impl KernelRuntimeOwnedState {
                 &request.provider,
                 &profile.profile_id,
             )?;
-            let provider_credential_env = crate::provider::resolve_provider_account_credentials(
-                &config,
-                &account_owner_user_id,
-                &request.provider,
-                &profile.profile_id,
-            )?;
+            let provider_credential_env =
+                crate::provider::resolve_provider_account_credentials_for_launch(
+                    &config,
+                    &self.provider_account_profiles,
+                    &account_owner_user_id,
+                    &request.provider,
+                    &profile.profile_id,
+                    request.client_interface,
+                )?;
             request.account_profile = profile.profile_id;
             request = request
                 .with_provider_account_env(provider_account_env)
@@ -350,6 +353,77 @@ mod tests {
                 .any(|existing| existing == name));
         }
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn unattended_claude_launch_requires_portable_or_vaulted_credentials() {
+        let _env = crate::env_lock::lock();
+        let root = std::env::temp_dir().join(format!(
+            "chariox-owned-missing-claude-credential-{}-{}",
+            std::process::id(),
+            crate::session::unix_epoch_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root should exist");
+        std::env::set_var("CHARIOX_HOME", &root);
+        let mut app = crate::app::DaemonApp::bootstrap(
+            crate::config::DaemonConfig::for_tests()
+                .with_session_history_root(root.join("session-history")),
+        )
+        .expect("daemon bootstrap");
+        let (session, _default_agent) = crate::app::KernelSessionService::new(&mut app)
+            .create_session(crate::session::CreateSessionRequest::new(
+                root.to_string_lossy(),
+                root.to_string_lossy(),
+            ))
+            .expect("session should create");
+        let profile = app
+            .provider_account_profile_registry()
+            .create_managed(
+                crate::session::DEFAULT_LOCAL_USER_ID,
+                "claude",
+                "Missing Claude credential",
+            )
+            .expect("managed Claude profile should create");
+        let agent = crate::app::KernelSessionService::new(&mut app)
+            .spawn_agent(
+                crate::agent::CreateAgentRequest::new(session.id(), "claude")
+                    .with_account_profile(profile.profile_id.clone()),
+            )
+            .expect("Claude agent should create");
+
+        let app = Arc::new(Mutex::new(app));
+        let runtime = owned_runtime_state(&app).await;
+        let request = crate::provider::LaunchProviderRequest::new(
+            session.id(),
+            "claude",
+            "claude",
+            &profile.profile_id,
+            "claude-sonnet",
+        )
+        .with_agent_id(agent.id());
+        let error = runtime
+            .owned
+            .prepare_provider_launch_request(
+                request.clone(),
+                "http://127.0.0.1:43120/mcp".to_string(),
+            )
+            .expect_err("unattended launch without credentials must fail before spawn");
+        assert!(error
+            .to_string()
+            .contains("unattended Claude launch requires"));
+
+        let foreground = runtime
+            .owned
+            .prepare_provider_launch_request(
+                request.with_client_interface(crate::provider::ProviderClientInterface::NativeTui),
+                "http://127.0.0.1:43120/mcp".to_string(),
+            )
+            .expect("native Claude TUI must remain available for interactive sign-in");
+        assert!(foreground.provider_credential_env.is_empty());
+
+        std::env::remove_var("CHARIOX_HOME");
         let _ = std::fs::remove_dir_all(root);
     }
 
