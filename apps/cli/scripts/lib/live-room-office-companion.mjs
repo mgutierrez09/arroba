@@ -54,9 +54,10 @@ export async function verifyRoomOfficeCompanion(input, companion, evidence) {
   assertRoomRealProviderAction(actions[0], "computer")
   assert.equal(actions[1].arguments?.utf8_byte_count, 86)
   for (let i = 1; i < actions.length; i++) assert.ok(actions[i].sequence > actions[i - 1].sequence, "office action order differs")
-  const tab = actions[2].targets?.[0]
+  const tab = actions[3].targets?.[0]
   assert.ok(tab?.kind === "browser_tab" && typeof tab.id === "string" && tab.id)
-  for (const action of actions.slice(2)) assert.deepEqual(action.targets, [tab], "office actions must target the same mail tab")
+  assert.deepEqual(actions[2].targets, [{ kind: "desktop" }, tab], "office activation must reserve the desktop and same mail tab")
+  for (const action of actions.slice(3)) assert.deepEqual(action.targets, [tab], "office actions must target the same mail tab")
   const tuiEvidence = await verifyRoomCompanionTuis(input, actions, evidence)
   const response = await input.observerClient.send(input.requests.getRoomEnvironmentStateRequest(input.ready.sessionId))
   assert.ok(Array.isArray(response?.RoomEnvironmentState?.environment?.input_ownership))

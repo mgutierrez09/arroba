@@ -18,7 +18,6 @@ export function roomRealProviderOptions(env) {
   assert.ok(["computer", "browser"].includes(mode), "select Browser or Computer provider mode")
   const computerTask = env.CHARIOX_ROOM_DRILL_COMPUTER_TASK
   assert.ok(computerTask === undefined || (computerTask === "office" && mode === "computer"), "invalid Computer task")
-  assert.ok(computerTask === undefined || !web, "office work currently requires the standalone provider drill")
   const browserTask = env.CHARIOX_ROOM_DRILL_BROWSER_TASK
   assert.ok(browserTask === undefined || mode === "browser", "Browser task requires Browser mode")
   assert.ok(browserTask === undefined || ["click", "form"].includes(browserTask), "invalid Browser task")

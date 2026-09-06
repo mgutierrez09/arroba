@@ -553,7 +553,9 @@ async function run() {
       sessionId,
       sliceId: slice.id,
       environmentId: released.environment_id,
-      coverage: `Web display and pointer input${companionResult.keyboard ? " and Unicode typing" : ""}${companionResult.keyboard?.replacement ? ", select-all and native IME replacement" : ""}${companionResult.gestures ? ", physical text-selection drag and two-axis scroll" : ""} with local and remote TUI observation`,
+      coverage: companionResult.office
+        ? "Official provider edits and saves a graphical document, activates the mail tab, uploads and submits once; actual desktop matched in Web and actions observed in local and remote TUIs"
+        : `Web display and pointer input${companionResult.keyboard ? " and Unicode typing" : ""}${companionResult.keyboard?.replacement ? ", select-all and native IME replacement" : ""}${companionResult.gestures ? ", physical text-selection drag and two-axis scroll" : ""} with local and remote TUI observation`,
       skipped: ["computer secret", "pointer matrix", "agent keyboard matrix", "cancellation", "clipboard",
         companionResult.keyboard?.replacement ? "remaining Web shortcuts and keyboard layouts" : "Web keyboard shortcuts and IME"],
       companion: companionResult,

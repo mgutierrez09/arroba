@@ -15,6 +15,7 @@ test("Web office work requires independent TUI receipts for editor and mail acti
     { action_id: "upload", sequence: 4, kind: "upload", mode: "browser" },
     { action_id: "submit", sequence: 5, kind: "submit", mode: "browser" },
   ].map(a => ({ ...a, actor_id: actor, state: "completed", targets: [{ kind: "browser_tab", id: "mail-tab" }] }))
+  actions[2].targets.unshift({ kind: "desktop" })
   const phase = { matched: true, width: 1280, height: 800, screenshot: path.join(root, "phase.png") }
   const companion = {
     schema: "chariox.room_environment.companion_result.v1", status: "passed", sessionId: "room", environmentId: "environment",
