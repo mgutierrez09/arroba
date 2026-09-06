@@ -20,7 +20,7 @@ const editor = named("mousepad")[0];
 // Use Chromium's own sandbox report, in a temporary background target.
 const { BrowserCdpClient } = await import("/opt/chariox-slice/browser-controller-cdp.mjs");
 const client = new BrowserCdpClient();
-let connection, target, isolation = false;
+let connection, target, sandbox = {};
 try {
   connection = await client.ensureConnection();
   target = await connection.send("Target.createTarget", { url: "chrome://sandbox", background: true });
@@ -29,8 +29,10 @@ try {
     const result = await connection.send("Runtime.evaluate", { expression: "document.body?.innerText ?? ''", returnByValue: true }, session);
     const text = result.result?.value ?? "";
     if (text.includes("Seccomp")) {
-      isolation = /Layer 1 Sandbox\s+Namespace/.test(text) && /PID namespaces\s+Yes/.test(text)
-        && /Network namespaces\s+Yes/.test(text) && /Seccomp-BPF sandbox\s+Yes/.test(text);
+      sandbox = { namespace: /Layer 1 Sandbox\s+Namespace/.test(text),
+        suid: /Layer 1 Sandbox\s+SUID/.test(text),
+        pid: /PID namespaces\s+Yes/.test(text), network: /Network namespaces\s+Yes/.test(text),
+        seccomp: /Seccomp-BPF sandbox\s+Yes/.test(text) };
       break;
     }
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -43,7 +45,8 @@ console.log(JSON.stringify({
   browserRunning: !!browser,
   insecureOriginException: chromium.some(p => p.args.some(a => a.startsWith("--unsafely-treat-insecure-origin-as-secure"))),
   sandboxDisabled: chromium.some(p => p.args.some(a => /^--(?:no-sandbox|disable-(?:namespace|seccomp-filter|setuid)-sandbox)(?:=|$)/.test(a))),
-  sandboxedRenderers: isolation,
+  sandboxedRenderers: (sandbox.namespace || sandbox.suid) && sandbox.pid && sandbox.network && sandbox.seccomp,
+  sandbox,
   taskbarRunning: named("tint2").length === 1,
   desktopSessionBus: !!openbox && !!bus(openbox),
   editorSessionBus: !!editor && !!openbox && !!bus(editor) && bus(editor) === bus(openbox),
@@ -56,7 +59,7 @@ export async function verifyRoomDesktopHealth(command, { editor = false } = {}) 
   assert.equal(health.browserRunning, true, "desktop Chromium is missing")
   assert.equal(health.insecureOriginException, false, "desktop uses an insecure-origin exception")
   assert.equal(health.sandboxDisabled, false, "desktop disables Chromium sandboxing")
-  assert.equal(health.sandboxedRenderers, true, "Chromium does not report renderer namespace and seccomp isolation")
+  assert.equal(health.sandboxedRenderers, true, "Chromium renderer isolation: " + JSON.stringify(health.sandbox))
   assert.equal(health.taskbarRunning, true, "desktop applications taskbar is missing")
   assert.equal(health.desktopSessionBus, true, "desktop applications lack a session bus")
   if (editor) assert.equal(health.editorSessionBus, true, "graphical editor did not inherit the desktop session bus")
