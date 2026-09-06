@@ -7,6 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { browserStateCleanupFailure } from "./lib/browser-state-drill-cleanup.mjs"
+import { browserStateDrillImageConfig } from "./lib/browser-state-drill-image.mjs"
 import { resolveBrowserStateDrillPaths } from "./lib/browser-state-drill-paths.mjs"
 import { startBrowserComputerFixture } from "./lib/browser-computer-fixture.mjs"
 import { finalizeDrillArtifacts } from "./lib/drill-artifacts.mjs"
@@ -391,7 +392,7 @@ async function seedConfig() {
     `root = "${path.join(tempRoot, "slices").replaceAll("\\", "\\\\")}"`,
     "",
     "[slices.linux]",
-    "build_image = \"auto\"",
+    ...browserStateDrillImageConfig(process.env),
     "screen_width = 1280",
     "screen_height = 800",
     "memory_mb = 2048",

@@ -14,6 +14,8 @@ test("new slices have a finite process limit by default", async () => {
   assert.ok(create, "fixture must reach container creation")
   assert.equal(create[create.indexOf("--pids-limit") + 1], "1024")
   assert.equal(create[create.indexOf("--ulimit", create.indexOf("--ulimit") + 1) + 1], "nofile=8192:8192")
+  assert.equal(create[create.indexOf("--security-opt") + 1], `seccomp=${fileURLToPath(new URL("./chromium-seccomp.json", import.meta.url))}`)
+  assert.equal(create.includes("--cap-add"), false, "normal Chromium slices need no extra capabilities")
 })
 
 test("invalid process limits fail before any Docker operation", async () => {
