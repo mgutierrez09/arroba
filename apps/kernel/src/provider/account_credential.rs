@@ -5,7 +5,7 @@ use crate::error::DaemonError;
 
 use super::ProviderCredentialEnvironment;
 
-const CLAUDE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+pub(crate) const CLAUDE_OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 #[derive(Debug)]
 pub(crate) struct StoredProviderAccountCredential {

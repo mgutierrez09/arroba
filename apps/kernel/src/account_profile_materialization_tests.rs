@@ -50,7 +50,7 @@ impl Drop for ProfileFixture {
 }
 
 #[test]
-fn claude_account_export_rejects_settings_without_transferable_credentials() {
+fn claude_account_export_keeps_settings_but_excludes_provider_credentials() {
     let source = ProfileFixture::new();
     let profile = source
         .registry
@@ -66,68 +66,27 @@ fn claude_account_export_rejects_settings_without_transferable_credentials() {
     )
     .unwrap();
 
-    let error = source
+    fs::write(
+        Path::new(&environment["CLAUDE_CONFIG_DIR"]).join(".credentials.json"),
+        br#"{"claudeAiOauth":{"refreshToken":"fixture-refresh"}}"#,
+    )
+    .unwrap();
+    let exported = source
         .registry
         .export_materialization("owner", "claude", &profile.profile_id)
-        .expect_err("settings alone must not authorize a Claude account transfer");
-    assert!(
-        error.to_string().contains("no transferable credentials"),
-        "{error}"
-    );
-    assert!(error.to_string().contains(&profile.profile_id), "{error}");
-
-    for invalid in [
-        "{}",
-        "not-json",
-        r#"{"claudeAiOauth":{"accessToken":"fixture-access-only"}}"#,
-        r#"{"claudeAiOauth":{"accessToken":"","refreshToken":""}}"#,
-        r#"{"claudeAiOauth":{"refreshToken":" \t\r\n"}}"#,
-    ] {
-        fs::write(
-            Path::new(&environment["CLAUDE_CONFIG_DIR"]).join(".credentials.json"),
-            invalid,
-        )
-        .unwrap();
-        let error = source
-            .registry
-            .export_materialization("owner", "claude", &profile.profile_id)
-            .expect_err("a non-refreshable credential must not authorize transfer");
-        assert!(
-            error.to_string().contains("no transferable credentials"),
-            "{error}"
-        );
-        assert!(!error.to_string().contains("fixture-access-only"));
-    }
+        .expect("non-secret Claude settings should remain portable");
+    assert_eq!(exported.files.len(), 1);
+    assert_eq!(exported.files[0].relative_path, "settings.json");
+    assert!(!format!("{exported:?}").contains("fixture-refresh"));
 }
 
 #[test]
-fn claude_deployment_requires_login_and_preserves_a_refreshable_account() {
+fn claude_deployment_materializes_nonsecret_state_without_refresh_credentials() {
     let source = ProfileFixture::new();
     let source_home = source.root.join("deployment-home");
     let config_dir = source_home.join(".claude");
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(config_dir.join("settings.json"), b"{}").unwrap();
-    let error = source
-        .registry
-        .materialize_deployment_profile(
-            "owner",
-            "claude",
-            "deployment-claude",
-            "Deployment",
-            &source_home,
-        )
-        .expect_err("settings-only deployment must fail before creating a replica");
-    assert!(
-        error.to_string().contains("no transferable credentials"),
-        "{error}"
-    );
-    assert!(source
-        .registry
-        .get("owner", "claude", "deployment-claude")
-        .is_err());
-
-    let credentials = br#"{"claudeAiOauth":{"refreshToken":"fixture-refresh"}}"#;
-    fs::write(config_dir.join(".credentials.json"), credentials).unwrap();
     let profile = source
         .registry
         .materialize_deployment_profile(
@@ -137,22 +96,16 @@ fn claude_deployment_requires_login_and_preserves_a_refreshable_account() {
             "Deployment",
             &source_home,
         )
-        .expect("refreshable deployment account should materialize");
+        .expect("settings-only deployment profile should materialize");
+
+    let credentials = br#"{"claudeAiOauth":{"refreshToken":"fixture-refresh"}}"#;
+    fs::write(config_dir.join(".credentials.json"), credentials).unwrap();
     let export = source
         .registry
         .export_materialization("owner", "claude", &profile.profile_id)
         .expect("materialized account should remain transferable");
-    let credential = export
-        .files
-        .iter()
-        .find(|file| file.relative_path == ".credentials.json")
-        .expect("credential must be in the transfer");
-    assert_eq!(
-        base64::engine::general_purpose::STANDARD
-            .decode(&credential.contents_base64)
-            .unwrap(),
-        credentials,
-    );
+    assert_eq!(export.files.len(), 1);
+    assert_eq!(export.files[0].relative_path, "settings.json");
     assert!(!format!("{export:?}").contains("fixture-refresh"));
 }
 
@@ -182,14 +135,14 @@ fn claude_account_export_preserves_the_ordinary_transfer_size_budget() {
     let export = source
         .registry
         .export_materialization("owner", "claude", &profile.profile_id)
-        .expect("credential validation must not shrink the ordinary transfer budget");
-    assert_eq!(export.files.len(), 2);
-    let managed = source
+        .expect("ordinary non-secret state keeps the existing transfer budget");
+    assert_eq!(export.files.len(), 1);
+    assert_eq!(export.files[0].relative_path, "stats-cache.json");
+    let error = source
         .registry
         .export_managed_context_materialization("owner", "claude", &profile.profile_id)
-        .expect("managed context exports credentials only");
-    assert_eq!(managed.files.len(), 1);
-    assert_eq!(managed.files[0].relative_path, ".credentials.json");
+        .expect_err("managed context must not export Claude refresh credentials");
+    assert!(error.to_string().contains("setup-token launch path"));
 }
 
 #[test]

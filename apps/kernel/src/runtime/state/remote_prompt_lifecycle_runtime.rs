@@ -292,6 +292,7 @@ impl KernelRuntimeState {
                                 required_mcps,
                                 required_skills,
                                 remote_extension_manifest,
+                                provider_launch_credential: None,
                             },
                             crate::transport::relay_client::LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
                         ),

@@ -94,6 +94,7 @@ pub(super) fn dispatch_workflow_prompt(
                     required_mcps,
                     required_skills,
                     remote_extension_manifest,
+                    provider_launch_credential: None,
                 },
                 LEASED_PROMPT_SUBMIT_RESPONSE_TIMEOUT,
             ));

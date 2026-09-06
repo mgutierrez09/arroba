@@ -5,7 +5,7 @@ use super::support::*;
 fn provider_account_materialization_peer_shape_is_versioned_and_debug_redacted() {
     assert_eq!(
         crate::transport::relay_peer::RELAY_PEER_PROTOCOL_VERSION,
-        39
+        43
     );
     let mut materialization = crate::account_profile::ProviderAccountMaterialization {
         profile: crate::account_profile::ProviderAccountReplicaMetadata {
@@ -49,6 +49,63 @@ fn provider_account_materialization_peer_shape_is_versioned_and_debug_redacted()
 }
 
 #[test]
+fn remote_provider_launch_credential_peer_shape_is_versioned_and_debug_redacted() {
+    assert_eq!(
+        crate::transport::relay_peer::RELAY_PEER_PROTOCOL_VERSION,
+        43
+    );
+    let request = RelayPeerRequest::SubmitLeasedPrompt {
+        leased_agent_id: "leased-agent-1".to_string(),
+        prompt: "continue".to_string(),
+        hidden_system_context: String::new(),
+        attachments: Vec::new(),
+        workflow_context: None,
+        git_context: None,
+        required_mcps: Vec::new(),
+        required_skills: None,
+        remote_extension_manifest: Default::default(),
+        provider_launch_credential: Some(
+            crate::transport::relay_peer::RemoteProviderLaunchCredential {
+                provider: "claude".to_string(),
+                account_profile: "work".to_string(),
+                secret_input: crate::transport::relay_peer::RemoteCredentialSecretInput::new(
+                    "setup-token-secret".to_string(),
+                ),
+            },
+        ),
+    };
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("setup-token-secret"));
+    let mut value = serde_json::to_value(&request).expect("request should serialize");
+    assert_eq!(
+        value.pointer("/provider_launch_credential/provider"),
+        Some(&serde_json::json!("claude"))
+    );
+    assert_eq!(
+        value.pointer("/provider_launch_credential/account_profile"),
+        Some(&serde_json::json!("work"))
+    );
+    assert_eq!(
+        value.pointer("/provider_launch_credential/secret_input"),
+        Some(&serde_json::json!("setup-token-secret"))
+    );
+
+    value
+        .as_object_mut()
+        .expect("request object")
+        .remove("provider_launch_credential");
+    let legacy_shape: RelayPeerRequest =
+        serde_json::from_value(value).expect("missing optional credential stays compatible");
+    assert!(matches!(
+        legacy_shape,
+        RelayPeerRequest::SubmitLeasedPrompt {
+            provider_launch_credential: None,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn managed_context_peer_shape_is_versioned_and_debug_redacts_bearer_material() {
     use crate::transport::relay_peer::{
         RelayManagedContextCapability, RelayManagedContextChunk, RelayManagedContextImportReceipt,
@@ -58,7 +115,7 @@ fn managed_context_peer_shape_is_versioned_and_debug_redacts_bearer_material() {
 
     assert_eq!(
         crate::transport::relay_peer::RELAY_PEER_PROTOCOL_VERSION,
-        39
+        43
     );
     let request = RelayPeerRequest::UploadManagedContextChunk {
         transfer_id: "ctx_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),

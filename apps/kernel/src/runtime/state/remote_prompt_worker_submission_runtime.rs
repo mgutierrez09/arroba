@@ -16,6 +16,8 @@ pub(super) async fn submit_remote_prompt_to_worker_with_binding_refresh(
 ) -> Result<String, DaemonError> {
     let mut attempt = 0_u32;
     let transport_retry_started_at = tokio::time::Instant::now();
+    let mut provider_launch_credential =
+        remote_prompt_provider_launch_credential_if_needed(state, dispatch).await?;
     loop {
         if let Some(error) = remote_prompt_dispatch_unavailable_slice_error(state, dispatch) {
             return Err(error);
@@ -33,12 +35,38 @@ pub(super) async fn submit_remote_prompt_to_worker_with_binding_refresh(
             required_mcps.clone(),
             required_skills.clone(),
             remote_extension_manifest.clone(),
+            provider_launch_credential.clone(),
             "unexpected remote prompt response",
         )
         .await;
+        if provider_launch_credential.is_none()
+            && remote_prompt_dispatch_requires_provider_launch_credential(&result)
+        {
+            provider_launch_credential = state
+                .resolve_remote_provider_launch_credential(
+                    &dispatch.session_id,
+                    &dispatch.agent_id,
+                    "relaunch remote provider run",
+                )
+                .await?;
+            result = submit_remote_prompt_to_worker(
+                state,
+                dispatch,
+                prompt.clone(),
+                attachments.clone(),
+                required_mcps.clone(),
+                required_skills.clone(),
+                remote_extension_manifest.clone(),
+                provider_launch_credential.clone(),
+                "unexpected remote prompt response after credential request",
+            )
+            .await;
+        }
         if remote_prompt_dispatch_should_refresh_binding(&result) {
             result = match refresh_remote_prompt_binding(state, dispatch).await {
                 Ok(()) => {
+                    provider_launch_credential =
+                        remote_prompt_provider_launch_credential_if_needed(state, dispatch).await?;
                     submit_remote_prompt_to_worker(
                         state,
                         dispatch,
@@ -47,6 +75,7 @@ pub(super) async fn submit_remote_prompt_to_worker_with_binding_refresh(
                         required_mcps.clone(),
                         required_skills.clone(),
                         remote_extension_manifest.clone(),
+                        provider_launch_credential.clone(),
                         "unexpected remote prompt response after binding refresh",
                     )
                     .await
@@ -90,6 +119,27 @@ pub(super) async fn submit_remote_prompt_to_worker_with_binding_refresh(
             result => return result,
         }
     }
+}
+
+async fn remote_prompt_provider_launch_credential_if_needed(
+    state: &KernelRuntimeState,
+    dispatch: &crate::app::KernelRemotePromptDispatch,
+) -> Result<Option<crate::transport::relay_peer::RemoteProviderLaunchCredential>, DaemonError> {
+    let agent = state.owned.agent_store.get_agent(&dispatch.agent_id)?;
+    if agent
+        .remote_execution()
+        .and_then(|binding| binding.active_worker_provider_run_id.as_deref())
+        .is_some()
+    {
+        return Ok(None);
+    }
+    state
+        .resolve_remote_provider_launch_credential(
+            &dispatch.session_id,
+            &dispatch.agent_id,
+            "launch remote provider run",
+        )
+        .await
 }
 
 async fn refresh_remote_prompt_binding(
@@ -209,6 +259,9 @@ async fn submit_remote_prompt_to_worker(
     required_mcps: Vec<crate::transport::relay_peer::RequiredRemoteMcp>,
     required_skills: Option<Vec<crate::transport::relay_peer::RequiredRemoteSkill>>,
     remote_extension_manifest: crate::extension::RemoteExtensionManifest,
+    provider_launch_credential: Option<
+        crate::transport::relay_peer::RemoteProviderLaunchCredential,
+    >,
     unexpected_response_message: &'static str,
 ) -> Result<String, DaemonError> {
     let agent = state.owned.agent_store.get_agent(&dispatch.agent_id)?;
@@ -244,6 +297,7 @@ async fn submit_remote_prompt_to_worker(
         required_mcps,
         required_skills,
         remote_extension_manifest,
+        provider_launch_credential,
     };
     let response = match state.connected_relay_state_for_config(&config).await {
         Some(relay_state) => {
@@ -283,6 +337,15 @@ fn remote_prompt_dispatch_should_refresh_binding(result: &Result<String, DaemonE
         return false;
     };
     remote_prompt_error_should_refresh_binding(error)
+}
+
+fn remote_prompt_dispatch_requires_provider_launch_credential(
+    result: &Result<String, DaemonError>,
+) -> bool {
+    let Err(DaemonError::LocalTransport { message, .. }) = result else {
+        return false;
+    };
+    message.contains(crate::transport::relay_peer::REMOTE_PROVIDER_LAUNCH_CREDENTIAL_REQUIRED_CODE)
 }
 
 pub(super) fn remote_prompt_error_should_refresh_binding(error: &DaemonError) -> bool {
@@ -398,6 +461,28 @@ mod tests {
         });
 
         assert!(remote_prompt_dispatch_should_refresh_binding(&result));
+    }
+
+    #[test]
+    fn remote_prompt_dispatch_retries_with_a_credential_only_when_worker_requests_it() {
+        let required = Err(DaemonError::LocalTransport {
+            operation: "read relay peer response",
+            message: format!(
+                "transport error: {}: worker run was lost",
+                crate::transport::relay_peer::REMOTE_PROVIDER_LAUNCH_CREDENTIAL_REQUIRED_CODE,
+            ),
+        });
+        assert!(remote_prompt_dispatch_requires_provider_launch_credential(
+            &required
+        ));
+
+        let unrelated = Err(DaemonError::LocalTransport {
+            operation: "read relay peer response",
+            message: "worker run was lost".to_string(),
+        });
+        assert!(!remote_prompt_dispatch_requires_provider_launch_credential(
+            &unrelated
+        ));
     }
 
     #[test]

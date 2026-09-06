@@ -98,7 +98,6 @@ SLICE_OPENCODE_AUTH="${CHARIOX_SLICE_OPENCODE_AUTH:-$HOME/.local/share/opencode/
 SLICE_CLAUDE_JSON="${CHARIOX_SLICE_CLAUDE_JSON:-$HOME/.claude.json}"
 SLICE_CLAUDE_SETTINGS="${CHARIOX_SLICE_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 SLICE_CLAUDE_STATS="${CHARIOX_SLICE_CLAUDE_STATS:-$HOME/.claude/stats-cache.json}"
-SLICE_CLAUDE_CREDENTIALS="${CHARIOX_SLICE_CLAUDE_CREDENTIALS:-$HOME/.claude/.credentials.json}"
 SLICE_GITHUB_HOST="${CHARIOX_SLICE_GITHUB_HOST:-github.com}"
 SLICE_GITHUB_TOKEN_FILE="${CHARIOX_SLICE_GITHUB_TOKEN_FILE:-}"
 SLICE_OPENCODE_PROVIDER="${CHARIOX_SLICE_OPENCODE_PROVIDER:-openai}"
@@ -1041,14 +1040,6 @@ import_claude_auth() {
   local claude_root="$SLICE_ACCOUNT_ROOT/claude/$SLICE_ACCOUNT_PROFILE/claude"
   copy_provider_auth_file "$SLICE_CLAUDE_SETTINGS" "$claude_root/settings.json" "Claude settings"
   copy_provider_auth_file "$SLICE_CLAUDE_STATS" "$claude_root/stats-cache.json" "Claude stats"
-  local imported_credentials=0
-  if [[ -f "$SLICE_CLAUDE_CREDENTIALS" ]]; then
-    copy_provider_auth_file "$SLICE_CLAUDE_CREDENTIALS" "$claude_root/.credentials.json" "Claude credentials"
-    imported_credentials=1
-  fi
-  if [[ "$imported_credentials" != "1" ]]; then
-    log "Claude credentials not found at $SLICE_CLAUDE_CREDENTIALS; skipping"
-  fi
 }
 
 remove_claude_auth() {

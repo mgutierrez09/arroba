@@ -69,8 +69,10 @@ impl std::fmt::Debug for RelayManagedSliceToken {
     }
 }
 
-/// Version 42 adds document-bound Room browser history navigation.
-pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 42;
+/// Version 43 adds transient vaulted provider launch credentials for remote workers.
+pub const RELAY_PEER_PROTOCOL_VERSION: u32 = 43;
+pub const REMOTE_PROVIDER_LAUNCH_CREDENTIAL_REQUIRED_CODE: &str =
+    "provider_launch_credential_required";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -287,6 +289,10 @@ impl RemoteCredentialSecretInput {
         Self(value)
     }
 
+    pub fn from_zeroizing(mut value: zeroize::Zeroizing<String>) -> Self {
+        Self(std::mem::take(&mut *value))
+    }
+
     pub fn into_zeroizing(mut self) -> zeroize::Zeroizing<String> {
         zeroize::Zeroizing::new(std::mem::take(&mut self.0))
     }
@@ -301,6 +307,28 @@ impl Drop for RemoteCredentialSecretInput {
 impl std::fmt::Debug for RemoteCredentialSecretInput {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("[redacted remote credential secret input]")
+    }
+}
+
+/// One provider launch secret carried only inside an encrypted kernel-to-kernel
+/// request. The worker validates the provider/profile binding, moves the value
+/// into its in-memory launch environment, and never writes it to a provider
+/// credential file or durable kernel state.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteProviderLaunchCredential {
+    pub provider: String,
+    pub account_profile: String,
+    pub secret_input: RemoteCredentialSecretInput,
+}
+
+impl std::fmt::Debug for RemoteProviderLaunchCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RemoteProviderLaunchCredential")
+            .field("provider", &self.provider)
+            .field("account_profile", &self.account_profile)
+            .field("secret_input", &"[redacted]")
+            .finish()
     }
 }
 
@@ -564,6 +592,8 @@ pub enum RelayPeerRequest {
             skip_serializing_if = "crate::extension::RemoteExtensionManifest::is_empty"
         )]
         remote_extension_manifest: crate::extension::RemoteExtensionManifest,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_launch_credential: Option<RemoteProviderLaunchCredential>,
     },
     SendLeasedNativeProviderInput {
         leased_agent_id: String,
@@ -597,6 +627,8 @@ pub enum RelayPeerRequest {
             skip_serializing_if = "crate::extension::RemoteExtensionManifest::is_empty"
         )]
         remote_extension_manifest: crate::extension::RemoteExtensionManifest,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_launch_credential: Option<RemoteProviderLaunchCredential>,
     },
     SteerLeasedPrompt {
         leased_agent_id: String,

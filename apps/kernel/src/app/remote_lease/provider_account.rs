@@ -37,6 +37,18 @@ impl RemoteLeaseRuntime<'_> {
                         .to_string(),
             });
         }
+        if crate::provider::canonical_provider_family(&materialization.profile.provider)
+            == Some("claude")
+            && materialization
+                .files
+                .iter()
+                .any(|file| file.relative_path == ".credentials.json")
+        {
+            return Err(DaemonError::LocalTransport {
+                operation: "ensure remote provider account",
+                message: "Claude provider credentials cannot be materialized on a remote worker; use the kernel-managed Chariox-vault setup-token launch path".to_string(),
+            });
+        }
 
         let profile = self
             .app
@@ -111,6 +123,27 @@ mod tests {
         assert!(std::path::Path::new(&environment["CODEX_HOME"])
             .join("config.toml")
             .exists());
+
+        let claude_with_refresh_credential = ProviderAccountMaterialization {
+            profile: crate::account_profile::ProviderAccountReplicaMetadata {
+                owner_user_id: "owner-a".to_string(),
+                provider: "claude".to_string(),
+                profile_id: "work".to_string(),
+                label: "Work".to_string(),
+                origin: crate::account_profile::ProviderAccountProfileOrigin::CharioxCreated,
+                is_default: false,
+            },
+            files: vec![crate::account_profile::ProviderAccountMaterializationFile {
+                relative_path: ".credentials.json".to_string(),
+                contents_base64: "bmV2ZXItbG9nLXRoaXM=".to_string(),
+            }],
+            generated_at_ms: 1,
+        };
+        let error = RemoteLeaseRuntime::new(&mut app)
+            .ensure_remote_provider_account(context.clone(), claude_with_refresh_credential)
+            .expect_err("remote Claude refresh credentials must be rejected");
+        assert!(error.to_string().contains("setup-token launch path"));
+        assert!(!error.to_string().contains("bmV2ZXItbG9nLXRoaXM"));
 
         let mut wrong_owner = materialization;
         wrong_owner.profile.owner_user_id = "owner-b".to_string();

@@ -32,6 +32,15 @@ pub(super) fn map_relay_error(error: &DaemonError) -> RelayError {
                 .map_or(message.as_str(), |(code, _)| code);
             relay_error(code, &error.to_string(), false)
         }
+        DaemonError::LocalTransport { operation, .. }
+            if *operation == "launch remote provider without credential" =>
+        {
+            relay_error(
+                crate::transport::relay_peer::REMOTE_PROVIDER_LAUNCH_CREDENTIAL_REQUIRED_CODE,
+                &error.to_string(),
+                false,
+            )
+        }
         DaemonError::LocalTransport { .. } => {
             relay_error("transport_error", &error.to_string(), true)
         }

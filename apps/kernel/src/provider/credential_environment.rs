@@ -26,6 +26,10 @@ impl ProviderCredentialEnvironment {
     pub(crate) fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
+
+    pub(crate) fn remove(&mut self, name: &str) -> Option<Zeroizing<String>> {
+        self.values.remove(name)
+    }
 }
 
 impl Clone for ProviderCredentialEnvironment {

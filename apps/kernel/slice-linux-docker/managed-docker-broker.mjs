@@ -33,7 +33,7 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_CREDENTIAL_BYTES = 2 * 1024 * 1024
 const MAX_CREDENTIAL_TOTAL_BYTES = 8 * 1024 * 1024
 const LINUX_O_PATH = 0x200000
-const PROVIDER_ACCOUNT_CREDENTIAL_PATH = /^\/home\/slice\/\.chariox\/daemon\/provider-accounts\/[A-Za-z0-9-]+\/(?:codex\/[A-Za-z0-9-]+\/codex\/auth\.json|opencode\/[A-Za-z0-9-]+\/data\/opencode\/auth\.json|claude\/[A-Za-z0-9-]+\/claude\/\.credentials\.json)$/
+const PROVIDER_ACCOUNT_CREDENTIAL_PATH = /^\/home\/slice\/\.chariox\/daemon\/provider-accounts\/[A-Za-z0-9-]+\/(?:codex\/[A-Za-z0-9-]+\/codex\/auth\.json|opencode\/[A-Za-z0-9-]+\/data\/opencode\/auth\.json)$/
 const SHARE_ROOT_INPUT = resolve(process.env.CHARIOX_SLICE_DOCKER_SHARE_ROOT ?? "/var/lib/chariox-slice-share")
 const SHARE_ROOT = existsSync(SHARE_ROOT_INPUT) ? realpathSync(SHARE_ROOT_INPUT) : SHARE_ROOT_INPUT
 const SOCKET_PATH = process.env.CHARIOX_SLICE_DOCKER_BROKER_SOCKET ?? "/var/lib/chariox-slice-share/.broker-private/control/control.sock"
@@ -95,7 +95,6 @@ const CREDENTIAL_ENVIRONMENT = new Set([
   "CHARIOX_SLICE_CLAUDE_JSON",
   "CHARIOX_SLICE_CLAUDE_SETTINGS",
   "CHARIOX_SLICE_CLAUDE_STATS",
-  "CHARIOX_SLICE_CLAUDE_CREDENTIALS",
   "CHARIOX_SLICE_GITHUB_TOKEN_FILE",
 ])
 const ALLOWED_ENVIRONMENT = new Set([

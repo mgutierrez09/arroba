@@ -1387,24 +1387,11 @@ impl ProviderAccountProfileRegistry {
                 )?;
                 require_managed_materialization_file(&files, "auth.json", provider, profile_id)?;
             }
-            ProviderAccountLocator::Claude {
-                claude_config_dir, ..
-            } => {
-                validate_materialization_root(claude_config_dir)?;
-                collect_optional_file_bounded(
-                    claude_config_dir,
-                    ".credentials.json",
-                    ".credentials.json",
-                    &mut files,
-                    MAX_MANAGED_CONTEXT_MATERIALIZATION_BYTES,
-                )?;
-                discard_nonportable_claude_credentials(&mut files);
-                require_managed_materialization_file(
-                    &files,
-                    ".credentials.json",
-                    provider,
-                    profile_id,
-                )?;
+            ProviderAccountLocator::Claude { .. } => {
+                return Err(registry_error(
+                    "export managed account profile",
+                    "Claude managed-context credential transfer is disabled; use the kernel-managed Chariox-vault setup-token launch path",
+                ));
             }
             ProviderAccountLocator::Opencode { xdg_data_home, .. } => {
                 let auth_root = xdg_data_home.join("opencode");
@@ -2026,7 +2013,12 @@ fn validate_managed_context_materialization_shape(
 ) -> Result<(), DaemonError> {
     let (required, allowed): (&str, &[&str]) = match provider {
         "codex" => ("auth.json", &["auth.json"]),
-        "claude" => (".credentials.json", &[".credentials.json"]),
+        "claude" => {
+            return Err(registry_error(
+                "materialize managed account profile",
+                "Claude managed-context credential transfer is disabled; use the kernel-managed Chariox-vault setup-token launch path",
+            ));
+        }
         "opencode" => ("data/opencode/auth.json", &["data/opencode/auth.json"]),
         _ => return Err(unsupported_provider(provider)),
     };
@@ -2614,7 +2606,7 @@ fn validate_profile_id(profile_id: &str) -> Result<&str, DaemonError> {
 
 fn materialization_files(
     locator: &ProviderAccountLocator,
-    profile_id: &str,
+    _profile_id: &str,
 ) -> Result<Vec<ProviderAccountMaterializationFile>, DaemonError> {
     let mut files = Vec::new();
     match locator {
@@ -2625,11 +2617,12 @@ fn materialization_files(
         ProviderAccountLocator::Claude {
             claude_config_dir, ..
         } => {
-            for name in [".credentials.json", "settings.json", "stats-cache.json"] {
+            // Remote workers receive a vaulted setup token only for the
+            // lifetime of an official Claude CLI launch. Provider-owned
+            // refresh credentials are never replicated.
+            for name in ["settings.json", "stats-cache.json"] {
                 collect_optional_file(claude_config_dir, name, name, &mut files)?;
             }
-            discard_nonportable_claude_credentials(&mut files);
-            require_materialization_file(&files, ".credentials.json", "claude", profile_id)?;
         }
         ProviderAccountLocator::Opencode {
             xdg_data_home,
@@ -2841,15 +2834,6 @@ fn materialization_has_file(
     relative_path: &str,
 ) -> bool {
     files.iter().any(|file| file.relative_path == relative_path)
-}
-
-fn discard_nonportable_claude_credentials(files: &mut Vec<ProviderAccountMaterializationFile>) {
-    files.retain(|file| {
-        file.relative_path != ".credentials.json"
-            || base64::engine::general_purpose::STANDARD
-                .decode(&file.contents_base64)
-                .is_ok_and(|contents| claude_credentials_are_portable(&contents))
-    });
 }
 
 fn claude_credentials_are_portable(contents: &[u8]) -> bool {
@@ -4287,15 +4271,9 @@ mod tests {
     }
 
     #[test]
-    fn managed_context_uses_each_official_provider_credential_location() {
+    fn managed_context_uses_supported_provider_credential_locations() {
         for (provider, environment_key, relative_path, transfer_path) in [
             ("codex", "CODEX_HOME", "auth.json", "auth.json"),
-            (
-                "claude",
-                "CLAUDE_CONFIG_DIR",
-                ".credentials.json",
-                ".credentials.json",
-            ),
             (
                 "opencode",
                 "XDG_DATA_HOME",
@@ -4314,11 +4292,7 @@ mod tests {
                 Path::new(&source_environment[environment_key]).join(relative_path);
             fs::create_dir_all(source_credential.parent().expect("credential parent"))
                 .expect("create credential parent");
-            let credential_contents = if provider == "claude" {
-                r#"{"claudeAiOauth":{"refreshToken":"secret"}}"#.to_string()
-            } else {
-                format!(r#"{{"provider":"{provider}","token":"secret"}}"#)
-            };
+            let credential_contents = format!(r#"{{"provider":"{provider}","token":"secret"}}"#);
             fs::write(&source_credential, &credential_contents).expect("write provider credential");
             let materialization = source
                 .export_managed_context_materialization(
@@ -4356,6 +4330,29 @@ mod tests {
             let _ = fs::remove_dir_all(source_root);
             let _ = fs::remove_dir_all(target_root);
         }
+    }
+
+    #[test]
+    fn managed_context_rejects_claude_refresh_credential_transfer() {
+        let (source_root, source) = fixture();
+        let profile = source
+            .create_managed("owner-a", "claude", "Work")
+            .expect("create Claude account");
+        let environment = source
+            .resolve_environment("owner-a", "claude", &profile.profile_id)
+            .expect("resolve Claude account");
+        fs::write(
+            Path::new(&environment["CLAUDE_CONFIG_DIR"]).join(".credentials.json"),
+            br#"{"claudeAiOauth":{"refreshToken":"secret"}}"#,
+        )
+        .expect("write provider-owned credential fixture");
+
+        let error = source
+            .export_managed_context_materialization("owner-a", "claude", &profile.profile_id)
+            .expect_err("Claude refresh credentials must stay out of managed contexts");
+        assert!(error.to_string().contains("setup-token launch path"));
+        assert!(!error.to_string().contains("secret"));
+        let _ = fs::remove_dir_all(source_root);
     }
 
     #[test]
