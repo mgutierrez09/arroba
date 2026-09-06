@@ -151,6 +151,17 @@ Dry-run matrix evidence is acceptable only for scope review; it must carry
 planned owner/classification metadata and cannot satisfy release evidence until
 the matching live matrix has completed.
 
+## Room drill memory
+
+`live-room-environment-pointer-click-drill.mjs` requests 2,048 MiB for its slice
+by default. Set `CHARIOX_ROOM_DRILL_MEMORY_MB` to a positive integer number of
+MiB to test a different limit, for example `1280` when running a short drill
+alongside an existing soak. Invalid values fail before creating drill state.
+The drill checks the actual Docker memory limit against the requested value
+and still requires no additional swap, one CPU, and a 1,024-process limit.
+This override does not bypass the kernel's memory admission check. Choose a
+limit that fits the VM's existing reservations and the workload being tested.
+
 ## Matrix Reports
 
 Matrix scripts write JSON with schema `chariox.drill.matrix.v1`. Use `defaultDrillMatrixReportPath(...)` so reports are written under `.artifacts/drill-matrices/<matrix>/<timestamp>.json` when the caller does not pass `--report PATH`. `--report PATH` remains the override for CI jobs or custom collection directories.
