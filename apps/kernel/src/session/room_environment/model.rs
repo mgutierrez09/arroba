@@ -142,6 +142,16 @@ pub struct EnvironmentTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvironmentError {
     InvalidViewport,
+    EnvironmentAlreadyExists {
+        session_id: String,
+        environment_id: String,
+    },
+    EnvironmentNotFound {
+        session_id: String,
+    },
+    RoomNotFound {
+        session_id: String,
+    },
     InvalidLifecycleTransition {
         from: EnvironmentLifecycle,
         to: EnvironmentLifecycle,

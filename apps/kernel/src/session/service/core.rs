@@ -14,6 +14,7 @@ impl SessionService {
             PromptIdAllocator::persistent(config.kernel_prompt_counter_path());
         Self {
             store: SessionStore::new(),
+            room_environments: RoomEnvironmentRegistry::new(),
             projects: BTreeMap::new(),
             ephemeral_session_ids: BTreeSet::new(),
             host_machine_id: config.host_machine_id.clone(),
@@ -803,6 +804,7 @@ impl SessionService {
 
     pub(crate) fn remove_restored_session(&mut self, session_id: &str) -> Option<RuntimeSession> {
         self.ephemeral_session_ids.remove(session_id);
+        self.room_environments.remove(session_id);
         self.store.remove(session_id)
     }
 

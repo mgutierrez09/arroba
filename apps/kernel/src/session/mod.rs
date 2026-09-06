@@ -35,6 +35,7 @@ pub use agent_config::{
     effective_agent_user_authority, EffectiveAgentExecutionConfig, EffectiveAgentUserAuthority,
 };
 pub(crate) use owner::{SessionStateOwner, SessionStateReader, SessionStateStore};
+pub(crate) use room_environment::RoomEnvironmentRegistry;
 pub use room_environment::{
     ActionAdmission, CanonicalViewport, EnvironmentAction, EnvironmentActionRequest,
     EnvironmentActionState, EnvironmentActionTerminal, EnvironmentActor, EnvironmentActorKind,

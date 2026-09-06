@@ -609,6 +609,67 @@ fn terminal_action_history_is_bounded_but_active_actions_are_retained() {
 }
 
 #[test]
+fn one_room_cannot_acquire_a_second_environment() {
+    let mut environments = RoomEnvironmentRegistry::new();
+    let first = environments
+        .create(
+            "room-1",
+            "environment-1",
+            CanonicalViewport::new(1280, 800, 1, 1280, 800).unwrap(),
+        )
+        .expect("the Room should acquire its first Environment");
+    assert_eq!(first.session_id, "room-1");
+    assert_eq!(first.environment_id, "environment-1");
+
+    let error = environments
+        .create(
+            "room-1",
+            "environment-2",
+            CanonicalViewport::new(1440, 900, 1, 1440, 900).unwrap(),
+        )
+        .expect_err("the Room must not acquire a second Environment implicitly");
+    assert_eq!(
+        error,
+        EnvironmentError::EnvironmentAlreadyExists {
+            session_id: "room-1".to_string(),
+            environment_id: "environment-1".to_string(),
+        }
+    );
+    assert_eq!(
+        environments
+            .snapshot("room-1")
+            .expect("the original Environment should remain")
+            .environment_id,
+        "environment-1"
+    );
+}
+
+#[test]
+fn removing_a_room_retires_its_environment_identity() {
+    let mut environments = RoomEnvironmentRegistry::new();
+    environments
+        .create(
+            "room-1",
+            "environment-1",
+            CanonicalViewport::new(1280, 800, 1, 1280, 800).unwrap(),
+        )
+        .expect("the Environment should be created");
+
+    let retired = environments
+        .remove("room-1")
+        .expect("the Environment should be retired with its Room");
+    assert_eq!(retired.environment_id, "environment-1");
+    assert_eq!(
+        environments
+            .snapshot("room-1")
+            .expect_err("a retired Environment must not remain addressable"),
+        EnvironmentError::EnvironmentNotFound {
+            session_id: "room-1".to_string(),
+        }
+    );
+}
+
+#[test]
 fn idempotency_survives_generation_change_without_repeating_work() {
     let mut environment = ready_environment_with_agent();
     let tab_id = environment

@@ -1,9 +1,9 @@
 use super::*;
 use crate::session::PromptIdAllocator;
 use crate::session::{
-    RuntimeProject, RuntimeProjectKind, RuntimeSession, SessionProjectSelection,
-    WorkflowDefinition, WorkflowEndpointDefinition, WorkflowNodeDefinition, WorkflowNodeRun,
-    WorkflowNodeRunStatus, WorkflowRun, WorkflowRunStatus,
+    CanonicalViewport, EnvironmentError, RuntimeProject, RuntimeProjectKind, RuntimeSession,
+    SessionProjectSelection, WorkflowDefinition, WorkflowEndpointDefinition,
+    WorkflowNodeDefinition, WorkflowNodeRun, WorkflowNodeRunStatus, WorkflowRun, WorkflowRunStatus,
 };
 use std::collections::BTreeSet;
 
@@ -558,6 +558,34 @@ fn delete_session_removes_it_from_registry() {
     assert!(service
         .list_projects(DEFAULT_LOCAL_USER_ID, true)
         .is_empty());
+}
+
+#[test]
+fn room_environment_lifetime_is_owned_by_session() {
+    let mut service = SessionService::new(&test_config());
+    let room = service
+        .create_session(CreateSessionRequest::new("workspace-1", "worktree-1"))
+        .expect("Room should be created");
+    let environment = service
+        .create_room_environment(
+            room.id(),
+            "environment-1",
+            CanonicalViewport::new(1280, 800, 1, 1280, 800).unwrap(),
+        )
+        .expect("Room should acquire its Environment");
+    assert_eq!(environment.session_id, room.id());
+
+    service
+        .delete_session(room.id())
+        .expect("Room should be deleted");
+    assert_eq!(
+        service
+            .room_environment_snapshot(room.id())
+            .expect_err("deleting the Room must retire its Environment"),
+        EnvironmentError::EnvironmentNotFound {
+            session_id: room.id().to_string(),
+        }
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@ mod event;
 mod event_log;
 mod model;
 mod ownership;
+mod registry;
 mod state;
 mod tabs;
 
@@ -18,6 +19,7 @@ pub use model::{
     EnvironmentError, EnvironmentLifecycle, EnvironmentTab, RoomEnvironmentSnapshot,
 };
 pub use ownership::{InputOwnership, TakeoverOutcome};
+pub(crate) use registry::RoomEnvironmentRegistry;
 pub use state::RoomEnvironment;
 
 #[cfg(test)]

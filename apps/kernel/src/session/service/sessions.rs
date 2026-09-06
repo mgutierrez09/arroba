@@ -130,6 +130,7 @@ impl SessionService {
                 .ok_or_else(|| DaemonError::SessionNotFound {
                     session_id: session_id.to_string(),
                 })?;
+        self.room_environments.remove(session_id);
         self.ephemeral_session_ids.remove(session_id);
         let project_id = deleted.project_id().to_string();
         let project_has_visible_sessions = self

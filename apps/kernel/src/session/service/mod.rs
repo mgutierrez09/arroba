@@ -12,10 +12,11 @@ use super::types::{
 };
 use super::{
     unix_epoch_ms, AgentPromptSchedule, AgentPromptScheduleDispatch, AgentPromptScheduleKind,
-    CollaborationLevel, CreateSessionRequest, DurableWorkflowHotState, PromptDetachEffect,
-    PromptQueueItem, RuntimeProject, RuntimeProjectKind, RuntimeProjectStatus, RuntimeSession,
-    SessionConfigState, SessionInvite, SessionMember, SessionProjectSelection, SessionStatus,
-    SessionStore, WorkflowCompletionSnapshot, WorkflowConsole, WorkflowConsoleEntry,
+    CanonicalViewport, CollaborationLevel, CreateSessionRequest, DurableWorkflowHotState,
+    EnvironmentError, PromptDetachEffect, PromptQueueItem, RoomEnvironmentRegistry,
+    RoomEnvironmentSnapshot, RuntimeProject, RuntimeProjectKind, RuntimeProjectStatus,
+    RuntimeSession, SessionConfigState, SessionInvite, SessionMember, SessionProjectSelection,
+    SessionStatus, SessionStore, WorkflowCompletionSnapshot, WorkflowConsole, WorkflowConsoleEntry,
     WorkflowDefinition, WorkflowEdgeDefinition, WorkflowEndpointDefinition, WorkflowFailureEvent,
     WorkflowFailureKind, WorkflowHandoffPayload, WorkflowHandoffValidationPolicy, WorkflowMessage,
     WorkflowNodeDefinition, WorkflowNodeRun, WorkflowNodeRunStatus, WorkflowOutputPayload,
@@ -278,6 +279,7 @@ pub struct AgentPromptScheduleCollection {
 #[derive(Debug, Clone)]
 pub struct SessionService {
     store: SessionStore,
+    room_environments: RoomEnvironmentRegistry,
     projects: BTreeMap<String, RuntimeProject>,
     ephemeral_session_ids: BTreeSet<String>,
     host_machine_id: String,
@@ -307,6 +309,7 @@ mod core;
 mod helpers;
 mod launches;
 mod prompt_schedules;
+mod room_environments;
 mod sessions;
 #[cfg(test)]
 mod tests;
