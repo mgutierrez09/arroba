@@ -83,15 +83,20 @@ async function launchProbe(phase, readOnly = false) {
   await waitFor(() => user("env", "DISPLAY=:99", "xdotool", "search", "--onlyvisible", "--class", "Mousepad")
     .then(() => false, (error) => { if (error.code === 1) return true; throw error }))
 }
-async function stopAndCheck() {
-  await screen("stop")
+async function checkStopped() {
+  let remaining = []
   await waitFor(async () => {
     const rows = (await user("ps", "-eo", "stat=,comm=")).split("\n")
-    return !rows.some((line) => {
+    remaining = rows.filter((line) => {
       const [state, command] = line.trim().split(/\s+/)
-      return !state.startsWith("Z") && /^(?:openbox|dbus-daemon|dbus-run-sessio[n]?|dconf-service)$/.test(command)
+      return !state.startsWith("Z") && /^(?:Xvfb|chromium|x11vnc|websockify|openbox|dbus-daemon|dbus-run-sessio[n]?|dconf-service)$/.test(command)
     })
-  })
+    return remaining.length === 0
+  }).catch(() => assert.fail(`desktop processes remain after shutdown: ${remaining.join(", ")}`))
+}
+async function stopAndCheck() {
+  await screen("stop")
+  await checkStopped()
 }
 async function create() {
   await docker("run", "-d", "--init", "--name", id,
@@ -116,6 +121,13 @@ await interruption.run(async () => {
   scratch = await mkdtemp(path.join(homedir(), ".chariox/dev/browser-computer-use/desktop-settings-"))
   await mkdir(evidence, { recursive: true })
   await create()
+  await assert.rejects(() => docker("exec", id, "env",
+    "PATH=/src/apps/kernel/slice-linux-docker/fixtures/desktop-settings/fail-bus:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "/opt/chariox-slice/slice-screen.sh", "start"),
+  /Openbox did not stay running/, "a failed desktop session bus was reported as healthy")
+  // Failure must clean up before the caller retries, not only on explicit stop.
+  await checkStopped()
+  console.log(JSON.stringify({ phase: "failed-startup", cleanedUp: true }))
   await screen("start")
   // Exercise a real application launch from Openbox. No injected bus address
   // or GSETTINGS_BACKEND override may make this probe pass.

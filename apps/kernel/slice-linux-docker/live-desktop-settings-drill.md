@@ -18,6 +18,16 @@ After desktop shutdown, no live
 Openbox, session supervisor, D-Bus daemon or dconf service may remain. A new
 desktop launch must read the saved value without writing it again.
 
+Before the successful launch, the drill injects a failing `dbus-run-session`
+executable through the test process's PATH. Startup must return an Openbox
+failure and leave no live display, viewer, browser or desktop settings processes.
+It must do so without an explicit stop command from the test. A normal startup
+then exercises the settings and restoration checks below. This caught a startup
+path that returned failure but left Xvfb, x11vnc, websockify and Chromium running.
+An exit trap preserves the original failure and runs the existing desktop
+cleanup. It does not put the startup function inside a conditional that would
+disable Bash's error propagation.
+
 Next the test archives the home directory after desktop shutdown, deletes the
 container and creates a fresh one. It checks the fresh default value before
 extracting the archive, then requires a desktop-launched reader to retrieve the

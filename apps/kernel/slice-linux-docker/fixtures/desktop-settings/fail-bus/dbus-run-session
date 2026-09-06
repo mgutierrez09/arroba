@@ -1,0 +1,3 @@
+#!/bin/sh
+echo 'Injected desktop session bus startup failure' >&2
+exit 72
