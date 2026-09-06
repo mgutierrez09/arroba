@@ -558,67 +558,13 @@ export async function writeClaudeCredentialsPayload(destination, payload) {
   return destination
 }
 
-async function commandOutput(command, args, env = process.env, timeoutMs = 30_000) {
-  const child = spawn(command, args, {
-    env,
-    stdio: ["ignore", "pipe", "ignore"],
-  })
-  const chunks = []
-  child.stdout?.on("data", (chunk) => chunks.push(chunk))
-  let timedOut = false
-  const timeout = setTimeout(() => {
-    timedOut = true
-    child.kill("SIGTERM")
-  }, timeoutMs)
-  timeout.unref()
-  const status = await new Promise((resolve) => {
-    child.on("error", () => resolve(1))
-    child.on("close", (code) => resolve(code ?? 1))
-  })
-  clearTimeout(timeout)
-  return { status: timedOut ? 124 : status, output: Buffer.concat(chunks) }
-}
-
-export async function exportClaudeCredentials(destination, home = process.env.HOME ?? os.homedir()) {
-  if (process.platform === "darwin") {
-    const keychain = await commandOutput("security", [
-      "find-generic-password",
-      "-s",
-      "Claude Code-credentials",
-      "-w",
-    ])
-    if (keychain.status === 0 && keychain.output.length > 0) {
-      return await writeClaudeCredentialsPayload(destination, keychain.output)
-    }
-  }
-
-  const source = path.join(home, ".claude", ".credentials.json")
-  try {
-    return await writeClaudeCredentialsPayload(destination, await readFile(source))
-  } catch (error) {
-    if (error?.code === "ENOENT") return null
-    throw error
-  }
-}
-
-export async function verifyClaudeAuthHome(home) {
-  const result = await commandOutput("claude", ["auth", "status"], {
-    ...process.env,
-    HOME: home,
-  })
-  if (result.status !== 0) return false
-  const text = result.output.toString("utf8")
-  const start = text.indexOf("{")
-  const end = text.lastIndexOf("}")
-  if (start < 0 || end < start) return false
-  try {
-    return JSON.parse(text.slice(start, end + 1)).loggedIn === true
-  } catch {
-    return false
-  }
-}
+export const CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE =
+  "Claude credential materialization for this legacy direct-worker drill is unavailable until it uses the managed Chariox-vault setup-token path. Chariox will not read macOS Keychain or copy refreshable credentials into worker profiles."
 
 export async function prepareSliceModeProviderEnv(root, providers = DEFAULT_PROVIDERS) {
+  if (providersNeedClaudeCredentials(providers)) {
+    throw new Error(CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE)
+  }
   const real = realProviderEnv()
   const codexHome = path.join(root, "codex-home")
   const xdgConfigHome = path.join(root, "xdg-config")
@@ -645,24 +591,6 @@ export async function prepareSliceModeProviderEnv(root, providers = DEFAULT_PROV
       )
     : false
 
-  let claudeSecretRoot = null
-  let claudeCredentialsPath = null
-  if (providersNeedClaudeCredentials(providers)) {
-    claudeSecretRoot = path.join(os.tmpdir(), `chariox-provider-transfer-slice-secrets-${process.pid}-${Date.now()}`)
-    try {
-      claudeCredentialsPath = await exportClaudeCredentials(
-        path.join(claudeSecretRoot, "claude-credentials.json"),
-        real.HOME,
-      )
-      if (!claudeCredentialsPath) {
-        throw new Error("Claude credentials are unavailable for the isolated slice runner")
-      }
-    } catch (error) {
-      await rm(claudeSecretRoot, { recursive: true, force: true })
-      throw error
-    }
-  }
-
   return {
     HOME: real.HOME,
     CODEX_HOME: codexHome,
@@ -675,10 +603,6 @@ export async function prepareSliceModeProviderEnv(root, providers = DEFAULT_PROV
     ...providerThreadSliceBuildEnv(),
     CHARIOX_PROVIDER_THREAD_CODEX_AUTH_COPIED: codexAuthCopied ? "1" : "0",
     CHARIOX_PROVIDER_THREAD_OPENCODE_AUTH_COPIED: opencodeAuthCopied ? "1" : "0",
-    ...(claudeCredentialsPath ? {
-      CHARIOX_SLICE_CLAUDE_CREDENTIALS: claudeCredentialsPath,
-      CHARIOX_PROVIDER_THREAD_CLAUDE_SECRET_ROOT: claudeSecretRoot,
-    } : {}),
   }
 }
 
@@ -709,6 +633,9 @@ export async function cleanupSliceModeProviderCredentials(providerEnv) {
 }
 
 export async function prepareIsolatedWorkerProviderEnv(providers = DEFAULT_PROVIDERS, role = "worker") {
+  if (providersNeedClaudeCredentials(providers)) {
+    throw new Error(CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE)
+  }
   const real = realProviderEnv()
   const secretRoot = path.join(
     os.tmpdir(),
@@ -750,45 +677,6 @@ export async function prepareIsolatedWorkerProviderEnv(providers = DEFAULT_PROVI
       )
     : false
 
-  let claudeAuthCopied = false
-  let claudeAuthVerified = false
-  let claudeConfigCopied = false
-  let claudeSettingsCopied = false
-  if (providersNeedClaudeCredentials(providers)) {
-    claudeConfigCopied = await copySecretIfPresent(
-      path.join(real.HOME, ".claude.json"),
-      path.join(isolatedHome, ".claude.json"),
-    )
-    if (!claudeConfigCopied) {
-      await rm(secretRoot, { recursive: true, force: true })
-      throw new Error("Claude home config is unavailable for the isolated worker")
-    }
-    claudeSettingsCopied = await copySecretIfPresent(
-      path.join(real.HOME, ".claude", "settings.json"),
-      path.join(isolatedHome, ".claude", "settings.json"),
-    )
-    const exportedPath = path.join(secretRoot, "claude-credentials-export.json")
-    const destination = path.join(isolatedHome, ".claude", ".credentials.json")
-    const exported = await exportClaudeCredentials(exportedPath, real.HOME)
-    if (!exported) {
-      await rm(secretRoot, { recursive: true, force: true })
-      throw new Error("Claude credentials are unavailable for the isolated worker")
-    }
-    try {
-      await mkdir(path.dirname(destination), { recursive: true })
-      await copyFile(exported, destination)
-      await chmod(destination, 0o600)
-      claudeAuthCopied = true
-    } finally {
-      await rm(exportedPath, { force: true })
-    }
-    claudeAuthVerified = await verifyClaudeAuthHome(isolatedHome)
-    if (!claudeAuthVerified) {
-      await rm(secretRoot, { recursive: true, force: true })
-      throw new Error("Claude credentials copied to the isolated worker but failed `claude auth status`")
-    }
-  }
-
   return {
     secretRoot,
     providerEnv: {
@@ -805,10 +693,10 @@ export async function prepareIsolatedWorkerProviderEnv(providers = DEFAULT_PROVI
       mode: "isolated",
       codex_auth_copied: codexAuthCopied,
       opencode_auth_copied: opencodeDataAuthCopied || opencodeXdgAuthCopied,
-      claude_auth_copied: claudeAuthCopied,
-      claude_auth_verified: claudeAuthVerified,
-      claude_config_copied: claudeConfigCopied,
-      claude_settings_copied: claudeSettingsCopied,
+      claude_auth_copied: false,
+      claude_auth_verified: false,
+      claude_config_copied: false,
+      claude_settings_copied: false,
       opencode_config_shared: true,
       provider_data_shared: false,
       provider_cache_shared: false,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process"
-import { access, mkdir, rm, symlink, writeFile } from "node:fs/promises"
+import { access, mkdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -30,6 +30,7 @@ import {
   terminateChild,
   waitForTcpPort,
 } from "./lib/drill-runtime-helpers.mjs"
+import { CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE } from "./lib/live-provider-thread-transfer-runtime.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const cliRoot = path.resolve(scriptDir, "..")
@@ -159,31 +160,6 @@ async function prebuildLocalDockerSliceImageIfNeeded(root, policy) {
   })
 }
 
-async function exportClaudeCredentialsForSlice(root) {
-  const child = spawn("security", [
-    "find-generic-password",
-    "-s",
-    "Claude Code-credentials",
-    "-w",
-  ], {
-    stdio: ["ignore", "pipe", "ignore"],
-  })
-  const chunks = []
-  child.stdout.on("data", (chunk) => chunks.push(chunk))
-  const status = await new Promise((resolve) => {
-    child.on("error", () => resolve(1))
-    child.on("close", (code) => resolve(code ?? 1))
-  })
-  const payload = Buffer.concat(chunks)
-  if (status === 0 && payload.length > 0) {
-    const credentialsPath = path.join(root, "claude-credentials.json")
-    await writeFile(credentialsPath, payload, { mode: 0o600 })
-    return credentialsPath
-  }
-  const sourceCredentials = path.join(realHomeDir, ".claude", ".credentials.json")
-  return await access(sourceCredentials).then(() => sourceCredentials, () => null)
-}
-
 async function loadAgentHistoryEntries(client, sessionId, agentId, latestPromptCount = 20) {
   const outline = unwrap(
     await client.send(getSessionHistoryOutlineRequest(sessionId, [agentId], latestPromptCount)),
@@ -225,6 +201,8 @@ async function waitForHistoryMarker(client, sessionId, attachmentId, agentId, ma
 }
 
 async function main() {
+  throw new Error(CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE)
+
   const options = parseArgs(process.argv.slice(2))
   await assertBinary(kernelBinary, path.join(repoRoot, "apps/kernel/Cargo.toml"), "chariox-kernel")
   await assertBinary(relayBinary, path.join(repoRoot, "apps/relay/Cargo.toml"), "chariox-relay")
@@ -250,7 +228,6 @@ async function main() {
   let client = null
   let sessionId = null
   let sliceId = null
-  let exportedClaudeCredentialsPath = null
   let succeeded = false
   let failure = null
   try {
@@ -273,9 +250,6 @@ async function main() {
       `build_image = ${JSON.stringify(sliceBuildImagePolicy === "always" ? "auto" : sliceBuildImagePolicy)}`,
       "",
     ].join("\n"))
-    await symlink(path.join(realHomeDir, ".claude"), path.join(homeDir, ".claude"), "dir").catch(() => {})
-    await symlink(path.join(realHomeDir, ".claude.json"), path.join(homeDir, ".claude.json")).catch(() => {})
-    exportedClaudeCredentialsPath = await exportClaudeCredentialsForSlice(root)
     await prebuildLocalDockerSliceImageIfNeeded(root, sliceBuildImagePolicy)
     console.log(`[claude-headless-slice-drill] docker-host ${dockerHost ?? "default"} context ${dockerContext ?? "default"}`)
 
@@ -317,9 +291,6 @@ async function main() {
         CHARIOX_DAEMON_SOCKET: path.join(root, "home.sock"),
         CHARIOX_SESSION_HISTORY_DIR: path.join(root, "history"),
         RUST_MIN_STACK: rustMinStack,
-        ...(exportedClaudeCredentialsPath
-          ? { CHARIOX_SLICE_CLAUDE_CREDENTIALS: exportedClaudeCredentialsPath }
-          : {}),
         ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}),
         ...(dockerContext ? { DOCKER_CONTEXT: dockerContext } : {}),
       },
@@ -398,9 +369,6 @@ async function main() {
     }
     await terminateChild(kernel)
     await terminateChild(relay)
-    if (!succeeded && exportedClaudeCredentialsPath?.startsWith(root)) {
-      await rm(exportedClaudeCredentialsPath, { force: true }).catch(() => {})
-    }
     await finalizeDrillArtifacts({
       rootDir: root,
       passed: succeeded,

@@ -81,7 +81,9 @@ import {
   runNativeOpenCodePromptDetached,
   sendClaudeRenderedPromptViaKernelInput,
 } from "./lib/native-tui-provider-drivers.mjs"
-import { exportClaudeCredentials } from "./lib/live-provider-thread-transfer-runtime.mjs"
+import {
+  CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE,
+} from "./lib/live-provider-thread-transfer-runtime.mjs"
 import { applyProviderModelOverride } from "./lib/drill-provider-profiles.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
@@ -275,31 +277,8 @@ async function syncHetznerCodexAuth(options) {
   await execFileAsync("ssh", sshArgs(options, "mv /root/.codex/auth.json.tmp /root/.codex/auth.json && chmod 600 /root/.codex/auth.json"))
 }
 
-async function syncHetznerClaudeAuth(options, root) {
-  const credentialsPath = path.join(root, "claude-credentials.json")
-  const remoteTempPath = `/root/.claude/.credentials.json.chariox-${process.pid}.tmp`
-  try {
-    const exported = await exportClaudeCredentials(credentialsPath, realHomeDir)
-    if (!exported) throw new Error("local Claude credentials are unavailable")
-    await execFileAsync("ssh", sshArgs(options, "mkdir -p /root/.claude && chmod 700 /root/.claude"))
-    await execFileAsync("scp", [
-      "-i",
-      options.hetznerKey,
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "StrictHostKeyChecking=accept-new",
-      exported,
-      `${options.hetznerHost}:${remoteTempPath}`,
-    ])
-    await execFileAsync("ssh", sshArgs(
-      options,
-      `mv ${shellQuote(remoteTempPath)} /root/.claude/.credentials.json && chmod 600 /root/.claude/.credentials.json`,
-    ))
-  } finally {
-    await rm(credentialsPath, { force: true })
-    await execFileAsync("ssh", sshArgs(options, `rm -f ${shellQuote(remoteTempPath)}`)).catch(() => {})
-  }
+async function syncHetznerClaudeAuth() {
+  throw new Error(CLAUDE_UNATTENDED_CREDENTIALS_GUIDANCE)
 }
 
 async function syncHetznerWorkerKernelConfig(options, root, remoteRuntimeRoot) {
