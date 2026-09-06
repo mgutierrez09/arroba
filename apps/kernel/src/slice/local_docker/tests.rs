@@ -797,19 +797,6 @@ fn linux_docker_browser_controller_is_private_and_kernel_owned() {
 }
 
 #[test]
-fn linux_docker_headed_browser_trusts_the_local_terminal_origin() {
-    let script = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("slice-linux-docker/docker/slice-screen.sh"),
-    )
-    .expect("slice screen script should be readable");
-
-    assert!(script.contains(
-        "CHARIOX_SLICE_CHROME_TRUSTED_INSECURE_ORIGINS:-http://host.docker.internal:4321"
-    ));
-    assert!(script.contains("--unsafely-treat-insecure-origin-as-secure="));
-}
-
-#[test]
 fn linux_docker_headed_browser_reopens_tabs_after_snapshot_quiescence() {
     let script = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("slice-linux-docker/docker/slice-screen.sh"),

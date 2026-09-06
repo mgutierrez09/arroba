@@ -11,6 +11,7 @@ import { browserStateCleanupFailure } from "./lib/browser-state-drill-cleanup.mj
 import { browserStateDrillImageConfig } from "./lib/browser-state-drill-image.mjs"
 import { resolveBrowserStateDrillPaths } from "./lib/browser-state-drill-paths.mjs"
 import { startBrowserComputerFixture } from "./lib/browser-computer-fixture.mjs"
+import { startBrowserStateFixtureProxy } from "./lib/browser-state-fixture-proxy.mjs"
 import { finalizeDrillArtifacts } from "./lib/drill-artifacts.mjs"
 import { resolveBuiltBinary } from "./lib/drill-runtime-helpers.mjs"
 import { createBrowserStateEditorDrill } from "./lib/browser-state-drill-editor.mjs"
@@ -38,8 +39,8 @@ const { artifactDir, tempRoot } = resolveBrowserStateDrillPaths({
 })
 const kernelPort = Number.parseInt(process.env.M20_KERNEL_PORT ?? "", 10) || 55000 + Math.floor(Math.random() * 2000)
 const kernelUrl = `ws://127.0.0.1:${kernelPort}/kernel`
-// The slice marks this deterministic fixture origin as trustworthy so Chromium
-// can exercise service workers without weakening arbitrary HTTP origins.
+// A test-only loopback bridge exposes the host fixture inside the slice without
+// changing Chromium's normal secure-context restrictions.
 const fixturePort = 4321
 const sliceName = `m20-${process.pid}`
 const containerName = `chariox-slice-${sliceName}`
@@ -630,7 +631,17 @@ async function waitForBrowserText(needle, timeoutMs, message) {
 }
 
 async function waitForSliceRunning(sliceRef) {
-  return await waitForSliceStatus(sliceRef, "running", 240_000)
+  const current = await waitForSliceStatus(sliceRef, "running", 240_000)
+  await dockerText(["exec", "-d", "-u", "slice", containerName, "node", "--input-type=module", "-e",
+    `await (${startBrowserStateFixtureProxy.toString()})(${JSON.stringify({
+      port: fixturePort, upstreamHost: "host.docker.internal", upstreamPort: fixturePort,
+    })})`])
+  await waitFor(async () => {
+    const response = await runCommand("docker", ["exec", "-u", "slice", containerName,
+      "curl", "--fail", "--silent", "--max-time", "2", "--output", "/dev/null", fixtureUrl("/mail/login")], { timeoutMs: 5_000 })
+    return response.code === 0
+  }, 15_000, "loopback browser fixture did not become reachable")
+  return current
 }
 
 async function waitForSliceStatus(sliceRef, status, timeoutMs = 120_000) {
@@ -1002,7 +1013,7 @@ function log(message) {
 }
 
 function fixtureUrl(pathname) {
-  return `http://host.docker.internal:${fixturePort}${pathname}`
+  return `http://127.0.0.1:${fixturePort}${pathname}`
 }
 
 function unwrap(value, variant) {

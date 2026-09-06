@@ -3,7 +3,7 @@
 // and home volume between seed and restore, keeping only an archived home.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,8 +18,13 @@ assert.ok(["seed", "restore"].includes(phase), "expected seed or restore");
 assert.equal(process.env.CHARIOX_DISPOSABLE_BROWSER_DRILL, "1", "disposable container required");
 const runtime = await mkdtemp(path.join(tmpdir(), "chariox-profile-drill-"));
 await mkdir(path.join(runtime, "logs"));
-await copyFile(path.join(source, "docker/browser-cdp.mjs"), path.join(runtime, "browser-cdp.mjs"));
+for (const name of ["browser-cdp.mjs", "slice-selkies.py", "selkies_viewers.py"]) {
+  await copyFile(path.join(source, "docker", name), path.join(runtime, name));
+}
 const env = { ...process.env, CHARIOX_SLICE_ROOT: runtime, CHARIOX_SLICE_VIEWER_BACKEND: "novnc" };
+// Exercise both ordinary configuration and an explicitly empty override.
+if (phase === "seed") delete env.CHARIOX_SLICE_CHROME_TRUSTED_INSECURE_ORIGINS;
+else env.CHARIOX_SLICE_CHROME_TRUSTED_INSECURE_ORIGINS = "";
 const legacy = phase === "seed" && process.env.CHARIOX_TEST_LEGACY_BROWSER === "1";
 if (legacy) {
   // Reproduce the old launch configuration only in this disposable fixture.
@@ -139,6 +144,17 @@ try {
 }
 
 async function assertSandbox(connection) {
+  const mainProcesses = [];
+  for (const pid of (await readdir("/proc")).filter(value => /^\d+$/.test(value))) {
+    const args = await readFile(`/proc/${pid}/cmdline`, "utf8").then(value => value.split("\0"), error => {
+      if (error.code === "ENOENT" || error.code === "ESRCH") return [];
+      throw error;
+    });
+    if (args[0] === "/usr/lib/chromium/chromium" && !args.some(arg => arg.startsWith("--type="))) mainProcesses.push(args);
+  }
+  assert.equal(mainProcesses.length, 1, "expected one shared Chromium main process");
+  assert.equal(mainProcesses[0].some(arg => arg.startsWith("--unsafely-treat-insecure-origin-as-secure")), false,
+    "ordinary browser launch must not weaken insecure-origin restrictions");
   const { targetInfos } = await connection.send("Target.getTargets");
   console.log(JSON.stringify({ phase, check: "sandbox", pageCount: targetInfos.filter((target) => target.type === "page").length }));
   // A real headed internal page checks Chromium's own reported sandbox layers.

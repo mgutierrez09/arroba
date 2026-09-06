@@ -12,7 +12,9 @@ NOVNC_PORT="${CHARIOX_SLICE_NOVNC_PORT:-6080}"
 VIEWER_BACKEND="${CHARIOX_SLICE_VIEWER_BACKEND:-novnc}"
 CHROME_URL="${CHARIOX_SLICE_CHROME_URL:-about:blank}"
 CHROME_PROFILE="${CHARIOX_SLICE_CHROME_PROFILE:-$HOME/.chariox/browser/chromium}"
-CHROME_TRUSTED_INSECURE_ORIGINS="${CHARIOX_SLICE_CHROME_TRUSTED_INSECURE_ORIGINS:-http://host.docker.internal:4321}"
+# Development-only opt-in. Production and explicitly empty configuration must
+# retain Chromium's normal secure-context restrictions.
+CHROME_TRUSTED_INSECURE_ORIGINS="${CHARIOX_SLICE_CHROME_TRUSTED_INSECURE_ORIGINS:-}"
 
 export DISPLAY="$DISPLAY_ID"
 
