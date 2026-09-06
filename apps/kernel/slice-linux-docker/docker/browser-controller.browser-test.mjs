@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, statfs, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -872,12 +872,12 @@ test("canceling a download after its tab closes preserves another active downloa
   }
 });
 
-for (const boundary of ["mkdir", "realpath", "stat"]) {
+for (const boundary of ["mkdir", "realpath", "stat", "statfs"]) {
 test(`downloads reject navigation during directory ${boundary} and allow a fresh retry`, { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "chariox-controller-download-"));
   let navigate;
   let navigated = false;
-  const fileSystem = Object.fromEntries(Object.entries({ mkdir, realpath, stat }).map(([name, operation]) => [name, async (...args) => {
+  const fileSystem = Object.fromEntries(Object.entries({ mkdir, realpath, stat, statfs }).map(([name, operation]) => [name, async (...args) => {
     const result = await operation(...args);
     if (name === boundary && !navigated) {
       navigated = true;
