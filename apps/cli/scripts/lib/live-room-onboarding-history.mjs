@@ -1,5 +1,17 @@
 import assert from "node:assert/strict"
 
+// Only fixed categories leave the private history boundary. Provider errors
+// can contain selectors, URLs or other user-controlled/private values.
+const errorPatterns = [
+  ["field_unavailable", /not found or is not fillable|requires a focused fillable|stale.*(?:field|reference)/i],
+  ["target_mismatch", /does not match expected (?:host|URL)|origin.*mismatch/i],
+  ["credential_unavailable", /(?:credential|secret).*(?:not found|unknown|missing|unavailable)/i],
+  ["credential_scope", /(?:host|use|credential).*(?:not allowed|denied|forbidden)/i],
+  ["vault_locked", /vault.*(?:locked|unlock)/i],
+  ["invalid_arguments", /invalid.*arguments|missing field/i],
+  ["timeout", /timed out|timeout/i],
+]
+
 // Complete kernel-owned records are required to prove which credential tool
 // caused an action. Outline summaries alone cannot provide that evidence.
 export async function readOnboardingTurnTools(input, promptId) {
@@ -40,8 +52,11 @@ export async function readOnboardingTurnTools(input, promptId) {
       const tool = JSON.parse(row.entry.text)
       assert.equal(typeof tool.tool, "string")
       const output = typeof tool.output === "string" ? JSON.parse(tool.output) : tool.output
+      const errorCodes = typeof tool.error === "string" && tool.error
+        ? errorPatterns.filter(([, pattern]) => pattern.test(tool.error)).map(([code]) => code) : []
+      if (tool.error && errorCodes.length === 0) errorCodes.push("unclassified_tool_error")
       return { name: tool.tool.replace(/^(?:(?:mcp__chariox__|chariox\.|chariox_))+/, ""),
-        status: tool.status, input: tool.input, output: output?.structuredContent ?? output?.payload ?? output }
+        status: tool.status, input: tool.input, output: output?.structuredContent ?? output?.payload ?? output, errorCodes }
     } catch { throw new Error("onboarding tool history is incomplete or malformed") }
   })
 }

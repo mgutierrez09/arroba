@@ -2,6 +2,19 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
 
+test("onboarding classifies provider tool errors without retaining private error text", async () => {
+  const tools = await readOnboardingTurnTools({ sessionId: "room", agentId: "agent", withTimeout: async p => p,
+    requests: { getSessionHistoryOutlineRequest: () => ({}) },
+    client: { send: async () => ({ SessionHistoryOutline: { agents: [{ agent_id: "agent", turns: [{
+      prompt_id: "current", lifecycle: "completed", entries: [{ entry_index: 1, entry: {
+        kind: "provider_tool", text: JSON.stringify({ tool: "paste_secret_to_slice", status: "error",
+          error: "slice browser field `private-value` was not found or is not fillable" }),
+      } }],
+    }] }] } }) } }, "current")
+  assert.deepEqual(tools[0].errorCodes, ["field_unavailable"])
+  assert.equal(JSON.stringify(tools).includes("private-value"), false)
+})
+
 test("onboarding reads complete tool records from the exact prompt, not a truncated preview", async () => {
   const requests = { getSessionHistoryOutlineRequest: (...args) => ({ name: "outline", args }),
     getSessionHistoryBlobContentRequest: (...args) => ({ name: "blob", args }) }

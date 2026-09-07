@@ -134,7 +134,8 @@ export async function runRoomOnboarding(input) {
       "slice_open_url", "slice_browser_find", "slice_browser_fill", "slice_browser_submit", "slice_browser_text"])
     report.observedTools = tools.slice(-64).map(tool => ({ name: known.has(tool.name) ? tool.name : "other",
       completed: tool.status === "completed", succeeded: tool.output?.ok === true,
-      failed: tool.output?.ok === false || tool.output?.isError === true }))
+      failed: tool.status === "error" || tool.status === "failed" || tool.output?.ok === false || tool.output?.isError === true,
+      errorCodes: tool.errorCodes }))
     report.diagnostic = await captureRoomProviderDiagnostic(input).catch(() => ({ codes: ["diagnostic_unavailable"] }))
     try { await input.screenshot("onboarding-failed") } catch { /* Preserve the original failure. */ }
     try { await input.checkpoint({ phase: "onboarding-failed", onboarding: report }) } catch { /* Cleanup still owns teardown. */ }
