@@ -18,7 +18,7 @@ export function roomRealProviderOptions(env) {
   const mode = env.CHARIOX_ROOM_DRILL_PROVIDER_MODE ?? "computer"
   assert.ok(["computer", "browser"].includes(mode), "select Browser or Computer provider mode")
   const officeScenario = env.CHARIOX_ROOM_DRILL_OFFICE_SCENARIO
-  assert.ok(officeScenario === undefined || (officeScenario === "onboarding" && mode === "browser" && !web),
+  assert.ok(officeScenario === undefined || (["onboarding", "onboarding-revocation"].includes(officeScenario) && mode === "browser" && !web),
     "invalid office scenario: onboarding currently requires standalone Browser validation")
   const computerTask = env.CHARIOX_ROOM_DRILL_COMPUTER_TASK
   assert.ok(computerTask === undefined || (computerTask === "office" && mode === "computer"), "invalid Computer task")
@@ -58,7 +58,7 @@ export async function runRoomRealProvider(input) {
   if (input.options.computerTask === "office") {
     verified.office = await runRoomOfficeWork({ ...input, agentId: result.agentId })
   }
-  if (input.options.officeScenario === "onboarding") {
+  if (["onboarding", "onboarding-revocation"].includes(input.options.officeScenario)) {
     verified.onboarding = await runRoomOnboarding({ ...input, agentId: result.agentId })
   }
   await input.checkpoint({ phase: "passed", ...verified })

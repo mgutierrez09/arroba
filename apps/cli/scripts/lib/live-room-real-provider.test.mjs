@@ -10,6 +10,8 @@ test("email onboarding is an explicit standalone Browser scenario until Web veri
     CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser",
     CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "onboarding" }
   assert.equal(roomRealProviderOptions(env).officeScenario, "onboarding")
+  assert.equal(roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "onboarding-revocation" }).officeScenario,
+    "onboarding-revocation")
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "computer" }), /office scenario/)
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "unknown" }), /office scenario/)
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
