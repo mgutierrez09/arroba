@@ -79,3 +79,17 @@ rejected until its companion observes this scenario.
 The live official-provider run, source audit, Web observation, other providers,
 and managed-machine repeat remain outstanding. This is not yet an end-to-end
 pass or benchmark evidence.
+
+## Live finding
+
+Three guarded local attempts on 2026-09-07 failed before extension registration.
+The final attempt retained complete tool records: the provider's `write_artifact`
+calls returned `remote_workspace_not_coordinated`. The plain home office folder
+and the managed slice's `/workspace` have different physical fingerprints.
+The public workspace-link API currently accepts Git worktrees only.
+
+Keep this non-Git scenario. A separate runtime change must safely coordinate
+the home-owned managed-slice workspace without equating unrelated remote paths.
+Do not initialize a fake Git repository to avoid the missing behavior. All
+three attempts removed their containers, volumes, state, and listeners; none
+was interrupted by the memory guard.
