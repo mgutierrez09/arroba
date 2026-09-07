@@ -34,7 +34,7 @@ node --test apps/cli/scripts/lib/web-onboarding-channel.test.mjs
 node --test apps/cli/scripts/lib/live-room-web-onboarding.test.mjs
 ```
 
-## Integration still required
+## Live integration
 
 `live-room-web-onboarding.mjs` now validates the selected agent through the
 kernel before invoking the existing private onboarding runner. The runner
@@ -42,15 +42,22 @@ provides an optional phase observation callback after physical verification
 and leak scanning. Focused tests exercise the kernel request and provider
 submission boundaries, including fixture cleanup on failed submission.
 
-These tests do not prove Web onboarding. The existing live entry point still
-rejects Web onboarding. Remaining wiring must:
+The live companion now connects the owner adapter and samples both TUIs during
+provider turns and acknowledgement waits. Final verification checks all four
+Web receipts against the owner's physical screenshots and credential/action
+proof, including independent kernel history and both TUI observations.
 
-- connect the owner adapter to the existing live companion entry point;
-- sample both TUIs during all provider turns and acknowledgement waits;
-- compare the production Web canvas with each physical phase screenshot;
-- reject changed targets, disconnected/stale frames and late Web errors;
-- validate all four Web receipts against the owner's credential/action proof;
-- run the official-provider workflow and verify complete cleanup.
+Select `CHARIOX_ROOM_DRILL_FOCUS=web-companion`,
+`CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER=1`,
+`CHARIOX_ROOM_DRILL_PROVIDER_MODE=browser`, and
+`CHARIOX_ROOM_DRILL_OFFICE_SCENARIO=onboarding` through the paired Cloud local
+Room drill. Explicitly select the official provider and model. Use the standard
+initial Browser click, not an unrelated form/layout/recovery combination.
+
+The paired Cloud observer must compare the production Web canvas with each
+physical screenshot and reject changed targets, stale frames and late Web
+errors. These focused tests do not prove live official-provider acceptance;
+that still requires a full run and cleanup evidence at the paired commits.
 
 Keep the Web revocation scenario disabled until its additional negative phase
 has corresponding observer coverage. Controlled fixture acceptance will not
