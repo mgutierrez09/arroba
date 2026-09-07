@@ -2,6 +2,20 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
 
+test("complete tool records may contain plain-text output without becoming structured success evidence", async () => {
+  const input = { sessionId: "room", agentId: "agent", withTimeout: async p => p,
+    requests: { getSessionHistoryOutlineRequest: () => ({}) },
+    client: { send: async () => ({ SessionHistoryOutline: { agents: [{ agent_id: "agent", turns: [{
+      prompt_id: "current", lifecycle: "completed", entries: [{ entry_index: 1, entry: {
+        kind: "provider_tool", text: JSON.stringify({ tool: "write_artifact", id: "write-1", status: "completed",
+          output: "Artifact writing is unavailable" }),
+      } }],
+    }] }] } }) } }
+  const tools = await readOnboardingTurnTools(input, "current")
+  assert.equal(tools[0].output, "Artifact writing is unavailable")
+  assert.equal(tools[0].output.registered, undefined)
+})
+
 test("onboarding classifies provider tool errors without retaining private error text", async () => {
   const tools = await readOnboardingTurnTools({ sessionId: "room", agentId: "agent", withTimeout: async p => p,
     onToolError: () => { throw new Error("private error text escaped the history boundary") },
