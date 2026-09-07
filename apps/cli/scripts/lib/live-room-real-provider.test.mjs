@@ -5,6 +5,16 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
+test("public API office work selects the local Browser drill and does not claim a Web observer yet", () => {
+  const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
+    CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser",
+    CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "public-api" }
+  assert.equal(roomRealProviderOptions(env).officeScenario, "public-api")
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "computer" }), /office scenario/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
+    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /office scenario/)
+})
+
 test("email onboarding supports its Web observer but revocation remains standalone", () => {
   const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
     CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser",

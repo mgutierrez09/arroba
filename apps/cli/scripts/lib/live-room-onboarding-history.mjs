@@ -53,7 +53,10 @@ export async function readOnboardingTurnTools(input, promptId) {
     try {
       const tool = JSON.parse(row.entry.text)
       assert.equal(typeof tool.tool, "string")
-      const output = typeof tool.output === "string" ? JSON.parse(tool.output) : tool.output
+      let output = tool.output
+      if (typeof output === "string") {
+        try { output = JSON.parse(output) } catch { /* Plain-text tool output is valid history, not structured success. */ }
+      }
       const errorCodes = typeof tool.error === "string" && tool.error
         ? errorPatterns.filter(([, pattern]) => pattern.test(tool.error)).map(([code]) => code) : []
       if (tool.error && errorCodes.length === 0) errorCodes.push("unclassified_tool_error")

@@ -2000,7 +2000,7 @@ function scopedRelayToken({ subject, subjectKind, actions, userId = null }) {
 
 function roomProviderInput() {
   return {
-    client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace,
+    client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace, evidenceRoot,
     options: realProviderOptions, waitFor, withTimeout, screenshot,
     officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
     onboardingRuntime: {
