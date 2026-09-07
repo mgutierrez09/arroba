@@ -45,6 +45,7 @@ export async function runRoomOnboarding(input) {
     const screenshot = await input.screenshot(`onboarding-${name}`)
     report.phases.push({ name, turn, physicalResult: true, screenshot })
     await runtime.assertNoLeaks()
+    await input.observePhase?.(name, screenshot)
   }
 
   try {
@@ -136,7 +137,7 @@ export async function runRoomOnboarding(input) {
         credential: credentials[0], mailOrigin, report: report.revocation,
       }))
     }
-    report.skipped = ["Web projection", "real Gmail and external SaaS", "other providers", "locked-vault rejection",
+    report.skipped = [...(input.observePhase ? [] : ["Web projection"]), "real Gmail and external SaaS", "other providers", "locked-vault rejection",
       "wrong-origin rejection", "screenshot OCR secret scan", "provider save/resume"]
     return report
   } catch (error) {

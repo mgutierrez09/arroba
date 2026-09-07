@@ -31,14 +31,21 @@ Run its focused tests with:
 
 ```sh
 node --test apps/cli/scripts/lib/web-onboarding-channel.test.mjs
+node --test apps/cli/scripts/lib/live-room-web-onboarding.test.mjs
 ```
 
 ## Integration still required
 
-The channel tests do not prove Web onboarding. At this commit the existing
-live runner still rejects Web onboarding. Remaining wiring must:
+`live-room-web-onboarding.mjs` now validates the selected agent through the
+kernel before invoking the existing private onboarding runner. The runner
+provides an optional phase observation callback after physical verification
+and leak scanning. Focused tests exercise the kernel request and provider
+submission boundaries, including fixture cleanup on failed submission.
 
-- connect the live kernel agent validator and private OSS onboarding runner;
+These tests do not prove Web onboarding. The existing live entry point still
+rejects Web onboarding. Remaining wiring must:
+
+- connect the owner adapter to the existing live companion entry point;
 - sample both TUIs during all provider turns and acknowledgement waits;
 - compare the production Web canvas with each physical phase screenshot;
 - reject changed targets, disconnected/stale frames and late Web errors;
