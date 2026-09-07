@@ -79,6 +79,8 @@ test("revocation denial must target the Password field freshly discovered after 
     e => { e.tools[1].output.browser.matches[0].kind = "link" },
     e => { e.tools.push(e.tools.shift()) },
     e => { e.tools.splice(2, 0, { ...e.tools[0] }) },
+    e => { e.tools[0].callId = "open"; e.tools.unshift({ ...e.tools[0], status: "running" });
+      e.tools.splice(3, 0, e.tools.splice(1, 1)[0]) },
   ]) {
     const value = evidence(); mutate(value)
     assert.throws(() => verifyCredentialRevocation(value))

@@ -48,7 +48,8 @@ function settledCalls(records) {
   }
   assert.ok([...calls.values()].every(call => ["completed", "failed", "error"].includes(call.status)),
     "revocation tool call did not settle")
-  return [...calls.values()]
+  const terminalRecords = new Set(calls.values())
+  return records.filter(record => terminalRecords.has(record))
 }
 
 export function verifyCredentialRevocation({ tools: records, history, actorId, credentialId, expectedHost, baseline, interaction }) {
