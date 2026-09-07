@@ -5,6 +5,17 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
+test("email onboarding is an explicit standalone Browser scenario until Web verification is wired", () => {
+  const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
+    CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser",
+    CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "onboarding" }
+  assert.equal(roomRealProviderOptions(env).officeScenario, "onboarding")
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "computer" }), /office scenario/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "unknown" }), /office scenario/)
+  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
+    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /office scenario/)
+})
+
 test("office work explicitly selects Computer mode for standalone and Web companion drills", () => {
   const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
     CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_COMPUTER_TASK: "office" }
