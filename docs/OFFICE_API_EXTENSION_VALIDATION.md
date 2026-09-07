@@ -23,13 +23,13 @@ precondition, not permission to substitute fabricated release data.
 1. Fetch the expected release independently in the owning driver. Do not put
    expected values in the provider prompt or initial inventory page.
 2. The official slice-backed provider reads the inventory task in Browser mode.
-3. That provider authors an extension in its workspace with its normal file
-   tools, then registers an environment and the script through Chariox runtime
+3. That provider authors an extension in its workspace with `write_artifact`,
+   then registers an environment and the script through Chariox runtime
    tools. The driver must not author, register, grant, or invoke it for the agent.
 4. The agent grants itself the extension and invokes it in the same provider
    session. Verify registration, grant, invocation, and matching output in
-   complete kernel-owned history. File creation tools are allowed for authoring
-   only; direct shell HTTP must not replace the extension invocation or browser.
+   complete kernel-owned history. Direct shell HTTP must not replace the
+   extension invocation or browser.
 5. The agent fills and submits the inventory through Chariox Browser tools.
    Check the resulting HTTP record against the independently fetched release,
    the provider's extension result, and the attributed Browser actions.
@@ -64,6 +64,18 @@ Eight focused tests pass. A live unauthenticated preflight on 2026-09-07 returne
 release ID `342331441`, tag `jq-1.8.2`, published `2026-06-20T14:11:27Z`.
 This is a preflight observation, not a pinned expected version for future runs.
 
-The owning driver wiring, provider-history acceptance, live official-provider run, Web/TUI
-observations, other providers, and managed-machine repeat remain outstanding.
-This is not yet an end-to-end pass or benchmark evidence.
+The local `public-api` scenario is wired into the official-provider Browser
+drill. It requires source-byte provenance, registration and self-grant before
+invocation, a fresh invocation nonce, unchanged provider-session identity,
+matching inventory metadata, attributed ordered Browser actions, and both TUI
+receipts. The source is retained outside the repo for a separate audit that it
+actually calls the external API. Unit history checks alone cannot prove that.
+
+Set `CHARIOX_ROOM_DRILL_OFFICE_SCENARIO=public-api` with Browser mode and
+`CHARIOX_ROOM_DRILL_FOCUS=real-provider`. Reuse a verified runtime image and run
+the existing resource-guarded official-provider drill. Web mode is deliberately
+rejected until its companion observes this scenario.
+
+The live official-provider run, source audit, Web observation, other providers,
+and managed-machine repeat remain outstanding. This is not yet an end-to-end
+pass or benchmark evidence.
