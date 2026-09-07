@@ -58,6 +58,7 @@ export async function readOnboardingTurnTools(input, promptId) {
         ? errorPatterns.filter(([, pattern]) => pattern.test(tool.error)).map(([code]) => code) : []
       if (tool.error && errorCodes.length === 0) errorCodes.push("unclassified_tool_error")
       return { name: tool.tool.replace(/^(?:(?:mcp__chariox__|chariox\.|chariox_))+/, ""),
+        callId: typeof tool.id === "string" ? tool.id : undefined,
         status: tool.status, input: tool.input, output: output?.structuredContent ?? output?.payload ?? output, errorCodes }
     } catch { throw new Error("onboarding tool history is incomplete or malformed") }
   })

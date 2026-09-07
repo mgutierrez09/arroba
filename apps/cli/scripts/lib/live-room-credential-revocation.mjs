@@ -53,7 +53,7 @@ export function verifyCredentialRevocation({ tools, history, actorId, credential
   return { denied: true, scopeRevoked: true, vaultUnlocks: 1, completedFillsAfterBaseline: 0 }
 }
 
-export async function runCredentialRevocation(input, { credential, mailOrigin }) {
+export async function runCredentialRevocation(input, { credential, mailOrigin, report }) {
   const { client, requests, sessionId, agentId } = input
   const readHistory = () => readRoomDrillActionHistory(async (before, limit) => {
     const response = await client.send(requests.listRoomEnvironmentActionHistoryRequest(sessionId, before, limit))
@@ -79,13 +79,22 @@ export async function runCredentialRevocation(input, { credential, mailOrigin })
   const history = await readHistory()
   await input.onboardingRuntime.assertNoLeaks()
   const pastes = tools.filter(tool => tool.name === "paste_secret_to_slice")
-  await input.checkpoint({ phase: "onboarding-revocation-observed", revocation: {
+  const identities = new Map()
+  Object.assign(report, {
     ...responder.report(), attempts: pastes.length,
+    pasteRecords: pastes.map(tool => {
+      if (tool.callId && !identities.has(tool.callId)) identities.set(tool.callId, identities.size + 1)
+      return { call: identities.get(tool.callId) ?? null,
+        status: ["running", "completed", "failed", "error"].includes(tool.status) ? tool.status : "other",
+        errorCodes: tool.errorCodes, credentialMatches: tool.input?.credential_id === credential.id,
+        hasAction: Boolean(tool.output?.action_id) }
+    }),
     scopedDenials: pastes.filter(tool => ["failed", "error"].includes(tool.status)
       && tool.errorCodes?.includes("credential_scope")).length,
     completedFillsAfterBaseline: history.filter(action => action.sequence > baseline
       && action.actor_id === `agent:${agentId}` && action.kind === "fill" && action.state === "completed").length,
-  } })
+  })
+  await input.checkpoint({ phase: "onboarding-revocation-observed", revocation: report })
   const proof = verifyCredentialRevocation({ tools, history, actorId: `agent:${agentId}`, baseline,
     credentialId: credential.id, expectedHost: new URL(mailOrigin).host, interaction: responder.report() })
   return { ...proof, turn, screenshot: await input.screenshot("onboarding-revocation-denied") }

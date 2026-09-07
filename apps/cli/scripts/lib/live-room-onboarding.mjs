@@ -131,7 +131,10 @@ export async function runRoomOnboarding(input) {
     report.localTuiObserved = true
     report.remoteTuiObserved = true
     if (input.options.officeScenario === "onboarding-revocation") {
-      report.revocation = await runCredentialRevocation(input, { credential: credentials[0], mailOrigin })
+      report.revocation = {}
+      Object.assign(report.revocation, await runCredentialRevocation(input, {
+        credential: credentials[0], mailOrigin, report: report.revocation,
+      }))
     }
     report.skipped = ["Web projection", "real Gmail and external SaaS", "other providers", "locked-vault rejection",
       "wrong-origin rejection", "screenshot OCR secret scan", "provider save/resume"]
