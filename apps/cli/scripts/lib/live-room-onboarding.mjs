@@ -8,6 +8,7 @@ import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
 import { verifyOnboardingCredentialActions, verifyOnboardingEmailPath } from "./live-room-onboarding-proof.mjs"
 import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
 import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.mjs"
+import { runCredentialRevocation } from "./live-room-credential-revocation.mjs"
 
 export async function runRoomOnboarding(input) {
   const { client, requests, sessionId, agentId, onboardingRuntime: runtime } = input
@@ -129,6 +130,12 @@ export async function runRoomOnboarding(input) {
     report.actions = observed.map(a => ({ id: a.action_id, sequence: a.sequence, kind: a.kind }))
     report.localTuiObserved = true
     report.remoteTuiObserved = true
+    if (input.options.officeScenario === "onboarding-revocation") {
+      report.revocation = {}
+      Object.assign(report.revocation, await runCredentialRevocation(input, {
+        credential: credentials[0], mailOrigin, report: report.revocation,
+      }))
+    }
     report.skipped = ["Web projection", "real Gmail and external SaaS", "other providers", "locked-vault rejection",
       "wrong-origin rejection", "screenshot OCR secret scan", "provider save/resume"]
     return report
