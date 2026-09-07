@@ -136,8 +136,8 @@ export async function runRoomOnboarding(input) {
       completed: tool.status === "completed", succeeded: tool.output?.ok === true,
       failed: tool.output?.ok === false || tool.output?.isError === true }))
     report.diagnostic = await captureRoomProviderDiagnostic(input).catch(() => ({ codes: ["diagnostic_unavailable"] }))
-    await input.screenshot("onboarding-failed").catch(() => undefined)
-    await input.checkpoint({ phase: "onboarding-failed", onboarding: report })
+    try { await input.screenshot("onboarding-failed") } catch { /* Preserve the original failure. */ }
+    try { await input.checkpoint({ phase: "onboarding-failed", onboarding: report }) } catch { /* Cleanup still owns teardown. */ }
     throw error
   } finally {
     const cleanup = await Promise.allSettled([service?.close(), mail.close()])
