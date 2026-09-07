@@ -1,13 +1,32 @@
 import assert from "node:assert/strict"
 
-export function verifyOnboardingEmailPath({ tools, history, actorId }) {
+export function verifyOnboardingEmailPath({ tools, history, actorId, navigationUrls = {} }) {
   const allowed = new Set(["request_credential_secret", "create_generated_credential", "paste_secret_to_slice",
     "slice_open_url", "slice_browser_find", "slice_browser_fill", "slice_browser_submit", "slice_browser_text",
     "slice_browser_click", "slice_browser_status", "slice_browser_tab", "slice_screenshot"])
   assert.ok(tools.every(t => allowed.has(t.name)), "onboarding used a tool outside the approved Chariox browser path")
+  for (const tool of tools) {
+    if (tool.name === "slice_open_url") {
+      assert.ok(tool.phase !== "confirmation" && navigationUrls[tool.phase]
+        && tool.input?.url === navigationUrls[tool.phase], "onboarding bypassed its phase navigation path")
+    }
+    if (["confirmation-email", "confirmation"].includes(tool.phase)) {
+      assert.ok(!["slice_browser_fill", "paste_secret_to_slice", "create_generated_credential", "request_credential_secret"]
+        .includes(tool.name), "onboarding mutated the confirmation document outside its links and form")
+    }
+  }
   const actions = ["confirmation-email", "confirmation"].map(phase => {
     const clicks = tools.filter(t => t.phase === phase && t.name === "slice_browser_click" && t.status === "completed")
     assert.equal(clicks.length, 1, "onboarding must open its email and follow its confirmation link")
+    const click = clicks[0]
+    const reference = click.input?.field_id ?? click.input?.selector
+    const label = phase === "confirmation-email" ? "Confirm your Office Service account" : "Confirm account"
+    assert.ok(typeof reference === "string" && reference.startsWith("element-"), "onboarding click lacks an opaque link reference")
+    const discovery = tools.slice(0, tools.indexOf(click)).findLast(t => t.phase === phase
+      && t.name === "slice_browser_find" && t.status === "completed")
+    assert.ok(discovery?.output?.browser?.matches?.some(m => m.kind === "link" && m.field_id === reference
+      && (m.label === label || m.text === label)), "onboarding did not click the discovered confirmation link")
+    assert.equal(click.output?.browser?.field_id, reference, "onboarding click result differs from the discovered link")
     const action = history.find(a => a.action_id === clicks[0].output?.action_id)
     assert.ok(action?.kind === "click" && action.actor_id === actorId && action.mode === "browser"
       && action.state === "completed", "onboarding email click lacks its attributed completed action")

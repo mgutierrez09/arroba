@@ -4,8 +4,16 @@ import { verifyOnboardingCredentialActions, verifyOnboardingEmailPath } from "./
 
 test("onboarding requires attributed email and confirmation clicks and rejects bypass tools", () => {
   const sample = () => ({ actorId: "agent:agent", tools: [
-    { name: "slice_browser_click", phase: "confirmation-email", status: "completed", output: { action_id: "mail" } },
-    { name: "slice_browser_click", phase: "confirmation", status: "completed", output: { action_id: "link" } },
+    { name: "slice_browser_find", phase: "confirmation-email", status: "completed", output: { browser: { matches: [
+      { kind: "link", field_id: "element-mail", label: "Confirm your Office Service account" },
+    ] } } },
+    { name: "slice_browser_click", phase: "confirmation-email", status: "completed", input: { field_id: "element-mail" },
+      output: { action_id: "mail", browser: { field_id: "element-mail" } } },
+    { name: "slice_browser_find", phase: "confirmation", status: "completed", output: { browser: { matches: [
+      { kind: "link", field_id: "element-confirm", label: "Confirm account" },
+    ] } } },
+    { name: "slice_browser_click", phase: "confirmation", status: "completed", input: { field_id: "element-confirm" },
+      output: { action_id: "link", browser: { field_id: "element-confirm" } } },
   ], history: ["mail", "link"].map((id, i) => ({ action_id: id, sequence: i + 10, actor_id: "agent:agent",
     mode: "browser", kind: "click", state: "completed", targets: [{ kind: "browser_tab", tab_id: "mail-tab" }] })) })
   assert.equal(verifyOnboardingEmailPath(sample()).length, 2)
@@ -16,6 +24,12 @@ test("onboarding requires attributed email and confirmation clicks and rejects b
     x => { x.history[1].actor_id = "user:local" },
     x => { x.history[1].targets[0].tab_id = "unrelated-tab" },
     x => { x.history[1].sequence = 2 },
+    x => { x.tools.push({ name: "slice_open_url", phase: "confirmation", status: "completed" }) },
+    x => { x.tools[2].output.browser.matches[0].label = "Unrelated link" },
+    x => { x.tools[3].input.field_id = "unrelated-element" },
+    x => { x.tools[3].output.browser.field_id = "unrelated-element" },
+    x => { x.tools[2].output.browser.matches[0].label = "Unrelated link";
+      x.tools.push({ name: "slice_open_url", phase: "confirmation", status: "completed" }) },
   ]) { const invalid = sample(); mutate(invalid); assert.throws(() => verifyOnboardingEmailPath(invalid)) }
 })
 

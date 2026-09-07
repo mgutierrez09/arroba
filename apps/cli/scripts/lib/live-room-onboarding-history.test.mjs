@@ -4,6 +4,7 @@ import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
 
 test("onboarding classifies provider tool errors without retaining private error text", async () => {
   const tools = await readOnboardingTurnTools({ sessionId: "room", agentId: "agent", withTimeout: async p => p,
+    onToolError: () => { throw new Error("private error text escaped the history boundary") },
     requests: { getSessionHistoryOutlineRequest: () => ({}) },
     client: { send: async () => ({ SessionHistoryOutline: { agents: [{ agent_id: "agent", turns: [{
       prompt_id: "current", lifecycle: "completed", entries: [{ entry_index: 1, entry: {
