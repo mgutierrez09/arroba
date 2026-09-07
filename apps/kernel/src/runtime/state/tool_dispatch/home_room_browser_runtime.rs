@@ -9,17 +9,12 @@ impl KernelRuntimeState {
     ) -> Result<crate::transport::runtime_tools::RuntimeToolResult, DaemonError> {
         let operation = "forwarded Room browser runtime tool";
         let canonical_tool_name =
-            crate::transport::runtime_tools::canonical_slice_tool_name(&call.tool_name)
-                .ok_or_else(|| DaemonError::LocalTransport {
+            canonical_room_browser_runtime_tool(&call.tool_name).ok_or_else(|| {
+                DaemonError::LocalTransport {
                     operation,
                     message: format!("unsupported Room browser runtime tool `{}`", call.tool_name),
-                })?;
-        if !is_room_browser_controller_runtime_tool(canonical_tool_name) {
-            return Err(DaemonError::LocalTransport {
-                operation,
-                message: format!("unsupported Room browser runtime tool `{canonical_tool_name}`"),
-            });
-        }
+                }
+            })?;
         let expected_worker_kernel_id =
             context
                 .worker_kernel_id

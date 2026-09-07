@@ -58,6 +58,12 @@ fn room_browser_runtime_tool_response_timeout(
     arguments: &serde_json::Value,
 ) -> Duration {
     let default_timeout = Duration::from_millis(config.relay_request_timeout_ms);
+    if canonical_room_browser_runtime_tool(tool_name)
+        == Some(crate::transport::runtime_tools::PASTE_SECRET_TO_SLICE_TOOL)
+    {
+        // 300-second home vault unlock, browser work and relay response buffer.
+        return std::cmp::max(default_timeout, Duration::from_secs(345));
+    }
     if !matches!(
         tool_name,
         crate::transport::runtime_tools::SLICE_BROWSER_WAIT_FOR_TEXT_TOOL
@@ -80,6 +86,26 @@ fn room_browser_runtime_tool_response_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_secret_forwarding_waits_for_home_vault_unlock() {
+        let mut config = crate::config::DaemonConfig::for_tests();
+        for name in [
+            crate::transport::runtime_tools::PASTE_SECRET_TO_SLICE_TOOL,
+            crate::transport::runtime_tools::PASTE_SECRET_TO_SLICE_TOOL_ALIAS,
+        ] {
+            config.relay_request_timeout_ms = 1_000;
+            assert_eq!(
+                room_browser_runtime_tool_response_timeout(&config, name, &serde_json::json!({})),
+                Duration::from_secs(345)
+            );
+            config.relay_request_timeout_ms = 400_000;
+            assert_eq!(
+                room_browser_runtime_tool_response_timeout(&config, name, &serde_json::json!({})),
+                Duration::from_secs(400)
+            );
+        }
+    }
 
     #[test]
     fn browser_wait_forwarding_keeps_a_relay_response_buffer() {

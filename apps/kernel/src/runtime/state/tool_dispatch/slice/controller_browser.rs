@@ -10,14 +10,13 @@ use super::slice_browser::{
 impl KernelRuntimeState {
     pub(super) async fn controller_paste_secret_to_slice_tool_result(
         &self,
-        provider_run: &crate::provider::RuntimeProviderRun,
+        session_id: &str,
         slice_id: &str,
         agent_id: &str,
         args: crate::transport::runtime_tools::PasteSecretToSliceArgs,
     ) -> Result<crate::transport::runtime_tools::RuntimeToolResult, DaemonError> {
         let status =
-            capture_controller_browser_status(self, provider_run.session_id(), slice_id, agent_id)
-                .await?;
+            capture_controller_browser_status(self, session_id, slice_id, agent_id).await?;
         let browser =
             status
                 .result
@@ -67,39 +66,32 @@ impl KernelRuntimeState {
                 operation: "runtime_tool_paste_secret_to_slice",
                 message,
             })?;
-        let secret = match self
-            .resolve_remote_home_credential_secret(
-                provider_run,
-                &args.credential_id,
-                crate::transport::relay_peer::RemoteCredentialSecretInjection::Browser {
-                    target_url: target_document_url.clone(),
-                },
+        // The Room controller and vault share home authority. A leased worker
+        // forwards the opaque credential handle, never a resolved secret.
+        let user_config = self.owned.config_projection.snapshot().user_config;
+        let credentials = crate::credential::load_user_credentials()?;
+        let service = crate::secret::RuntimeSecretService::with_vault_config(
+            credentials,
+            &user_config.credential_vault,
+        )?;
+        service.validate_browser_secret_input_for_target_url(
+            &args.credential_id,
+            &target_document_url,
+        )?;
+        let _vault_unlock = self
+            .ensure_vault_unlocked_for_agent(
+                session_id,
+                agent_id,
+                "runtime_tool_paste_secret_to_slice",
             )
-            .await?
-        {
-            Some(secret) => secret,
-            None => {
-                let _vault_unlock = self
-                    .ensure_vault_unlocked_for_provider_run(
-                        provider_run,
-                        "runtime_tool_paste_secret_to_slice",
-                    )
-                    .await?;
-                let user_config = self.owned.config_projection.snapshot().user_config;
-                let credentials = crate::credential::load_user_credentials()?;
-                let service = crate::secret::RuntimeSecretService::with_vault_config(
-                    credentials,
-                    &user_config.credential_vault,
-                )?;
-                zeroize::Zeroizing::new(service.browser_secret_input_for_target_url(
-                    &args.credential_id,
-                    &target_document_url,
-                )?)
-            }
-        };
+            .await?;
+        let secret = zeroize::Zeroizing::new(
+            service
+                .browser_secret_input_for_target_url(&args.credential_id, &target_document_url)?,
+        );
         let result = self
             .perform_browser_environment_locator_action_as_agent(
-                provider_run.session_id(),
+                session_id,
                 agent_id,
                 &element_ref,
                 crate::runtime::browser_controller_action::BrowserLocatorAction::Fill {
