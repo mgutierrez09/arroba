@@ -13,6 +13,16 @@ impl KernelRuntimeState {
         use crate::transport::runtime_tools::*;
 
         match tool_name {
+            PASTE_SECRET_TO_SLICE_TOOL => {
+                let args = parse_controller_tool_arguments::<PasteSecretToSliceArgs>(
+                    arguments,
+                    "runtime_tool_paste_secret_to_slice",
+                )?;
+                self.controller_paste_secret_to_slice_tool_result(
+                    session_id, slice_id, agent_id, args,
+                )
+                .await
+            }
             SLICE_SCREEN_STATUS_TOOL => {
                 parse_controller_tool_arguments::<serde_json::Map<String, serde_json::Value>>(
                     arguments,

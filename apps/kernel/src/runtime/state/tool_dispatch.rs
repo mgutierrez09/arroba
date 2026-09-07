@@ -526,11 +526,18 @@ fn is_slice_runtime_tool(tool_name: &str) -> bool {
 }
 
 fn is_room_browser_controller_runtime_tool(tool_name: &str) -> bool {
+    canonical_room_browser_runtime_tool(tool_name).is_some()
+}
+
+fn canonical_room_browser_runtime_tool(tool_name: &str) -> Option<&'static str> {
     use crate::transport::runtime_tools::*;
-    matches!(
-        canonical_slice_tool_name(tool_name),
+    let canonical =
+        canonical_slice_tool_name(tool_name).or_else(|| canonical_credential_tool_name(tool_name));
+    if matches!(
+        canonical,
         Some(
-            SLICE_SCREEN_STATUS_TOOL
+            PASTE_SECRET_TO_SLICE_TOOL
+                | SLICE_SCREEN_STATUS_TOOL
                 | SLICE_OCR_TOOL
                 | SLICE_FIND_TEXT_TOOL
                 | SLICE_BROWSER_STATUS_TOOL
@@ -555,7 +562,11 @@ fn is_room_browser_controller_runtime_tool(tool_name: &str) -> bool {
                 | SLICE_BROWSER_WAIT_FOR_SELECTOR_TOOL
                 | SLICE_BROWSER_WAIT_FOR_IDLE_TOOL
         )
-    )
+    ) {
+        canonical
+    } else {
+        None
+    }
 }
 
 fn unambiguous_runtime_tool_provider_run<'a>(
@@ -655,11 +666,36 @@ mod tests {
         ] {
             assert!(super::is_room_browser_controller_runtime_tool(tool_name));
         }
-        assert!(!super::is_room_browser_controller_runtime_tool(
+        assert!(super::is_room_browser_controller_runtime_tool(
             PASTE_SECRET_TO_SLICE_TOOL
         ));
         assert!(!super::is_room_browser_controller_runtime_tool(
             PASTE_SECRET_TO_COMPUTER_TOOL
         ));
+    }
+
+    #[test]
+    fn browser_secret_aliases_use_the_home_room_route_without_admitting_other_credentials() {
+        use crate::transport::runtime_tools::*;
+        for name in [
+            PASTE_SECRET_TO_SLICE_TOOL,
+            PASTE_SECRET_TO_SLICE_TOOL_ALIAS,
+            "mcp__chariox__paste_secret_to_slice",
+            "chariox_paste_secret_to_slice",
+        ] {
+            assert_eq!(
+                super::canonical_room_browser_runtime_tool(name),
+                Some(PASTE_SECRET_TO_SLICE_TOOL)
+            );
+        }
+        for name in [
+            CREATE_GENERATED_CREDENTIAL_TOOL,
+            REQUEST_CREDENTIAL_SECRET_TOOL,
+            MANAGE_CREDENTIAL_VAULT_TOOL,
+            PASTE_SECRET_TO_COMPUTER_TOOL,
+            "bash",
+        ] {
+            assert_eq!(super::canonical_room_browser_runtime_tool(name), None);
+        }
     }
 }

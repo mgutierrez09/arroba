@@ -190,16 +190,6 @@ impl KernelRuntimeState {
                     operation: "runtime_tool_paste_secret_to_slice",
                     message: format!("invalid tool arguments: {error}"),
                 })?;
-                if self.browser_controller_enabled_for_room(provider_run.session_id()) {
-                    return self
-                        .controller_paste_secret_to_slice_tool_result(
-                            provider_run,
-                            &slice_id,
-                            agent_id,
-                            args,
-                        )
-                        .await;
-                }
                 let status_output =
                     run_slice_screen_command(vec!["browser-status".to_string()]).await?;
                 let browser_status = slice_browser_json(&status_output)?;
