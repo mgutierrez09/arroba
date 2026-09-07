@@ -4,6 +4,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { runRoomWebOnboarding } from "./live-room-web-onboarding.mjs"
+import { runRoomEnvironmentCompanion } from "./live-room-environment-companion-verifier.mjs"
 
 async function fixture(work, { agent = {}, slices = [{ id: "slice", agent_ids: ["agent"] }] } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "chariox-web-onboarding-owner-"))
@@ -71,3 +72,15 @@ test("Web cannot choose an agent from another slice", () => fixture(async ({ inp
   await assert.rejects(runRoomWebOnboarding(input), /intended slice/)
   assert.equal(calls.includes("submitPrompt"), false)
 }, { slices: [{ id: "another-slice", agent_ids: ["agent"] }] }))
+
+test("the live companion routes onboarding to the private owner without publishing its context", () => fixture(async ({ input, report }) => {
+  const ready = { sessionId: input.sessionId, environmentId: input.environmentId,
+    sliceId: input.sliceId, evidenceRoot: input.evidenceRoot, realProvider: input.options }
+  await assert.rejects(runRoomEnvironmentCompanion({
+    env: { CHARIOX_ROOM_DRILL_COORDINATION_DIR: input.directory, CHARIOX_ROOM_DRILL_COMPANION_TIMEOUT_MS: "1000" },
+    ready, onboardingInput: input, readTuiNotices: async () => ({ local: [], remote: [] }),
+  }), /controlled provider submission failure/)
+  assert.equal(report().fixturesClosed, true)
+  const handoff = await readFile(path.join(input.directory, "ready.json"), "utf8")
+  assert.doesNotMatch(handoff, /private-mail-password|private-vault-passphrase|onboardingRuntime/)
+}))

@@ -7,6 +7,8 @@ import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
 import { createRoomDrillTuiEvidence } from "./room-drill-tui-evidence.mjs"
 import { verifyRoomCompanionTuis } from "./room-companion-tui-evidence.mjs"
 import { verifyRoomOfficeCompanion } from "./live-room-office-companion.mjs"
+import { runRoomWebOnboarding } from "./live-room-web-onboarding.mjs"
+import { verifyWebOnboardingResult } from "./live-room-web-onboarding-proof.mjs"
 import { setTimeout as sleep } from "node:timers/promises"
 
 import {
@@ -35,6 +37,16 @@ export async function runRoomEnvironmentCompanion(input) {
     nextSampleAt = Date.now() + 2000
   }
   await sampleTuis()
+  const owner = input.ready.realProvider?.officeScenario === "onboarding"
+    ? await runRoomWebOnboarding({ ...input.onboardingInput,
+      directory, evidenceRoot: input.ready.evidenceRoot,
+      sessionId: input.ready.sessionId, environmentId: input.ready.environmentId,
+      sliceId: input.ready.sliceId, sleep: input.sleep, sampleTuis,
+      verifyTuiActions: async actions => {
+        await sampleTuis(true)
+        return verifyRoomCompanionTuis(input, actions, tuiEvidence)
+      },
+    }) : null
   const companion = await waitForRoomDrillCompanionResult(directory, {
     sessionId: input.ready.sessionId,
     environmentId: input.ready.environmentId,
@@ -57,6 +69,9 @@ export async function runRoomEnvironmentCompanion(input) {
   }
   if (input.ready.realProvider?.computerTask === "office") {
     return verifyRoomOfficeCompanion(input, companion, tuiEvidence)
+  }
+  if (input.ready.realProvider?.officeScenario === "onboarding") {
+    return verifyWebOnboardingResult(input, companion, owner, tuiEvidence)
   }
   if (input.ready.keyboardText) {
     assert.ok(companion.keyboard, "Web companion omitted required keyboard evidence")
