@@ -43,7 +43,10 @@ test("failed scope mutation never unlocks the vault", async () => {
 
 const evidence = () => ({ credentialId: "mail", expectedHost: "mail.test:1234", actorId: "agent:agent", baseline: 20,
   interaction: { scopeRevoked: true, vaultUnlocks: 1 },
-  tools: [{ name: "paste_secret_to_slice", status: "failed", input: { credential_id: "mail",
+  tools: [{ name: "slice_open_url", status: "completed", input: { url: "http://mail.test:1234/mail/login" } },
+    { name: "slice_browser_find", status: "completed", output: { browser: { matches: [
+      { field_id: "element-password", kind: "field", label: "Password" },
+    ] } } }, { name: "paste_secret_to_slice", status: "failed", input: { credential_id: "mail",
     expected_host: "mail.test:1234", field_id: "element-password", submit: false }, errorCodes: ["credential_scope"] }],
   history: [{ sequence: 19, actor_id: "agent:agent", kind: "fill", state: "completed" }] })
 
@@ -53,12 +56,29 @@ test("revocation proof requires the scoped denial and no post-revocation fill", 
   filled.history.push({ sequence: 21, actor_id: "agent:agent", kind: "fill", state: "completed" })
   assert.throws(() => verifyCredentialRevocation(filled), /filled after revocation/)
   for (const mutate of [
-    e => { e.tools[0].status = "completed"; e.tools[0].errorCodes = [] },
-    e => { e.tools[0].errorCodes = ["field_unavailable"] },
-    e => { e.tools[0].input.credential_id = "unrelated" },
+    e => { e.tools[2].status = "completed"; e.tools[2].errorCodes = [] },
+    e => { e.tools[2].errorCodes = ["field_unavailable"] },
+    e => { e.tools[2].input.credential_id = "unrelated" },
     e => { e.interaction.vaultUnlocks = 0 },
     e => { e.tools.push({ name: "bash", status: "failed" }) },
-    e => { e.tools.push({ ...e.tools[0] }) },
+    e => { e.tools.push({ ...e.tools[2] }) },
+  ]) {
+    const value = evidence(); mutate(value)
+    assert.throws(() => verifyCredentialRevocation(value))
+  }
+})
+
+test("revocation denial must target the Password field freshly discovered after opening the login page", () => {
+  for (const mutate of [
+    e => { e.tools.splice(0, 2) },
+    e => { e.tools[0].input.url = "http://other.test/mail/login" },
+    e => { e.tools[0].status = "failed" },
+    e => { e.tools[1].status = "failed" },
+    e => { e.tools[1].output.browser.matches[0].field_id = "element-stale" },
+    e => { e.tools[1].output.browser.matches[0].label = "Email" },
+    e => { e.tools[1].output.browser.matches[0].kind = "link" },
+    e => { e.tools.push(e.tools.shift()) },
+    e => { e.tools.splice(2, 0, { ...e.tools[0] }) },
   ]) {
     const value = evidence(); mutate(value)
     assert.throws(() => verifyCredentialRevocation(value))

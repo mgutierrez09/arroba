@@ -41,6 +41,15 @@ export function verifyCredentialRevocation({ tools, history, actorId, credential
   const pastes = tools.filter(tool => tool.name === "paste_secret_to_slice")
   assert.equal(pastes.length, 1, "revocation must attempt its credential exactly once")
   const paste = pastes[0]
+  const opens = tools.filter(tool => tool.name === "slice_open_url")
+  assert.ok(opens.length === 1 && opens[0].status === "completed"
+    && opens[0].input?.url === `http://${expectedHost}/mail/login`, "revocation did not open its intended login page once")
+  const pasteIndex = tools.indexOf(paste)
+  const discovery = tools.slice(0, pasteIndex).findLast(tool => tool.name === "slice_browser_find" && tool.status === "completed")
+  assert.ok(discovery && tools.indexOf(discovery) > tools.indexOf(opens[0]), "revocation lacks fresh field discovery after navigation")
+  assert.ok(discovery.output?.browser?.matches?.some(match => match.field_id === paste.input?.field_id
+    && match.kind === "field" && (match.label === "Password" || match.text === "Password")),
+  "revocation did not target the freshly discovered Password field")
   assert.equal(paste.input?.credential_id, credentialId)
   assert.equal(paste.input?.expected_host, expectedHost)
   assert.equal(paste.input?.submit, false)
