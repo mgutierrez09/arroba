@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import http from "node:http"
 import { parseFixtureMail } from "./browser-computer-fixture-mail.mjs"
+import { createFixtureInbox } from "./browser-computer-fixture-inbox.mjs"
 
 const DEFAULT_ACCOUNT = "agent@chariox.test"
 const MAX_REQUEST_BODY_BYTES = 1_048_576
@@ -19,6 +20,7 @@ export async function startBrowserComputerFixture({
   const oauthGrants = new Map()
   const messages = []
   const uploads = []
+  const inbox = createFixtureInbox(account)
   const server = http.createServer(async (request, response) => {
     try {
       await routeRequest({
@@ -31,6 +33,7 @@ export async function startBrowserComputerFixture({
         oauthGrants,
         messages,
         uploads,
+        inbox,
       })
     } catch (error) {
       send(response, 500, `fixture error: ${error?.message ?? String(error)}`, {
@@ -48,6 +51,7 @@ export async function startBrowserComputerFixture({
     origin,
     messages,
     uploads,
+    receiveMail: inbox.receiveMail,
     invalidateSessions: () => {
       const invalidated = sessions.size
       sessions.clear()
@@ -67,6 +71,7 @@ async function routeRequest({
   oauthGrants,
   messages,
   uploads,
+  inbox,
 }) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`)
   const cookies = parseCookies(request.headers.cookie ?? "")
@@ -162,7 +167,14 @@ async function routeRequest({
   }
   if (url.pathname === "/mail/inbox") {
     if (!authenticated) return redirectToLogin(response)
-    sendHtml(response, inboxPage(account, messages))
+    sendHtml(response, inboxPage(account, messages, inbox.rows(escapeHtml)))
+    return
+  }
+  const receivedMessageMatch = /^\/mail\/received\/([^/]+)$/.exec(url.pathname)
+  if (receivedMessageMatch && request.method === "GET") {
+    if (!authenticated) return redirectToLogin(response)
+    const body = inbox.message(receivedMessageMatch[1], escapeHtml)
+    sendHtml(response, html("Fixture received mail", body ?? "Message not found"), body ? 200 : 404)
     return
   }
   if (url.pathname === "/mail/compose") {
@@ -386,13 +398,13 @@ function oauthCallbackPage({ state, account }) {
   `)
 }
 
-function inboxPage(account, messages) {
+function inboxPage(account, messages, receivedRows = "") {
   const rows = messages.map((message) => `<li data-message-id="${escapeHtml(message.id)}">${escapeHtml(message.subject)}</li>`).join("")
   return html("Fixture inbox", `
     <h1 id="inbox-marker">CHARIOX_FIXTURE_INBOX</h1>
     <p id="account">${escapeHtml(account)}</p>
     <a id="compose" href="/mail/compose">Compose</a>
-    <ul id="messages">${rows}</ul>
+    <ul id="messages">${receivedRows}${rows}</ul>
   `)
 }
 
