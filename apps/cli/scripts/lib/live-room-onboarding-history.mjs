@@ -10,6 +10,8 @@ const errorPatterns = [
   ["vault_locked", /vault.*(?:locked|unlock)/i],
   ["invalid_arguments", /invalid.*arguments|missing field/i],
   ["timeout", /timed out|timeout/i],
+  ["controller_home_route_required", /browser_controller_scope_denied: provisioned slice controller requires the home Room relay path/],
+  ["invalid_environment_lifecycle", /environment_invalid_lifecycle_transition/],
 ]
 
 // Complete kernel-owned records are required to prove which credential tool
@@ -52,7 +54,6 @@ export async function readOnboardingTurnTools(input, promptId) {
       const tool = JSON.parse(row.entry.text)
       assert.equal(typeof tool.tool, "string")
       const output = typeof tool.output === "string" ? JSON.parse(tool.output) : tool.output
-      if (typeof tool.error === "string") input.onToolError?.(tool.error)
       const errorCodes = typeof tool.error === "string" && tool.error
         ? errorPatterns.filter(([, pattern]) => pattern.test(tool.error)).map(([code]) => code) : []
       if (tool.error && errorCodes.length === 0) errorCodes.push("unclassified_tool_error")
