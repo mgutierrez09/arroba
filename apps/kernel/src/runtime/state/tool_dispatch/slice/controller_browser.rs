@@ -68,16 +68,11 @@ impl KernelRuntimeState {
             })?;
         // The Room controller and vault share home authority. A leased worker
         // forwards the opaque credential handle, never a resolved secret.
-        let user_config = self.owned.config_projection.snapshot().user_config;
-        let credentials = crate::credential::load_user_credentials()?;
-        let service = crate::secret::RuntimeSecretService::with_vault_config(
-            credentials,
-            &user_config.credential_vault,
-        )?;
-        service.validate_browser_secret_input_for_target_url(
-            &args.credential_id,
-            &target_document_url,
-        )?;
+        self.home_runtime_secret_service()?
+            .validate_browser_secret_input_for_target_url(
+                &args.credential_id,
+                &target_document_url,
+            )?;
         let _vault_unlock = self
             .ensure_vault_unlocked_for_agent(
                 session_id,
@@ -85,6 +80,9 @@ impl KernelRuntimeState {
                 "runtime_tool_paste_secret_to_slice",
             )
             .await?;
+        // Unlock can await a human for several minutes. Do not resolve against
+        // credential metadata or vault configuration captured before that wait.
+        let service = self.home_runtime_secret_service()?;
         let secret = zeroize::Zeroizing::new(
             service
                 .browser_secret_input_for_target_url(&args.credential_id, &target_document_url)?,

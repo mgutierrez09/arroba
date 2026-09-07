@@ -16,6 +16,9 @@ The home validates the relay sender, lease, bound worker, reserved Room slice
 and agent membership before dispatch. It then validates the opaque field,
 masked target, expected host/URL and actual target-document credential scope.
 Only then may it request a home vault unlock and resolve the secret. The fill
+reloads credential metadata and vault configuration after that interaction,
+so deletion, revocation or narrowed scope during the wait is not bypassed by
+a pre-interaction authorization snapshot. The fill
 uses the existing attributed Browser locator action, including target-document
 revalidation at execution. The provider receives metadata, not the password.
 The worker does not receive a credential-resolution response for this route.
