@@ -103,3 +103,9 @@ test("one running and terminal record is one call, but retries and unsettled cal
     assert.throws(() => verifyCredentialRevocation(candidate))
   }
 })
+
+test("Password discovery accepts Chromium's trailing accessible-name whitespace", () => {
+  const value = evidence()
+  value.tools[1].output.browser.matches[0].label = "Password "
+  assert.equal(verifyCredentialRevocation(value).denied, true)
+})

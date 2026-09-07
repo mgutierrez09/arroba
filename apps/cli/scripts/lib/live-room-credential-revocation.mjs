@@ -67,7 +67,7 @@ export function verifyCredentialRevocation({ tools: records, history, actorId, c
   const discovery = tools.slice(0, pasteIndex).findLast(tool => tool.name === "slice_browser_find" && tool.status === "completed")
   assert.ok(discovery && tools.indexOf(discovery) > tools.indexOf(opens[0]), "revocation lacks fresh field discovery after navigation")
   assert.ok(discovery.output?.browser?.matches?.some(match => match.field_id === paste.input?.field_id
-    && match.kind === "field" && (match.label === "Password" || match.text === "Password")),
+    && match.kind === "field" && [match.label, match.text].some(label => typeof label === "string" && label.trim() === "Password")),
   "revocation did not target the freshly discovered Password field")
   assert.equal(paste.input?.credential_id, credentialId)
   assert.equal(paste.input?.expected_host, expectedHost)
