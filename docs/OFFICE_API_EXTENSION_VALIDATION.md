@@ -52,9 +52,18 @@ is rejected before opening a listener.
 Run the focused HTTP tests with:
 
 ```sh
-node --test apps/cli/scripts/lib/office-inventory-fixture.test.mjs
+node --test apps/cli/scripts/lib/office-inventory-fixture.test.mjs apps/cli/scripts/lib/office-release-api.test.mjs
 ```
 
-The driver, provider-history acceptance, live official-provider run, Web/TUI
+`office-release-api.mjs` implements the driver's independent read-only check.
+It makes one unauthenticated request, rejects redirects, applies a 15-second
+deadline, and limits streamed metadata to 1 MiB. Cancellation aborts a stalled
+body. Error responses are cancelled without echoing their contents.
+
+Eight focused tests pass. A live unauthenticated preflight on 2026-09-07 returned
+release ID `342331441`, tag `jq-1.8.2`, published `2026-06-20T14:11:27Z`.
+This is a preflight observation, not a pinned expected version for future runs.
+
+The owning driver wiring, provider-history acceptance, live official-provider run, Web/TUI
 observations, other providers, and managed-machine repeat remain outstanding.
 This is not yet an end-to-end pass or benchmark evidence.
