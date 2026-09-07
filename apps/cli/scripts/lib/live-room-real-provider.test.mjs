@@ -5,7 +5,7 @@ import { roomRealProviderOptions, runRoomRealProvider, runRoomRealProviderAction
 const secret = "synthetic-secret-never-in-diagnostic"
 const entry = (kind, text, entry_index = 1) => ({ entry_index, entry: { kind, text } })
 
-test("email onboarding is an explicit standalone Browser scenario until Web verification is wired", () => {
+test("email onboarding supports its Web observer but revocation remains standalone", () => {
   const env = { CHARIOX_ROOM_DRILL_FOCUS: "real-provider", CHARIOX_ROOM_DRILL_PROVIDER: "codex",
     CHARIOX_ROOM_DRILL_MODEL: "gpt-5.6-sol", CHARIOX_ROOM_DRILL_PROVIDER_MODE: "browser",
     CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "onboarding" }
@@ -14,8 +14,10 @@ test("email onboarding is an explicit standalone Browser scenario until Web veri
     "onboarding-revocation")
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_PROVIDER_MODE: "computer" }), /office scenario/)
   assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "unknown" }), /office scenario/)
-  assert.throws(() => roomRealProviderOptions({ ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion",
-    CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }), /office scenario/)
+  const web = { ...env, CHARIOX_ROOM_DRILL_FOCUS: "web-companion", CHARIOX_ROOM_DRILL_WEB_REAL_PROVIDER: "1" }
+  assert.equal(roomRealProviderOptions(web).officeScenario, "onboarding")
+  assert.throws(() => roomRealProviderOptions({ ...web, CHARIOX_ROOM_DRILL_OFFICE_SCENARIO: "onboarding-revocation" }), /office scenario/)
+  assert.throws(() => roomRealProviderOptions({ ...web, CHARIOX_ROOM_DRILL_BROWSER_TASK: "form" }), /onboarding/)
 })
 
 test("office work explicitly selects Computer mode for standalone and Web companion drills", () => {

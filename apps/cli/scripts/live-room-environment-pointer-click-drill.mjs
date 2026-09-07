@@ -523,23 +523,7 @@ async function run() {
     waitForRemoteNotice(/^Room input: available$/),
   ])
   if (realProviderOptions && !companionOnly) {
-    const provider = await runRoomRealProvider({
-      client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace,
-      options: realProviderOptions, waitFor, withTimeout, screenshot,
-      officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
-      onboardingRuntime: {
-        mailPassword: userSecret, vaultPassphrase,
-        rememberSecret: value => { if (!sensitiveValues.includes(value)) sensitiveValues.push(value) },
-        trackCredential: id => { if (!drillCredentialIds.includes(id)) drillCredentialIds.push(id) },
-        assertNoLeaks: async () => {
-          await assertNoPlaintextSecretInTree(await tempRootPromise, sensitiveValues)
-          await assertNoPlaintextSecretInTree(evidenceRoot, sensitiveValues)
-        },
-      },
-      checkpoint: (value) => writeFile(path.join(evidenceRoot, "real-provider.json"), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }),
-      waitForPhysicalEffect: (marker) => waitForBrowserText(marker, 20_000, "provider click did not reach the shared browser"),
-      waitForTuis: (pattern) => Promise.all([waitForLocalNotice(pattern), waitForRemoteNotice(pattern)]),
-    })
+    const provider = await runRoomRealProvider(roomProviderInput())
     result = {
       schema: "chariox.room_environment.real_provider.v1", status: "passed", startedAt,
       source: sourceIdentity, sliceRuntime: sliceRuntimeIdentity,
@@ -564,7 +548,9 @@ async function run() {
       sessionId,
       sliceId: slice.id,
       environmentId: released.environment_id,
-      coverage: companionResult.office
+      coverage: companionResult.onboarding
+        ? "Official provider completes vault-backed email onboarding; all four phases match the Web display and actions appear in both TUIs"
+        : companionResult.office
         ? "Official provider edits and saves a graphical document, activates the mail tab, uploads and submits once; actual desktop matched in Web and actions observed in local and remote TUIs"
         : `Web display and pointer input${companionResult.keyboard ? " and Unicode typing" : ""}${companionResult.keyboard?.replacement ? ", select-all and native IME replacement" : ""}${companionResult.gestures ? ", physical text-selection drag and two-axis scroll" : ""} with local and remote TUI observation`,
       skipped: ["computer secret", "pointer matrix", "agent keyboard matrix", "cancellation", "clipboard",
@@ -2012,11 +1998,32 @@ function scopedRelayToken({ subject, subjectKind, actions, userId = null }) {
   })
 }
 
+function roomProviderInput() {
+  return {
+    client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace,
+    options: realProviderOptions, waitFor, withTimeout, screenshot,
+    officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
+    onboardingRuntime: {
+      mailPassword: userSecret, vaultPassphrase,
+      rememberSecret: value => { if (!sensitiveValues.includes(value)) sensitiveValues.push(value) },
+      trackCredential: id => { if (!drillCredentialIds.includes(id)) drillCredentialIds.push(id) },
+      assertNoLeaks: async () => {
+        await assertNoPlaintextSecretInTree(await tempRootPromise, sensitiveValues)
+        await assertNoPlaintextSecretInTree(evidenceRoot, sensitiveValues)
+      },
+    },
+    checkpoint: value => writeFile(path.join(evidenceRoot, "real-provider.json"), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }),
+    waitForPhysicalEffect: marker => waitForBrowserText(marker, 20_000, "provider click did not reach the shared browser"),
+    waitForTuis: pattern => Promise.all([waitForLocalNotice(pattern), waitForRemoteNotice(pattern)]),
+  }
+}
+
 async function runCompanionIfConfigured({ environment, localNoticeIds, remoteNoticeIds, activityController }) {
   const noticePattern = roomActionNoticePattern
   return await runRoomEnvironmentCompanion({
     env: process.env,
     sleep,
+    onboardingInput: realProviderOptions?.officeScenario === "onboarding" ? roomProviderInput() : undefined,
     prepare: async () => {
       // The keyboard/clipboard drills navigate away from the original click page.
       // Give the Web companion a fresh physical page, not the last drill's form.

@@ -14,7 +14,8 @@ export async function runRoomOnboarding(input) {
   const { client, requests, sessionId, agentId, onboardingRuntime: runtime } = input
   assert.ok(runtime && typeof runtime.rememberSecret === "function" && typeof runtime.trackCredential === "function"
     && typeof runtime.assertNoLeaks === "function", "onboarding requires the owning drill's private vault and cleanup context")
-  assert.ok(typeof input.waitForTuis === "function", "onboarding requires both real TUI observers")
+  assert.ok(typeof input.waitForTuis === "function" || typeof input.verifyTuiActions === "function",
+    "onboarding requires both real TUI observers")
   const nonce = randomUUID()
   const mailId = `office-mail-${nonce}`
   const serviceId = `office-service-${nonce}`
@@ -45,6 +46,7 @@ export async function runRoomOnboarding(input) {
     const screenshot = await input.screenshot(`onboarding-${name}`)
     report.phases.push({ name, turn, physicalResult: true, screenshot })
     await runtime.assertNoLeaks()
+    await input.observePhase?.(name, screenshot)
   }
 
   try {
@@ -115,8 +117,9 @@ export async function runRoomOnboarding(input) {
     for (const action of observed) {
       assert.ok(action && action.actor_id === `agent:${agentId}` && action.mode === "browser" && action.state === "completed",
         "onboarding action was not completed by the official provider")
-      await input.waitForTuis(new RegExp(`^Room action #${action.sequence}: real-${input.options.provider} · browser ${action.kind} · completed$`))
+      if (!input.verifyTuiActions) await input.waitForTuis(new RegExp(`^Room action #${action.sequence}: real-${input.options.provider} · browser ${action.kind} · completed$`))
     }
+    if (input.verifyTuiActions) await input.verifyTuiActions(observed)
     const listed = await client.send(requests.listCredentialsRequest())
     for (const expected of credentials) {
       const actual = listed?.CredentialsListed?.credentials?.find(c => c.id === expected.id)
@@ -136,7 +139,7 @@ export async function runRoomOnboarding(input) {
         credential: credentials[0], mailOrigin, report: report.revocation,
       }))
     }
-    report.skipped = ["Web projection", "real Gmail and external SaaS", "other providers", "locked-vault rejection",
+    report.skipped = [...(input.observePhase ? [] : ["Web projection"]), "real Gmail and external SaaS", "other providers", "locked-vault rejection",
       "wrong-origin rejection", "screenshot OCR secret scan", "provider save/resume"]
     return report
   } catch (error) {
