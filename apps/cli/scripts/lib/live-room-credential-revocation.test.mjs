@@ -84,3 +84,20 @@ test("revocation denial must target the Password field freshly discovered after 
     assert.throws(() => verifyCredentialRevocation(value))
   }
 })
+
+test("one running and terminal record is one call, but retries and unsettled calls cannot pass", () => {
+  const value = evidence()
+  value.tools[2].callId = "paste-1"
+  value.tools.splice(2, 0, { ...value.tools[2], status: "running", errorCodes: [] })
+  assert.equal(verifyCredentialRevocation(value).denied, true)
+  for (const mutate of [
+    e => { e.tools[2].callId = "another-paste" },
+    e => { e.tools[2].name = "bash" },
+    e => { e.tools[2].input = { ...e.tools[2].input, credential_id: "other" } },
+    e => { e.tools[2].status = "error" },
+    e => { e.tools.pop() },
+  ]) {
+    const candidate = structuredClone(value); mutate(candidate)
+    assert.throws(() => verifyCredentialRevocation(candidate))
+  }
+})

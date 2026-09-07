@@ -34,7 +34,25 @@ export function createCredentialRevocationResponder(input) {
   }
 }
 
-export function verifyCredentialRevocation({ tools, history, actorId, credentialId, expectedHost, baseline, interaction }) {
+function settledCalls(records) {
+  const calls = new Map()
+  for (const record of records) {
+    const key = record.callId || Symbol()
+    const previous = calls.get(key)
+    if (previous) {
+      assert.equal(previous.status, "running", "revocation call has multiple terminal results")
+      assert.equal(previous.name, record.name, "revocation call changed tool identity")
+      assert.deepEqual(previous.input, record.input, "revocation call changed arguments")
+    }
+    calls.set(key, record)
+  }
+  assert.ok([...calls.values()].every(call => ["completed", "failed", "error"].includes(call.status)),
+    "revocation tool call did not settle")
+  return [...calls.values()]
+}
+
+export function verifyCredentialRevocation({ tools: records, history, actorId, credentialId, expectedHost, baseline, interaction }) {
+  const tools = settledCalls(records)
   assert.deepEqual(interaction, { scopeRevoked: true, vaultUnlocks: 1 }, "revocation did not occur during one unlock")
   const allowed = new Set(["slice_open_url", "slice_browser_find", "slice_browser_text", "slice_browser_status", "paste_secret_to_slice"])
   assert.ok(tools.every(tool => allowed.has(tool.name)), "revocation used an unapproved tool or recovery path")
@@ -90,7 +108,7 @@ export async function runCredentialRevocation(input, { credential, mailOrigin, r
   const pastes = tools.filter(tool => tool.name === "paste_secret_to_slice")
   const identities = new Map()
   Object.assign(report, {
-    ...responder.report(), attempts: pastes.length,
+    ...responder.report(), pasteRecordCount: pastes.length,
     pasteRecords: pastes.map(tool => {
       if (tool.callId && !identities.has(tool.callId)) identities.set(tool.callId, identities.size + 1)
       return { call: identities.get(tool.callId) ?? null,
