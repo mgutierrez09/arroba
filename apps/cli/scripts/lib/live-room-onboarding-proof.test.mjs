@@ -1,6 +1,23 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { verifyOnboardingCredentialActions } from "./live-room-onboarding-proof.mjs"
+import { verifyOnboardingCredentialActions, verifyOnboardingEmailPath } from "./live-room-onboarding-proof.mjs"
+
+test("onboarding requires attributed email and confirmation clicks and rejects bypass tools", () => {
+  const sample = () => ({ actorId: "agent:agent", tools: [
+    { name: "slice_browser_click", phase: "confirmation-email", status: "completed", output: { action_id: "mail" } },
+    { name: "slice_browser_click", phase: "confirmation", status: "completed", output: { action_id: "link" } },
+  ], history: ["mail", "link"].map((id, i) => ({ action_id: id, sequence: i + 10, actor_id: "agent:agent",
+    mode: "browser", kind: "click", state: "completed", targets: [{ kind: "browser_tab", tab_id: "mail-tab" }] })) })
+  assert.equal(verifyOnboardingEmailPath(sample()).length, 2)
+  for (const mutate of [
+    x => { x.tools.pop() },
+    x => { x.tools.push({ name: "bash", status: "completed" }) },
+    x => { x.tools.push({ name: "browser_click", status: "running" }) },
+    x => { x.history[1].actor_id = "user:local" },
+    x => { x.history[1].targets[0].tab_id = "unrelated-tab" },
+    x => { x.history[1].sequence = 2 },
+  ]) { const invalid = sample(); mutate(invalid); assert.throws(() => verifyOnboardingEmailPath(invalid)) }
+})
 
 function fixture() {
   const credentials = ["mail", "service"].map(id => ({ id, allowed_hosts: [`${id}.test:4321`],

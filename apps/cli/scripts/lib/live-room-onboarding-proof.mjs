@@ -1,5 +1,24 @@
 import assert from "node:assert/strict"
 
+export function verifyOnboardingEmailPath({ tools, history, actorId }) {
+  const allowed = new Set(["request_credential_secret", "create_generated_credential", "paste_secret_to_slice",
+    "slice_open_url", "slice_browser_find", "slice_browser_fill", "slice_browser_submit", "slice_browser_text",
+    "slice_browser_click", "slice_browser_status", "slice_browser_tab", "slice_screenshot"])
+  assert.ok(tools.every(t => allowed.has(t.name)), "onboarding used a tool outside the approved Chariox browser path")
+  const actions = ["confirmation-email", "confirmation"].map(phase => {
+    const clicks = tools.filter(t => t.phase === phase && t.name === "slice_browser_click" && t.status === "completed")
+    assert.equal(clicks.length, 1, "onboarding must open its email and follow its confirmation link")
+    const action = history.find(a => a.action_id === clicks[0].output?.action_id)
+    assert.ok(action?.kind === "click" && action.actor_id === actorId && action.mode === "browser"
+      && action.state === "completed", "onboarding email click lacks its attributed completed action")
+    assert.ok(action.targets?.length === 1 && action.targets[0].kind === "browser_tab")
+    return action
+  })
+  assert.ok(actions[1].sequence > actions[0].sequence, "confirmation link was not clicked after opening the email")
+  assert.deepEqual(actions[1].targets, actions[0].targets, "confirmation link was not followed from the email tab")
+  return actions
+}
+
 export function verifyOnboardingCredentialActions({ tools, history, actorId, credentials }) {
   const completed = tools.filter(t => t.status === "completed")
   const actions = []

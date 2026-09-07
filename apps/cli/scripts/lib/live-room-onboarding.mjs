@@ -5,7 +5,7 @@ import { startOfficeOnboardingFixture } from "./office-onboarding-fixture.mjs"
 import { createOnboardingInteractionResponder } from "./live-room-onboarding-interactions.mjs"
 import { runOnboardingProviderTurn } from "./live-room-onboarding-turn.mjs"
 import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
-import { verifyOnboardingCredentialActions } from "./live-room-onboarding-proof.mjs"
+import { verifyOnboardingCredentialActions, verifyOnboardingEmailPath } from "./live-room-onboarding-proof.mjs"
 import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
 import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.mjs"
 
@@ -36,7 +36,7 @@ export async function runRoomOnboarding(input) {
   async function phase(name, prompt, expectedText) {
     await input.checkpoint({ phase: `onboarding-${name}`, onboarding: report })
     const turn = await runOnboardingProviderTurn(input, { prompt: `${rules}\n${prompt}`, poll: responder.poll })
-    tools.push(...await readOnboardingTurnTools(input, turn.promptId))
+    tools.push(...(await readOnboardingTurnTools(input, turn.promptId)).map(tool => ({ ...tool, phase: name })))
     const text = await input.officeRuntime.sliceScreen(["browser-text"])
     report.browserMarkers = Object.fromEntries(["CHARIOX_FIXTURE_INBOX", "Fixture mail login", "Invalid credentials",
       "Check your email", "CHARIOX_FIXTURE_ONBOARDING_COMPLETE"].map(marker => [marker, text.includes(marker)]))
@@ -92,6 +92,7 @@ export async function runRoomOnboarding(input) {
       return response.RoomEnvironmentActionHistoryListed.page
     })
     const secretActions = verifyOnboardingCredentialActions({ tools, history, actorId: `agent:${agentId}`, credentials })
+    const emailActions = verifyOnboardingEmailPath({ tools, history, actorId: `agent:${agentId}` })
     const activationTool = tools.findLast(t => t.name === "slice_browser_tab" && t.status === "completed" && t.input?.action === "activate")
     const activation = history.find(a => a.action_id === activationTool?.output?.action_id)
     assert.ok(activation?.kind === "browser_tab_activate", "onboarding did not activate its completed account tab")
@@ -99,7 +100,7 @@ export async function runRoomOnboarding(input) {
       .map(t => history.find(a => a.action_id === t.output?.action_id))
     assert.equal(submits.length, 3, "onboarding needs one mail login, registration and confirmation submission")
     assert.ok(submits.every(a => a?.kind === "submit"), "onboarding submission tool lacks its submit action")
-    const observed = [secretActions[0], submits[0], secretActions[1], submits[1], submits[2], activation]
+    const observed = [secretActions[0], submits[0], secretActions[1], submits[1], ...emailActions, submits[2], activation]
     for (let i = 1; i < observed.length; i++) {
       assert.ok(observed[i]?.sequence > observed[i - 1]?.sequence, "onboarding submission order differs")
     }
