@@ -105,3 +105,12 @@ test("onboarding escapes account metadata and closes its listener", async t => {
   await service.close()
   await assert.rejects(fetch(`${service.origin}/service/login`))
 })
+
+test("the private fixture observer registers a received password for leak scanning, never in HTTP output", async t => {
+  const seen = []
+  const { service, registration } = await setup(t, { onPasswordReceived: value => seen.push(value) })
+  const result = await post(`${service.origin}/service/register`, registration)
+  assert.equal(result.status, 303)
+  assert.deepEqual(seen, [servicePassword])
+  assert.ok(!(await result.text()).includes(servicePassword))
+})

@@ -83,6 +83,7 @@ const containerName = `chariox-slice-${runId}`
 const homeVolume = `${containerName}-home`
 const userCredentialId = `${runId}-user-computer`
 const generatedCredentialId = `${runId}-generated-computer`
+const drillCredentialIds = [userCredentialId, generatedCredentialId]
 const userSecret = `room-computer-secret-${process.pid}-${Date.now()}`
 const vaultPassphrase = `room-vault-passphrase-${process.pid}-${Date.now()}`
 const agentClipboardText = `agent-clipboard-${runId}-Grüße 世界\nsecond line\n`
@@ -526,6 +527,15 @@ async function run() {
       client, requests, sessionId, sliceId: slice.id, workspace: fixtureWorkspace,
       options: realProviderOptions, waitFor, withTimeout, screenshot,
       officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
+      onboardingRuntime: {
+        mailPassword: userSecret, vaultPassphrase,
+        rememberSecret: value => { if (!sensitiveValues.includes(value)) sensitiveValues.push(value) },
+        trackCredential: id => { if (!drillCredentialIds.includes(id)) drillCredentialIds.push(id) },
+        assertNoLeaks: async () => {
+          await assertNoPlaintextSecretInTree(await tempRootPromise, sensitiveValues)
+          await assertNoPlaintextSecretInTree(evidenceRoot, sensitiveValues)
+        },
+      },
       checkpoint: (value) => writeFile(path.join(evidenceRoot, "real-provider.json"), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }),
       waitForPhysicalEffect: (marker) => waitForBrowserText(marker, 20_000, "provider click did not reach the shared browser"),
       waitForTuis: (pattern) => Promise.all([waitForLocalNotice(pattern), waitForRemoteNotice(pattern)]),
@@ -2571,6 +2581,7 @@ async function screenshot(name) {
   const inside = `/tmp/${name}.png`
   await sliceScreen(["screenshot", inside])
   await docker(["cp", `${containerName}:${inside}`, path.join(evidenceRoot, `${name}.png`)])
+  return path.join(evidenceRoot, `${name}.png`)
 }
 
 async function waitForRemoteNotice(pattern, timeoutMs = 20_000) {
@@ -2815,8 +2826,9 @@ async function cleanup() {
       `${JSON.stringify(diagnostic, null, 2)}\n`, { mode: 0o600 }).catch(() => undefined)
   }
   if (client && requests) {
-    await withTimeout(client.send(requests.deleteCredentialSecretRequest(userCredentialId)), 2_000, "cleanup credential").catch(() => undefined)
-    await withTimeout(client.send(requests.deleteCredentialSecretRequest(generatedCredentialId)), 2_000, "cleanup generated credential").catch(() => undefined)
+    for (const id of drillCredentialIds) {
+      await withTimeout(client.send(requests.deleteCredentialSecretRequest(id)), 2_000, "cleanup credential").catch(() => undefined)
+    }
   }
   if (client && requests && sessionId) {
     await withTimeout(client.send(requests.stopRoomEnvironmentRequest(sessionId)), 2_000, "cleanup StopRoomEnvironment").catch(() => undefined)

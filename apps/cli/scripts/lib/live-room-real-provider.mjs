@@ -3,6 +3,7 @@ import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.m
 import { assertRoomBrowserRecoveryActions, observeRoomStaleToolError } from "./live-room-browser-recovery.mjs"
 import { waitForRoomProviderSettlement } from "./live-room-provider-settlement.mjs"
 import { runRoomOfficeWork } from "./live-room-office-work.mjs"
+import { runRoomOnboarding } from "./live-room-onboarding.mjs"
 
 // Opt-in only: this runs a paid, official provider through the kernel, not a
 // driver impersonating an agent by calling its MCP endpoint.
@@ -16,6 +17,9 @@ export function roomRealProviderOptions(env) {
   assert.ok(model, "CHARIOX_ROOM_DRILL_MODEL must explicitly select a provider model")
   const mode = env.CHARIOX_ROOM_DRILL_PROVIDER_MODE ?? "computer"
   assert.ok(["computer", "browser"].includes(mode), "select Browser or Computer provider mode")
+  const officeScenario = env.CHARIOX_ROOM_DRILL_OFFICE_SCENARIO
+  assert.ok(officeScenario === undefined || (officeScenario === "onboarding" && mode === "browser" && !web),
+    "invalid office scenario: onboarding currently requires standalone Browser validation")
   const computerTask = env.CHARIOX_ROOM_DRILL_COMPUTER_TASK
   assert.ok(computerTask === undefined || (computerTask === "office" && mode === "computer"), "invalid Computer task")
   const browserTask = env.CHARIOX_ROOM_DRILL_BROWSER_TASK
@@ -27,7 +31,7 @@ export function roomRealProviderOptions(env) {
   const browserMutation = env.CHARIOX_ROOM_DRILL_BROWSER_MUTATION
   assert.ok(browserMutation === undefined || browserTask === "form", "Browser mutation requires the form task")
   assert.ok(browserMutation === undefined || browserMutation === "replace-field", "invalid Browser mutation")
-  return { provider, model, mode, ...(computerTask ? { computerTask } : {}), ...(browserTask ? { browserTask } : {}), ...(browserLayout ? { browserLayout } : {}),
+  return { provider, model, mode, ...(officeScenario ? { officeScenario } : {}), ...(computerTask ? { computerTask } : {}), ...(browserTask ? { browserTask } : {}), ...(browserLayout ? { browserLayout } : {}),
     ...(browserMutation ? { browserMutation } : {}), accountProfile: "default", importFirst: env.CHARIOX_ROOM_DRILL_IMPORT_FIRST === "1" }
 }
 
@@ -53,6 +57,9 @@ export async function runRoomRealProvider(input) {
   }
   if (input.options.computerTask === "office") {
     verified.office = await runRoomOfficeWork({ ...input, agentId: result.agentId })
+  }
+  if (input.options.officeScenario === "onboarding") {
+    verified.onboarding = await runRoomOnboarding({ ...input, agentId: result.agentId })
   }
   await input.checkpoint({ phase: "passed", ...verified })
   return verified

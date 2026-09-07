@@ -7,7 +7,9 @@ const deriveKey = promisify(scrypt)
 
 // A separate local SaaS origin for the office drill. Only mail delivery is
 // fixture-owned; registration, mailbox access and confirmation are browser work.
-export async function startOfficeOnboardingFixture({ mail, host = "127.0.0.1", publicHost = host, now = Date.now } = {}) {
+export async function startOfficeOnboardingFixture({ mail, host = "127.0.0.1", publicHost = host, now = Date.now,
+  onPasswordReceived = () => {},
+} = {}) {
   assert.ok(mail?.account && typeof mail.receiveMail === "function", "onboarding requires a mail fixture")
   assert.match(publicHost, /^[a-zA-Z0-9.-]+$/, "invalid onboarding public host")
   let account = null
@@ -60,6 +62,9 @@ export async function startOfficeOnboardingFixture({ mail, host = "127.0.0.1", p
       if (account || registering) return send(response, 409, "Account already registered")
       registering = true
       try {
+        // Private verifier hook only. It lets the driver scan for a generated
+        // test password without returning it through an HTTP or agent tool.
+        onPasswordReceived(form.get("password"))
         const salt = randomBytes(16)
         const key = await deriveKey(form.get("password"), salt, 32)
         const token = randomUUID()

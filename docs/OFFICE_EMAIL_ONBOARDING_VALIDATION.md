@@ -47,17 +47,52 @@ kernel authority, provider capability, Web display or TUI visibility.
 Screenshots and results go outside the repository under
 `~/.codex/evidence/browser-computer-use/office-onboarding/`.
 
+## Official-provider runner
+
+The source runner is wired to the existing local Room drill. Select it explicitly:
+
+```sh
+CHARIOX_ROOM_DRILL_FOCUS=real-provider \
+CHARIOX_ROOM_DRILL_PROVIDER=codex \
+CHARIOX_ROOM_DRILL_MODEL=gpt-5.6-sol \
+CHARIOX_ROOM_DRILL_PROVIDER_MODE=browser \
+CHARIOX_ROOM_DRILL_OFFICE_SCENARIO=onboarding \
+node apps/cli/scripts/live-room-environment-pointer-click-drill.mjs
+```
+
+Use the existing validated slice image and shared binaries, private Docker
+configuration, resource guard and normal cleanup wrapper. Do not create another
+unbounded build. The runner first completes the ordinary provider/browser probe,
+then uses that same agent for four turns: vault-backed mail login, generated-
+credential registration, confirmation-email reading, and confirmation submission.
+
+Only the synthetic test user's private replies go through `RespondToInteraction`.
+The driver never calls the agent MCP endpoint, fills the browser, logs in on the
+agent's behalf or follows the confirmation link. Each prompt uses a fresh
+attachment and waits for its exact completed provider turn. Screenshots and
+physical browser text are captured at each phase.
+
+Acceptance reads the complete kernel tool records for those prompts and binds
+credential tool results to attributed Browser actions. It requires the expected
+credential scopes, ordered paste/submission actions, explicit browser activation,
+and both TUI notices. The fixture's private password observer registers the
+generated test secret with the existing driver's leak scanner and error redactor;
+it never exposes that value through an HTTP or model-visible response. The outer
+drill owns credential, kernel, slice and scratch cleanup.
+
+The implementation has focused regression coverage but has not yet passed a live
+official-provider run. Web mode rejects this scenario explicitly until its
+projection and final verifier are connected. It must not silently run the simpler
+Browser click test and claim onboarding success.
+
 ## Remaining full-scenario acceptance
 
-The official-provider runner must enroll a fresh mail credential in the Chariox
-vault, allow the agent to use only its handle through `paste_secret_to_slice`,
-and require the agent to generate and use the service credential without reading
-it. It must observe registration, mailbox access and confirmation through the
-normal kernel action ledger and both TUIs, capture the same physical result in
-Web, and scan transcripts, history, logs and screenshots for secret leakage.
-The driver must not log in, read the email, confirm the service or fabricate
-provider results on the agent's behalf. Locked-vault and wrong-origin rejection
-remain required negative cases.
+Run and validate the official-provider path above. Add Web projection and final
+Web/OSS verification, then run the same scenario for all providers. Locked-vault
+and wrong-origin rejection remain required negative cases. The existing byte
+scans cover retained textual payloads, not plaintext rendered inside compressed
+screenshots; screenshot OCR checks remain required before claiming the full
+secret-safety gate.
 
 Run the explicit Gmail and external-service scenario with an authorized test
 account after controlled local functionality passes. Record any human approval
