@@ -7,6 +7,7 @@ import { runOnboardingProviderTurn } from "./live-room-onboarding-turn.mjs"
 import { readOnboardingTurnTools } from "./live-room-onboarding-history.mjs"
 import { verifyOnboardingCredentialActions } from "./live-room-onboarding-proof.mjs"
 import { readRoomDrillActionHistory } from "./room-drill-action-history.mjs"
+import { captureRoomProviderDiagnostic } from "./live-room-provider-diagnostic.mjs"
 
 export async function runRoomOnboarding(input) {
   const { client, requests, sessionId, agentId, onboardingRuntime: runtime } = input
@@ -37,6 +38,8 @@ export async function runRoomOnboarding(input) {
     const turn = await runOnboardingProviderTurn(input, { prompt: `${rules}\n${prompt}`, poll: responder.poll })
     tools.push(...await readOnboardingTurnTools(input, turn.promptId))
     const text = await input.officeRuntime.sliceScreen(["browser-text"])
+    report.browserMarkers = Object.fromEntries(["CHARIOX_FIXTURE_INBOX", "Fixture mail login", "Invalid credentials",
+      "Check your email", "CHARIOX_FIXTURE_ONBOARDING_COMPLETE"].map(marker => [marker, text.includes(marker)]))
     for (const expected of expectedText) assert.ok(text.includes(expected), "onboarding browser did not show its required result")
     const screenshot = await input.screenshot(`onboarding-${name}`)
     report.phases.push({ name, turn, physicalResult: true, screenshot })
@@ -125,6 +128,17 @@ export async function runRoomOnboarding(input) {
     report.skipped = ["Web projection", "real Gmail and external SaaS", "other providers", "locked-vault rejection",
       "wrong-origin rejection", "screenshot OCR secret scan", "provider save/resume"]
     return report
+  } catch (error) {
+    report.interactions = responder.report()
+    const known = new Set(["request_credential_secret", "create_generated_credential", "paste_secret_to_slice",
+      "slice_open_url", "slice_browser_find", "slice_browser_fill", "slice_browser_submit", "slice_browser_text"])
+    report.observedTools = tools.slice(-64).map(tool => ({ name: known.has(tool.name) ? tool.name : "other",
+      completed: tool.status === "completed", succeeded: tool.output?.ok === true,
+      failed: tool.output?.ok === false || tool.output?.isError === true }))
+    report.diagnostic = await captureRoomProviderDiagnostic(input).catch(() => ({ codes: ["diagnostic_unavailable"] }))
+    await input.screenshot("onboarding-failed").catch(() => undefined)
+    await input.checkpoint({ phase: "onboarding-failed", onboarding: report })
+    throw error
   } finally {
     const cleanup = await Promise.allSettled([service?.close(), mail.close()])
     report.fixturesClosed = cleanup.every(result => result.status === "fulfilled")
