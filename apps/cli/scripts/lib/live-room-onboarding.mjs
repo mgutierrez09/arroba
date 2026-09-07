@@ -36,7 +36,11 @@ export async function runRoomOnboarding(input) {
   async function phase(name, prompt, expectedText) {
     await input.checkpoint({ phase: `onboarding-${name}`, onboarding: report })
     const turn = await runOnboardingProviderTurn(input, { prompt: `${rules}\n${prompt}`, poll: responder.poll })
-    tools.push(...(await readOnboardingTurnTools(input, turn.promptId)).map(tool => ({ ...tool, phase: name })))
+    tools.push(...(await readOnboardingTurnTools({ ...input, onToolError: error => {
+      if (typeof runtime.redactError !== "function") return
+      report.toolErrors ??= []
+      if (report.toolErrors.length < 8) report.toolErrors.push(runtime.redactError(error).slice(0, 2048))
+    } }, turn.promptId)).map(tool => ({ ...tool, phase: name })))
     const text = await input.officeRuntime.sliceScreen(["browser-text"])
     report.browserMarkers = Object.fromEntries(["CHARIOX_FIXTURE_INBOX", "Fixture mail login", "Invalid credentials",
       "Check your email", "CHARIOX_FIXTURE_ONBOARDING_COMPLETE"].map(marker => [marker, text.includes(marker)]))

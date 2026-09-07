@@ -52,6 +52,7 @@ export async function readOnboardingTurnTools(input, promptId) {
       const tool = JSON.parse(row.entry.text)
       assert.equal(typeof tool.tool, "string")
       const output = typeof tool.output === "string" ? JSON.parse(tool.output) : tool.output
+      if (typeof tool.error === "string") input.onToolError?.(tool.error)
       const errorCodes = typeof tool.error === "string" && tool.error
         ? errorPatterns.filter(([, pattern]) => pattern.test(tool.error)).map(([code]) => code) : []
       if (tool.error && errorCodes.length === 0) errorCodes.push("unclassified_tool_error")

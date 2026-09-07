@@ -528,6 +528,7 @@ async function run() {
       options: realProviderOptions, waitFor, withTimeout, screenshot,
       officeRuntime: { containerName, docker, sliceScreen, runCommandWithStdin },
       onboardingRuntime: {
+        redactError: redactDrillSecrets,
         mailPassword: userSecret, vaultPassphrase,
         rememberSecret: value => { if (!sensitiveValues.includes(value)) sensitiveValues.push(value) },
         trackCredential: id => { if (!drillCredentialIds.includes(id)) drillCredentialIds.push(id) },
